@@ -42,6 +42,34 @@ export interface MoneySiteProfile {
   industry: string;
 }
 
+export interface PlatformSeed {
+  id: string;
+  name: string;
+  type: PlatformType;
+  homepageUrl: string;
+  difficulty: 1 | 2 | 3 | 4 | 5;
+  supportsAuto: boolean;
+  supportsSemiAuto: boolean;
+  requiresCaptcha: boolean;
+  requiresEmail: boolean;
+  fit: "brand" | "author" | "content" | "local" | "media";
+}
+
+export interface LocalIntegrationSetting {
+  type: "ai" | "captcha" | "email" | "proxy" | "indexing";
+  provider: string;
+  isEnabled: boolean;
+  maskedValue: string;
+}
+
+export interface DemoProjectSeed {
+  projectName: string;
+  moneySite: MoneySiteProfile;
+  readinessInput: EntityReadinessInput;
+  platforms: PlatformSeed[];
+  integrations: LocalIntegrationSetting[];
+}
+
 export interface EntityReadinessInput {
   hasBrandProfile: boolean;
   hasNapProfile: boolean;
