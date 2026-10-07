@@ -27,6 +27,15 @@ Phase 1.1 source work started:
 - Added Tauri command skeleton for local settings config path.
 - Added Prisma seed script for demo money site and starter platforms.
 
+Phase 1.2 source work started:
+
+- Added real Tauri commands for local SQLite access using `rusqlite`.
+- Added `get_money_site` and `save_money_site` commands.
+- Added `get_integration_settings` and `save_integration_setting` commands.
+- Added a Money Sites screen with a form that saves through Tauri when running in desktop mode.
+- Added a Settings screen with editable provider/API key records.
+- Kept browser/Vite preview usable with seed-data fallback.
+
 Implemented foundation:
 
 - Monorepo structure.
@@ -58,8 +67,12 @@ Implemented foundation:
 - `pnpm db:generate` passes when HOME is set to a writable workspace path in this Linux sandbox.
 - After Phase 1.1, `pnpm typecheck` still passes.
 - After Phase 1.1, `pnpm --filter @entitymanager/desktop build` still passes.
+- After Phase 1.2, `pnpm typecheck` still passes.
+- After Phase 1.2, `pnpm --filter @entitymanager/desktop build` still passes.
 
 Tauri `.exe` packaging still needs verification on Windows because this execution environment is Linux.
+
+Rust/Tauri backend compile still needs verification on a machine with `cargo`; this sandbox does not have `cargo` installed.
 
 `pnpm db:push` should be verified on Windows/local dev. In the current Linux sandbox, Prisma validation passes but `db:push` returns a blank schema-engine error under Node 24.
 
