@@ -1,0 +1,14 @@
+node_modules
+dist
+.turbo
+.next
+target
+.home
+.pnpm-home
+.pnpm-store
+.prisma-cache
+*.db
+*.db-journal
+.env
+.env.local
+apps/desktop/src-tauri/target
