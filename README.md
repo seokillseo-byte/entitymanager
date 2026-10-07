@@ -47,4 +47,25 @@ PostgreSQL, Redis, and Docker may still be useful for development, testing, or a
 
 ## Repository Status
 
-This repository starts with planning and implementation-control documents so future ChatGPT/Codex sessions can continue without losing context.
+Phase 1 desktop foundation has started:
+
+- Monorepo workspace.
+- `apps/desktop` Tauri + React desktop shell.
+- `packages/database` Prisma SQLite schema.
+- `packages/shared` shared domain types.
+- `packages/workflow` local workflow state helpers.
+- Windows `.exe` build notes in `docs/BUILD_EXE.md`.
+
+## Development Commands
+
+```bash
+pnpm install
+pnpm db:generate
+pnpm desktop:dev
+```
+
+Build Windows installer/app:
+
+```bash
+pnpm desktop:build
+```
