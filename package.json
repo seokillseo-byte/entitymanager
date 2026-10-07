@@ -1,0 +1,19 @@
+{
+  "name": "entitymanager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.",
+  "scripts": {
+    "dev": "pnpm --filter @entitymanager/desktop dev",
+    "desktop:dev": "pnpm --filter @entitymanager/desktop tauri:dev",
+    "desktop:build": "pnpm --filter @entitymanager/desktop tauri:build",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @entitymanager/database db:generate",
+    "db:push": "pnpm --filter @entitymanager/database db:push"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@11.25.0"
+}
