@@ -18,6 +18,15 @@ Recommended next work:
 - Connect the React dashboard to real SQLite-backed records.
 - Add seed data for platform library and demo project.
 
+Phase 1.1 source work started:
+
+- Added structured demo project seed data.
+- Added starter Platform Library seed candidates.
+- Added Settings/API config preview data.
+- Updated dashboard to read seed data instead of only static placeholders.
+- Added Tauri command skeleton for local settings config path.
+- Added Prisma seed script for demo money site and starter platforms.
+
 Implemented foundation:
 
 - Monorepo structure.
@@ -47,8 +56,12 @@ Implemented foundation:
 - `pnpm typecheck` passes.
 - `pnpm --filter @entitymanager/desktop build` passes.
 - `pnpm db:generate` passes when HOME is set to a writable workspace path in this Linux sandbox.
+- After Phase 1.1, `pnpm typecheck` still passes.
+- After Phase 1.1, `pnpm --filter @entitymanager/desktop build` still passes.
 
 Tauri `.exe` packaging still needs verification on Windows because this execution environment is Linux.
+
+`pnpm db:push` should be verified on Windows/local dev. In the current Linux sandbox, Prisma validation passes but `db:push` returns a blank schema-engine error under Node 24.
 
 ## Desktop Architecture Decision
 
