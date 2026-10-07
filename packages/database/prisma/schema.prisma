@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./entitymanager.db"
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  moneySites        MoneySite[]
+  brandProfiles     BrandProfile[]
+  napProfiles       NapProfile[]
+  authorProfiles    AuthorProfile[]
+  platforms         Platform[]
+  accounts          Account[]
+  workflowRuns      WorkflowRun[]
+  contentUrls       ContentUrl[]
+  carePlans         CarePlan[]
+  recommendations   EeatRecommendation[]
+  integrationSettings IntegrationSetting[]
+}
+
+model MoneySite {
+  id            String   @id @default(cuid())
+  projectId     String
+  domain        String
+  homepageUrl   String
+  sitemapUrl    String?
+  rssUrl        String?
+  wordpressApiUrl String?
+  language      String
+  targetCountry String
+  industry      String
+  businessModel String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model BrandProfile {
+  id               String   @id @default(cuid())
+  projectId        String
+  brandName        String
+  shortName        String?
+  slogan           String?
+  shortDescription String?
+  longDescription  String?
+  tone             String?
+  uniqueSellingPoints String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model NapProfile {
+  id           String   @id @default(cuid())
+  projectId    String
+  businessName String
+  address      String?
+  phone        String?
+  email        String?
+  openingHours String?
+  taxCode      String?
+  mapsUrl      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AuthorProfile {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  role        String?
+  bio         String?
+  avatarPath  String?
+  experience  String?
+  credentials String?
+  profileUrls String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Platform {
+  id             String   @id @default(cuid())
+  projectId      String?
+  name           String
+  type           String
+  homepageUrl    String
+  difficulty     Int      @default(1)
+  supportsAuto   Boolean  @default(false)
+  supportsSemiAuto Boolean @default(true)
+  requiresCaptcha Boolean @default(false)
+  requiresEmail   Boolean @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  accounts Account[]
+}
+
+model Account {
+  id          String   @id @default(cuid())
+  projectId   String
+  platformId  String
+  username    String?
+  email       String?
+  profileUrl  String?
+  status      String   @default("pending")
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  evidence Evidence[]
+}
+
+model WorkflowRun {
+  id        String   @id @default(cuid())
+  projectId String
+  type      String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   WorkflowTask[]
+}
+
+model WorkflowTask {
+  id          String   @id @default(cuid())
+  workflowRunId String
+  name        String
+  status      String   @default("pending")
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  payloadJson  String?
+  resultJson   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workflowRun WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+}
+
+model Evidence {
+  id             String   @id @default(cuid())
+  accountId      String?
+  url            String
+  screenshotPath String?
+  status         String   @default("needs_review")
+  backlinkType   String?
+  anchorText     String?
+  indexedStatus  String?
+  checkedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+}
+
+model ContentUrl {
+  id            String   @id @default(cuid())
+  projectId     String
+  url           String
+  title         String?
+  category      String?
+  primaryKeyword String?
+  intent        String?
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  carePlans CarePlan[]
+}
+
+model CarePlan {
+  id          String   @id @default(cuid())
+  projectId   String
+  contentUrlId String?
+  name        String
+  status      String   @default("draft")
+  planJson    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contentUrl ContentUrl? @relation(fields: [contentUrlId], references: [id], onDelete: SetNull)
+}
+
+model EeatRecommendation {
+  id        String   @id @default(cuid())
+  projectId String
+  type      String
+  title     String
+  priority  String   @default("medium")
+  details   String?
+  status    String   @default("open")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationSetting {
+  id        String   @id @default(cuid())
+  projectId String?
+  provider  String
+  type      String
+  configJson String?
+  isEnabled Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
