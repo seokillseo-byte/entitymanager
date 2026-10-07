@@ -133,6 +133,26 @@ h2 {
   cursor: pointer;
 }
 
+.secondary-action {
+  border: 1px solid #0f766e;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #0f766e;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.status-banner {
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -178,8 +198,17 @@ h2 {
   gap: 16px;
 }
 
+.single-panel {
+  display: grid;
+  gap: 16px;
+}
+
 .panel {
   padding: 20px;
+}
+
+.form-panel {
+  max-width: 980px;
 }
 
 .panel.wide {
@@ -231,7 +260,7 @@ h2 {
 
 .readiness-list div,
 .task-row,
-.integration-row {
+integration-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -299,4 +328,59 @@ h2 {
   color: #334155;
   font-size: 12px;
   text-transform: capitalize;
+}
+
+.form-grid,
+.settings-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: #0f172a;
+  font: inherit;
+}
+
+input:focus {
+  border-color: #0f766e;
+  outline: 3px solid rgba(15, 118, 110, 0.14);
+}
+
+.setting-card {
+  display: grid;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
 }
