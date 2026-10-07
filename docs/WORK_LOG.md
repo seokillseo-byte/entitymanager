@@ -27,6 +27,13 @@
 - Added Prisma database seed script for demo project, money site, and starter platforms.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.1 changes.
 - Noted that `pnpm db:push` needs Windows/local verification: Prisma schema validation passes, but the Linux sandbox returns a blank schema-engine error under Node 24.
+- Started Phase 1.2.
+- Added real Tauri commands for local SQLite reads/writes using `rusqlite`.
+- Added Money Sites form wired to `get_money_site` and `save_money_site`.
+- Added Settings form wired to `get_integration_settings` and `save_integration_setting`.
+- Kept Vite/browser preview safe by falling back to seed data when Tauri commands are unavailable.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.2 changes.
+- Could not run `cargo check` in this Linux sandbox because `cargo` is not installed; Rust/Tauri backend needs verification on Windows or a Rust-enabled runner.
 
 ## Current Decision
 
@@ -38,4 +45,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue Phase 1.1 by verifying Tauri and Prisma SQLite push on Windows, then replacing dashboard seed reads with real SQLite-backed Tauri commands.
+Continue Phase 1.2 by verifying the Tauri/Rust SQLite backend on Windows, then building the first `.exe` artifact and confirming Money Site/Settings persistence.
