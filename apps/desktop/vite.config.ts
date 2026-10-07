@@ -5,10 +5,20 @@ import { fileURLToPath, URL } from "node:url";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@entitymanager/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
-      "@entitymanager/workflow": fileURLToPath(new URL("../../packages/workflow/src/index.ts", import.meta.url))
-    }
+    alias: [
+      {
+        find: "@entitymanager/shared/seed",
+        replacement: fileURLToPath(new URL("../../packages/shared/src/seed.ts", import.meta.url))
+      },
+      {
+        find: "@entitymanager/shared",
+        replacement: fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url))
+      },
+      {
+        find: "@entitymanager/workflow",
+        replacement: fileURLToPath(new URL("../../packages/workflow/src/index.ts", import.meta.url))
+      }
+    ]
   },
   clearScreen: false,
   server: {
