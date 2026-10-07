@@ -2,36 +2,53 @@
 
 ## Current Status
 
-Repository initialized with planning documents only. No application code has been added yet.
+Phase 1 desktop foundation has been started.
 
 Important product target clarified: EntityManager must be a Windows PC desktop tool. The user should open the tool by clicking an `.exe` file.
 
 ## Immediate Next Recommended Step
 
-Phase 1: create the desktop application foundation.
+Continue Phase 1: verify and harden the desktop application foundation.
 
-Recommended implementation:
+Recommended next work:
+
+- Verify Tauri dev shell opens on Windows.
+- Verify Windows build notes are accurate on a Windows machine.
+- Add local app settings storage design.
+- Connect the React dashboard to real SQLite-backed records.
+- Add seed data for platform library and demo project.
+
+Implemented foundation:
 
 - Monorepo structure.
 - Tauri desktop app as the main product shell.
-- React/Next-style dashboard UI inside the desktop app.
-- Local SQLite database for normal `.exe` usage.
-- Prisma or another typed database layer if it packages cleanly.
-- Local background task engine for workflows and queues.
-- Environment/settings storage for AI, CAPTCHA, email, proxy, and indexing API keys.
+- React dashboard UI inside the desktop app.
+- Local SQLite schema for normal `.exe` usage.
+- Prisma database package.
+- Shared TypeScript domain types.
+- Local workflow state skeleton.
+- Environment/settings storage template for AI, CAPTCHA, email, proxy, and indexing API keys.
 - Basic dashboard shell inspired by the user's preferred EntityAtlas/EntityCodex UI direction.
 
 ## Phase 1 Deliverables
 
-- `package.json` workspace root.
-- `pnpm-workspace.yaml`.
-- `apps/desktop` Tauri app.
-- `packages/database` local SQLite schema setup.
-- `packages/shared` shared types.
-- `packages/workflow` local workflow engine skeleton.
-- `.env.example` or local settings template.
-- Development commands in README.
-- Windows `.exe` build notes.
+- `package.json` workspace root. Done.
+- `pnpm-workspace.yaml`. Done.
+- `apps/desktop` Tauri app. Started.
+- `packages/database` local SQLite schema setup. Started.
+- `packages/shared` shared types. Started.
+- `packages/workflow` local workflow engine skeleton. Started.
+- `.env.example` or local settings template. Done.
+- Development commands in README. Done.
+- Windows `.exe` build notes. Done.
+
+## Verification Completed In Current Workspace
+
+- `pnpm typecheck` passes.
+- `pnpm --filter @entitymanager/desktop build` passes.
+- `pnpm db:generate` passes when HOME is set to a writable workspace path in this Linux sandbox.
+
+Tauri `.exe` packaging still needs verification on Windows because this execution environment is Linux.
 
 ## Desktop Architecture Decision
 
