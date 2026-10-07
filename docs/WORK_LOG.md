@@ -20,6 +20,13 @@
 - Verified `pnpm typecheck` passes locally.
 - Verified desktop frontend build with `pnpm --filter @entitymanager/desktop build` locally.
 - Verified Prisma client generation with `pnpm db:generate` after setting a writable HOME in the Linux sandbox.
+- Started Phase 1.1.
+- Added structured demo seed data in `packages/shared/src/seed.ts`.
+- Updated the dashboard to show demo Money Site data, Platform Library candidates, and local Settings/API config preview.
+- Added a Tauri command skeleton for resolving the local settings config file path.
+- Added Prisma database seed script for demo project, money site, and starter platforms.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.1 changes.
+- Noted that `pnpm db:push` needs Windows/local verification: Prisma schema validation passes, but the Linux sandbox returns a blank schema-engine error under Node 24.
 
 ## Current Decision
 
@@ -31,4 +38,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue Phase 1 by verifying the Tauri shell on Windows, then connecting the dashboard to SQLite-backed records and adding seed data for the first platform library.
+Continue Phase 1.1 by verifying Tauri and Prisma SQLite push on Windows, then replacing dashboard seed reads with real SQLite-backed Tauri commands.
