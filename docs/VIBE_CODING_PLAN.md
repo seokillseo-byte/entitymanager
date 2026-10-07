@@ -6,6 +6,23 @@ Build in small professional phases. Each phase must leave the repository in a ru
 
 Do not rush into 100+ platforms before the core workflow is stable.
 
+## Critical Product Requirement
+
+EntityManager is a Windows PC desktop tool. The final user experience should be simple: click an `.exe` file and open the tool.
+
+Normal users should not need to run Docker, PostgreSQL, Redis, terminal commands, or a development server.
+
+Preferred V1 architecture:
+
+- Desktop shell: Tauri.
+- UI: React dashboard inside the desktop app.
+- Database: local SQLite.
+- Workflow queue: local task/state-machine tables first.
+- Packaging: Windows `.exe` installer/app build.
+- Future browser support: Chrome Extension bridge for semi-auto workflows.
+
+PostgreSQL, Redis, and Docker can be used for development or a future server edition, but not as a normal-user requirement.
+
 ## Product Name
 
 Working name: EntityManager
@@ -212,13 +229,15 @@ Avoid:
 - Tech stack decision
 - Development workflow
 
-### Phase 1: App Foundation
+### Phase 1: Desktop App Foundation
 
-- Next.js web app
-- Node.js API
-- PostgreSQL + Prisma
-- Redis queue
-- Environment configuration
+- Monorepo structure
+- Tauri desktop shell
+- React dashboard UI
+- Local SQLite database setup
+- Local workflow state skeleton
+- Environment/settings structure
+- Windows `.exe` build notes
 - Basic dashboard layout
 
 ### Phase 2: Entity Data Core
@@ -243,7 +262,7 @@ Avoid:
 
 ### Phase 4: Workflow Engine
 
-- Queue
+- Local task table
 - State machine
 - Task statuses
 - Retry rules
