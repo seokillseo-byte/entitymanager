@@ -10,7 +10,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @entitymanager/database db:generate",
-    "db:push": "pnpm --filter @entitymanager/database db:push"
+    "db:push": "pnpm --filter @entitymanager/database db:push",
+    "db:seed": "pnpm --filter @entitymanager/database db:seed"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
