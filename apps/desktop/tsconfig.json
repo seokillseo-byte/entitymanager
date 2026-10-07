@@ -14,6 +14,7 @@
     "baseUrl": ".",
     "paths": {
       "@entitymanager/shared": ["../../packages/shared/src/index.ts"],
+      "@entitymanager/shared/seed": ["../../packages/shared/src/seed.ts"],
       "@entitymanager/workflow": ["../../packages/workflow/src/index.ts"]
     },
     "resolveJsonModule": true,
