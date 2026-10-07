@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { calculateEntityReadiness } from "@entitymanager/shared";
 import type { DashboardMetric, EntityModule } from "@entitymanager/shared";
+import { demoProjectSeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
 
@@ -36,7 +38,7 @@ const icons = {
 };
 
 const metrics: DashboardMetric[] = [
-  { label: "Entity Readiness", value: "74%", tone: "good" },
+  { label: "Entity Readiness", value: `${calculateEntityReadiness(demoProjectSeed.readinessInput)}%`, tone: "good" },
   { label: "Live Profiles", value: "0", tone: "neutral" },
   { label: "Care Plans", value: "0", tone: "neutral" },
   { label: "Waiting Manual", value: "0", tone: "warning" }
@@ -99,18 +101,18 @@ function App() {
           <article className="panel wide">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Entity Readiness</p>
-                <h2>Input data quality before automation</h2>
+                <p className="eyebrow">{demoProjectSeed.projectName}</p>
+                <h2>{demoProjectSeed.moneySite.domain}</h2>
               </div>
               <span className="badge">SQLite local</span>
             </div>
             <div className="readiness">
-              <div className="score-ring">74%</div>
+              <div className="score-ring">{calculateEntityReadiness(demoProjectSeed.readinessInput)}%</div>
               <div className="readiness-list">
-                <div><strong>Brand/NAP</strong><span>Ready for profile creation</span></div>
-                <div><strong>Author/Expert</strong><span>Needs credentials and profile URLs</span></div>
-                <div><strong>Content Source</strong><span>Add sitemap or WordPress API</span></div>
-                <div><strong>API Integrations</strong><span>AI/CAPTCHA/email keys not configured</span></div>
+                <div><strong>Homepage</strong><span>{demoProjectSeed.moneySite.homepageUrl}</span></div>
+                <div><strong>Sitemap</strong><span>{demoProjectSeed.moneySite.sitemapUrl}</span></div>
+                <div><strong>Market</strong><span>{demoProjectSeed.moneySite.language} / {demoProjectSeed.moneySite.targetCountry}</span></div>
+                <div><strong>Industry</strong><span>{demoProjectSeed.moneySite.industry}</span></div>
               </div>
             </div>
           </article>
@@ -142,6 +144,49 @@ function App() {
             <div className="status-cloud">
               {WORKFLOW_STATUSES.map((status) => (
                 <span key={status}>{status.replace("_", " ")}</span>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel wide">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Platform Library Seed</p>
+                <h2>Starter platform candidates</h2>
+              </div>
+              <span className="badge">{demoProjectSeed.platforms.length} platforms</span>
+            </div>
+            <div className="platform-table">
+              {demoProjectSeed.platforms.map((platform) => (
+                <div className="platform-row" key={platform.id}>
+                  <div>
+                    <strong>{platform.name}</strong>
+                    <span>{platform.type} / {platform.fit}</span>
+                  </div>
+                  <span>Difficulty {platform.difficulty}</span>
+                  <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                  <em>{platform.supportsSemiAuto ? "Semi-auto" : "Manual"}</em>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h2>Local API config preview</h2>
+              </div>
+            </div>
+            <div className="integration-list">
+              {demoProjectSeed.integrations.map((integration) => (
+                <div className="integration-row" key={integration.type}>
+                  <div>
+                    <strong>{integration.provider}</strong>
+                    <span>{integration.type}</span>
+                  </div>
+                  <em>{integration.maskedValue}</em>
+                </div>
               ))}
             </div>
           </article>
