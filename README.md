@@ -1,6 +1,8 @@
 # EntityManager
 
-EntityManager is planned as an Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.
+EntityManager is planned as a Windows desktop Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.
+
+The user-facing product must run on PC as a desktop app: the user should be able to click an `.exe` file and access the tool. It should not require the user to manually run a development server, Docker, or command-line workflow for normal use.
 
 The goal is not only to create social/profile/blog accounts, but to build and maintain a high-quality entity ecosystem around a money site:
 
@@ -30,15 +32,18 @@ EntityManager has three major independent modules:
 
 ## First Implementation Target
 
-V1 should focus on a stable local SaaS-style app plus future Chrome Extension support:
+V1 should focus on a stable Windows desktop application:
 
-- Next.js web app.
-- Node.js API.
-- PostgreSQL database.
-- Redis queue.
-- Prisma ORM.
+- Tauri desktop shell, preferred for a lightweight `.exe` build.
+- React/Next-style dashboard UI.
+- Local SQLite database for the normal desktop build.
+- Prisma ORM if it fits cleanly with the local runtime.
+- Background task engine for local queues and workflow state.
 - Adapter-based platform system.
 - AI/CAPTCHA/email/proxy integrations designed as configurable providers.
+- Future Chrome Extension support for semi-auto browser workflows.
+
+PostgreSQL, Redis, and Docker may still be useful for development, testing, or a future server edition, but they should not be required for the normal PC `.exe` user experience.
 
 ## Repository Status
 
