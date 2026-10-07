@@ -223,13 +223,15 @@ h2 {
 }
 
 .readiness-list,
-.task-list {
+.task-list,
+.integration-list {
   display: grid;
   gap: 10px;
 }
 
 .readiness-list div,
-.task-row {
+.task-row,
+.integration-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -247,6 +249,41 @@ h2 {
 .task-row em {
   font-style: normal;
   text-transform: capitalize;
+}
+
+.integration-row strong,
+.integration-row span,
+.platform-row strong,
+.platform-row span {
+  display: block;
+}
+
+.integration-row span,
+.platform-row span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.integration-row em,
+.platform-row em {
+  color: #0f766e;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.platform-table {
+  display: grid;
+  gap: 8px;
+}
+
+.platform-row {
+  display: grid;
+  grid-template-columns: 1.5fr 0.7fr 0.8fr 0.7fr;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
 }
 
 .status-cloud {
