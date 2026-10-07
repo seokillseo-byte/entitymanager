@@ -10,6 +10,16 @@
 - Added next steps tracker.
 - Clarified critical product requirement: EntityManager must be a Windows PC desktop tool opened by clicking an `.exe` file.
 - Updated planning direction from local SaaS-style app to desktop-first app.
+- Started Phase 1 Desktop Foundation.
+- Added monorepo workspace files: `package.json`, `pnpm-workspace.yaml`, `.gitignore`, `.env.example`.
+- Added `apps/desktop` Tauri + React shell with an initial dashboard UI.
+- Added `packages/shared` with core entity/dashboard types and readiness scoring helper.
+- Added `packages/workflow` with workflow statuses, task creation, and transition helper.
+- Added `packages/database` with a Prisma SQLite schema covering projects, money sites, profiles, platforms, accounts, workflows, evidence, content URLs, care plans, EEAT recommendations, and integration settings.
+- Added `docs/BUILD_EXE.md` with Windows `.exe` build notes.
+- Verified `pnpm typecheck` passes locally.
+- Verified desktop frontend build with `pnpm --filter @entitymanager/desktop build` locally.
+- Verified Prisma client generation with `pnpm db:generate` after setting a writable HOME in the Linux sandbox.
 
 ## Current Decision
 
@@ -21,4 +31,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Start Phase 1: desktop application foundation with monorepo, Tauri app, React dashboard shell, SQLite schema, shared types, local workflow skeleton, and Windows `.exe` build notes.
+Continue Phase 1 by verifying the Tauri shell on Windows, then connecting the dashboard to SQLite-backed records and adding seed data for the first platform library.
