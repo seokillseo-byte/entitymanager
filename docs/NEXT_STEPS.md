@@ -4,32 +4,47 @@
 
 Repository initialized with planning documents only. No application code has been added yet.
 
+Important product target clarified: EntityManager must be a Windows PC desktop tool. The user should open the tool by clicking an `.exe` file.
+
 ## Immediate Next Recommended Step
 
-Phase 1: create the application foundation.
+Phase 1: create the desktop application foundation.
 
 Recommended implementation:
 
 - Monorepo structure.
-- Next.js web app.
-- Node.js API app.
-- Shared TypeScript packages.
-- Prisma database package.
-- PostgreSQL and Redis Docker Compose.
-- Environment example files.
+- Tauri desktop app as the main product shell.
+- React/Next-style dashboard UI inside the desktop app.
+- Local SQLite database for normal `.exe` usage.
+- Prisma or another typed database layer if it packages cleanly.
+- Local background task engine for workflows and queues.
+- Environment/settings storage for AI, CAPTCHA, email, proxy, and indexing API keys.
 - Basic dashboard shell inspired by the user's preferred EntityAtlas/EntityCodex UI direction.
 
 ## Phase 1 Deliverables
 
 - `package.json` workspace root.
 - `pnpm-workspace.yaml`.
-- `apps/web` Next.js app.
-- `apps/api` Node.js API.
-- `packages/database` Prisma setup.
+- `apps/desktop` Tauri app.
+- `packages/database` local SQLite schema setup.
 - `packages/shared` shared types.
-- `docker-compose.yml` with PostgreSQL and Redis.
-- `.env.example`.
+- `packages/workflow` local workflow engine skeleton.
+- `.env.example` or local settings template.
 - Development commands in README.
+- Windows `.exe` build notes.
+
+## Desktop Architecture Decision
+
+Preferred V1 architecture:
+
+- UI: React dashboard inside Tauri.
+- Shell: Tauri for Windows `.exe`.
+- Database: SQLite local file.
+- Queue: local task table/state machine first.
+- Browser automation: Playwright or extension bridge later, depending on packaging reliability.
+- Chrome Extension: future support for semi-auto workflows on difficult sites.
+
+PostgreSQL, Redis, and Docker should not be required for normal end users. They can be reserved for development, testing, or a future server edition.
 
 ## First Screens To Build
 
@@ -48,7 +63,7 @@ Recommended implementation:
 
 ## First Data Models To Design
 
-- User, optional for later auth
+- User, optional for later auth/license
 - Project
 - MoneySite
 - BrandProfile
