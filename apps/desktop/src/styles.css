@@ -260,7 +260,7 @@ h2 {
 
 .readiness-list div,
 .task-row,
-integration-row {
+.integration-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
