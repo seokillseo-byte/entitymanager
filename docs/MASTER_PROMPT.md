@@ -8,7 +8,20 @@ You are helping me build EntityManager at this GitHub repository:
 https://github.com/seokillseo-byte/entitymanager
 
 Project goal:
-Build a professional Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.
+Build a professional Windows PC desktop Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.
+
+Critical requirement:
+The final product must run as a PC desktop tool. The user should be able to click a Windows `.exe` file and open/use the tool. Normal users should not need to manually run Docker, PostgreSQL, Redis, a dev server, or command-line commands.
+
+Preferred technical direction:
+- Desktop shell: Tauri, unless there is a strong reason to choose Electron.
+- UI: React/Next-style dashboard experience inside the desktop app.
+- Database: local SQLite for normal desktop usage.
+- Workflow queue: local task/state-machine tables first.
+- TypeScript for app logic where practical.
+- Rust/Tauri backend only where useful for packaging, OS access, and secure local commands.
+- Future Chrome Extension support for semi-auto browser workflows.
+- PostgreSQL, Redis, and Docker are optional for development or a future server edition, not required for normal `.exe` use.
 
 This is not only a tool to create accounts. It must create, maintain, and grow a high-quality entity ecosystem around a money site.
 
@@ -40,11 +53,6 @@ Important product philosophy:
 - Track evidence, live URLs, screenshots, index status, account health, and reports.
 - Build with scalable adapter architecture so new platforms can be added without changing core workflow.
 
-Tech direction:
-- Start with a local SaaS-style monorepo.
-- Preferred stack: Next.js web app, Node.js API, PostgreSQL, Prisma, Redis queue, TypeScript.
-- Future Chrome Extension support is expected for semi-auto browser workflows.
-
 Repository continuity rules:
 - First inspect the repository before coding.
 - Read README.md and all documents under docs/.
@@ -63,5 +71,5 @@ The user wants proactive guidance. Do not wait for the user to ask what to do ne
 ## Short Version
 
 ```text
-Continue building EntityManager from https://github.com/seokillseo-byte/entitymanager. Read README.md and docs/*. Follow docs/NEXT_STEPS.md. It is an Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites using a scalable adapter architecture, semi-auto workflows, AI/CAPTCHA/email/proxy integrations, evidence tracking, and reporting. Do not restart from scratch. Update WORK_LOG and NEXT_STEPS before ending, and suggest the next task.
+Continue building EntityManager from https://github.com/seokillseo-byte/entitymanager. Read README.md and docs/*. Follow docs/NEXT_STEPS.md. It is a Windows PC desktop `.exe` Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites. Prefer Tauri + React dashboard + local SQLite + local workflow state machine. Normal users should click an `.exe` to open the tool and should not need Docker/PostgreSQL/Redis/dev server. Do not restart from scratch. Update WORK_LOG and NEXT_STEPS before ending, and suggest the next task.
 ```
