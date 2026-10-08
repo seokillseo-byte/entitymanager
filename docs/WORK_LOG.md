@@ -104,6 +104,13 @@
 - Updated CAPTCHA queue UI with a Poll Result action.
 - Queue items now move to `resolved` when a provider returns a ready solution token, or remain `waiting` when still processing.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.10 changes.
+- Started Phase 1.11 Browser/Extension CAPTCHA Injection Bridge.
+- Added shared CAPTCHA bridge request, payload, and result types for desktop/browser-extension handoff.
+- Added a Tauri command that exposes a resolved CAPTCHA queue item as an injection payload with `solutionToken`, target token field, action, and next workflow step.
+- Added a Tauri command for browser/extension automation to report CAPTCHA injection success or failure.
+- Injection completion now updates the queue payload with injection metadata and writes a workflow run event for submit/verify readiness.
+- Updated the Entity Builder queue UI with a Bridge Payload preview plus Mark Injected / Mark Failed actions for desktop-side validation before a real extension is attached.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.11 changes.
 
 ## Current Decision
 
@@ -115,4 +122,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.10 in the packaged `.exe`, especially Send CAPTCHA, Poll Result, resolved queue status, and captured solution token payload. Then implement the browser automation/extension injection bridge.
+Validate Phase 1.11 in the packaged `.exe`, especially resolved CAPTCHA payload handoff, Bridge Payload preview, Mark Injected / Mark Failed, workflow history creation, and account transition toward submit/verify readiness. Then implement the real browser automation or Chrome Extension side of the bridge.
