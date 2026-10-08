@@ -39,6 +39,7 @@ export type PlatformDifficulty = "easy" | "medium" | "hard";
 export type EntityValue = "brand" | "author" | "content" | "local" | "media" | "authority";
 export type EntityProfileType = "brand" | "person" | "local_business" | "organization";
 export type AccountPlanPriority = "high" | "medium" | "low";
+export type AccountStatus = "planned" | "created" | "needs_manual_review" | "failed" | "verified";
 
 export interface MoneySiteProfile {
   id: string;
@@ -110,6 +111,20 @@ export interface AccountCreationPlanItem {
   profileAngle: string;
   requiredAssets: string[];
   workflowSteps: string[];
+}
+
+export interface AccountRecord {
+  id: string;
+  platformId: string;
+  platformName: string;
+  recommendedUsername: string;
+  status: AccountStatus;
+  priority: AccountPlanPriority;
+  automationMode: AutomationMode;
+  evidenceUrl: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface LocalIntegrationSetting {
