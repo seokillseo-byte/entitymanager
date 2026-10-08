@@ -40,6 +40,9 @@ export type EntityValue = "brand" | "author" | "content" | "local" | "media" | "
 export type EntityProfileType = "brand" | "person" | "local_business" | "organization";
 export type AccountPlanPriority = "high" | "medium" | "low";
 export type AccountStatus = "planned" | "created" | "needs_manual_review" | "failed" | "verified";
+export type WorkflowRunStatus = "queued" | "running" | "blocked" | "completed" | "failed";
+export type AutomationGateType = "captcha" | "email" | "manual_review" | "evidence";
+export type AutomationQueueStatus = "queued" | "waiting" | "resolved" | "failed";
 
 export interface MoneySiteProfile {
   id: string;
@@ -123,6 +126,27 @@ export interface AccountRecord {
   automationMode: AutomationMode;
   evidenceUrl: string;
   notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRunRecord {
+  id: string;
+  accountId: string;
+  platformName: string;
+  action: string;
+  status: WorkflowRunStatus;
+  message: string;
+  createdAt: string;
+}
+
+export interface AutomationQueueItem {
+  id: string;
+  accountId: string;
+  platformName: string;
+  gateType: AutomationGateType;
+  status: AutomationQueueStatus;
+  payload: string;
   createdAt: string;
   updatedAt: string;
 }
