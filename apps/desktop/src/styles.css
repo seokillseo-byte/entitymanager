@@ -455,6 +455,53 @@ h2 {
   font-weight: 800;
 }
 
+.account-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.account-status strong {
+  color: #0f172a;
+  text-transform: capitalize;
+}
+
+.account-status span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.status-planned {
+  border-left: 4px solid #64748b;
+}
+
+.status-created {
+  border-left: 4px solid #2563eb;
+}
+
+.status-needs_manual_review {
+  border-left: 4px solid #b45309;
+}
+
+.status-failed {
+  border-left: 4px solid #dc2626;
+}
+
+.status-verified {
+  border-left: 4px solid #0f766e;
+}
+
+.account-edit-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
 .form-grid,
 .settings-grid {
   display: grid;
