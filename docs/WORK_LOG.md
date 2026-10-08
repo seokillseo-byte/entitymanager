@@ -77,6 +77,16 @@
 - Added Tauri dry-run command for integration adapter checks.
 - Added Settings dry-run test UI for AI, CAPTCHA, email, proxy, and indexing providers.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.7 changes.
+- Started Phase 1.8 Encrypted Secret Storage and First Live Provider Adapter.
+- Added Rust `keyring` integration so newly saved provider API keys are stored in the OS credential store instead of SQLite.
+- Kept SQLite integration settings as metadata only: provider, enabled flag, masked key display, key status, and last test timestamp.
+- Added secure key detection so Settings can show `secure` when the key exists in the OS credential store.
+- Added a live adapter Tauri command for the first real provider path.
+- Implemented the first live AI adapter test for Google Gemini using the encrypted key from the OS credential store.
+- Updated Settings with a Live Test action alongside Dry-run Test.
+- Kept non-AI providers behind the adapter interface with honest “queued for next adapter pass” live-test messaging.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.8 frontend/shared changes.
+- Could not run local `cargo check` because this Linux sandbox does not have `cargo`; Windows Rust/Tauri compile should be validated by GitHub Actions.
 
 ## Current Decision
 
@@ -88,4 +98,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.7 in the packaged `.exe`, then implement encrypted secret storage and first live CAPTCHA/email provider adapters.
+Validate Phase 1.8 in the packaged `.exe`, especially saving an AI/Gemini key, reloading Settings, and running Live Test. Then implement the next live provider adapter for CAPTCHA or email.
