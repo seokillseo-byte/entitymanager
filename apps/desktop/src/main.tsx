@@ -428,6 +428,20 @@ function App() {
     }
   }
 
+  async function testLiveSetting(setting: IntegrationSettingForm) {
+    const timestamp = new Date().toISOString();
+    const payload = { ...setting, lastTestAt: timestamp };
+
+    try {
+      const result = await invoke<IntegrationAdapterResult>("test_live_integration_setting", { setting: payload });
+      setAdapterResults((current) => ({ ...current, [setting.settingType]: result }));
+      updateSetting(setting.settingType, { lastTestAt: timestamp });
+      setStatusMessage(`${setting.provider} live adapter test complete`);
+    } catch {
+      setStatusMessage("Live adapter tests are available only inside the packaged desktop app");
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -947,7 +961,7 @@ function App() {
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Settings</p>
-                <h2>Provider config and secure key placeholders</h2>
+                <h2>Encrypted provider keys and live adapter tests</h2>
               </div>
             </div>
             <div className="settings-grid">
@@ -961,8 +975,8 @@ function App() {
                     Secret Key
                     <input
                       type="password"
-                      value={setting.keyStatus === "masked" ? "" : setting.apiKey}
-                      placeholder={setting.keyStatus === "masked" ? `Stored as ${setting.apiKey}` : `${setting.settingType} API key`}
+                      value={setting.keyStatus === "masked" || setting.keyStatus === "secure" ? "" : setting.apiKey}
+                      placeholder={setting.keyStatus === "masked" || setting.keyStatus === "secure" ? `Stored securely as ${setting.apiKey}` : `${setting.settingType} API key`}
                       onChange={(event) => updateSetting(setting.settingType, { apiKey: event.target.value })}
                     />
                   </label>
@@ -985,6 +999,7 @@ function App() {
                   <div className="settings-actions">
                     <button className="secondary-action" type="button" onClick={() => saveSetting(setting)}>Save</button>
                     <button className="secondary-action" type="button" onClick={() => testSetting(setting)}>Dry-run Test</button>
+                    <button className="secondary-action" type="button" onClick={() => testLiveSetting(setting)}>Live Test</button>
                   </div>
                 </div>
               ))}
