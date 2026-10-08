@@ -348,6 +348,12 @@ h2 {
   gap: 14px;
 }
 
+.entity-builder-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .platform-card {
   display: grid;
   gap: 14px;
@@ -500,6 +506,44 @@ h2 {
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 10px;
   align-items: end;
+}
+
+.queue-list,
+.workflow-history {
+  display: grid;
+  gap: 10px;
+}
+
+.queue-row,
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.queue-row strong,
+.queue-row span,
+.history-row strong,
+.history-row span {
+  display: block;
+}
+
+.queue-row span,
+.history-row span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.history-row em {
+  color: #0f766e;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: capitalize;
 }
 
 .form-grid,
