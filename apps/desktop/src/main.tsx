@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -114,6 +114,7 @@ function App() {
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
   const [automationQueue, setAutomationQueue] = useState<AutomationQueueItem[]>([]);
+  const [captchaBridgePayload, setCaptchaBridgePayload] = useState<CaptchaInjectionPayload | null>(null);
   const [adapterResults, setAdapterResults] = useState<Record<string, IntegrationAdapterResult>>({});
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
@@ -404,6 +405,50 @@ function App() {
       setStatusMessage(saved.status === "resolved" ? `CAPTCHA token captured for ${saved.platformName}` : `CAPTCHA result checked for ${saved.platformName}`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "CAPTCHA result polling failed");
+    }
+  }
+
+  async function prepareCaptchaInjection(item: AutomationQueueItem) {
+    try {
+      const payload = await invoke<CaptchaInjectionPayload>("get_captcha_injection_payload", {
+        request: {
+          queueId: item.id,
+          accountId: item.accountId,
+          injector: "desktop_preview"
+        }
+      });
+      setCaptchaBridgePayload(payload);
+      setStatusMessage(`CAPTCHA injection payload ready for ${payload.platformName}`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "CAPTCHA injection payload is not ready");
+    }
+  }
+
+  async function completeCaptchaInjection(success: boolean) {
+    if (!captchaBridgePayload) {
+      return;
+    }
+
+    try {
+      const result = await invoke<CaptchaInjectionResult>("complete_captcha_injection", {
+        request: {
+          queueId: captchaBridgePayload.queueId,
+          accountId: captchaBridgePayload.accountId,
+          injector: "desktop_preview",
+          success,
+          evidenceUrl: "",
+          message: success
+            ? "Desktop bridge preview marked CAPTCHA token as injected. Ready for submit/verify."
+            : "Desktop bridge preview marked CAPTCHA injection as failed."
+        }
+      });
+      setAutomationQueue((current) => upsertById(current, result.queueItem));
+      setAccounts((current) => upsertById(current, result.account));
+      setWorkflowRuns((current) => [result.workflowRun, ...current].slice(0, 100));
+      setCaptchaBridgePayload(null);
+      setStatusMessage(success ? "CAPTCHA bridge completed. Workflow is ready for submit/verify." : "CAPTCHA bridge failed and needs review.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "CAPTCHA injection completion failed");
     }
   }
 
@@ -967,10 +1012,28 @@ function App() {
                         {item.gateType === "captcha" && (
                           <button className="secondary-action" type="button" onClick={() => pollCaptchaQueueItem(item)}>Poll Result</button>
                         )}
+                        {item.gateType === "captcha" && (
+                          <button className="secondary-action" type="button" onClick={() => prepareCaptchaInjection(item)}>Bridge Payload</button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {captchaBridgePayload && (
+                  <div className="bridge-preview">
+                    <div>
+                      <p className="eyebrow">Browser/Extension Bridge</p>
+                      <strong>{captchaBridgePayload.platformName}</strong>
+                      <span>{captchaBridgePayload.action} → {captchaBridgePayload.nextStep}</span>
+                    </div>
+                    <code>{captchaBridgePayload.tokenField}: {maskToken(captchaBridgePayload.solutionToken)}</code>
+                    <div className="queue-actions">
+                      <button className="secondary-action" type="button" onClick={() => completeCaptchaInjection(true)}>Mark Injected</button>
+                      <button className="secondary-action danger-action" type="button" onClick={() => completeCaptchaInjection(false)}>Mark Failed</button>
+                    </div>
+                  </div>
+                )}
               </article>
 
               <article className="panel">
@@ -1115,6 +1178,14 @@ function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   }
 
   return items.map((item) => (item.id === next.id ? next : item));
+}
+
+function maskToken(token: string): string {
+  if (token.length <= 12) {
+    return "stored token";
+  }
+
+  return `${token.slice(0, 6)}...${token.slice(-6)}`;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
