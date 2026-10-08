@@ -200,7 +200,7 @@ fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn get_money_site(app_handle: tauri::AppHandle) -> Result<MoneySiteRecord, String> {
-    let connection = open_database(app_handle)?;
+    let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
 
     let mut statement = connection
