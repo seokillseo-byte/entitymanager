@@ -175,8 +175,17 @@ Phase 1.9 validation and next build task:
 - Confirm CAPTCHA queue payloads can be edited as JSON with `captchaType`, `websiteUrl`, and `websiteKey`.
 - Confirm Send CAPTCHA keeps incomplete queue items in `waiting` status with a useful message.
 - Confirm Send CAPTCHA submits valid reCAPTCHA v2 queue items to the configured provider and stores the provider task id in queue payload.
-- Add CAPTCHA result polling with provider `getTaskResult`.
-- Add solved token capture into queue payload for later browser/extension injection.
+- Add CAPTCHA result polling with provider `getTaskResult`. Done.
+- Add solved token capture into queue payload for later browser/extension injection. Done.
+
+Phase 1.10 validation and next build task:
+
+- Confirm CAPTCHA queue payload retains `providerTaskId` after Send CAPTCHA.
+- Confirm Poll Result calls 2Captcha/CapSolver `getTaskResult`.
+- Confirm pending provider responses keep the queue item in `waiting`.
+- Confirm ready provider responses save `solutionToken` and mark the queue item as `resolved`.
+- Confirm queue payload includes `automationHook.target = browser_or_extension` and `action = inject_recaptcha_token`.
+- Build the browser automation/extension bridge that can read a resolved CAPTCHA queue item and inject `solutionToken` into `g-recaptcha-response`.
 
 ## First Data Models To Design
 
