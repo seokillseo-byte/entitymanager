@@ -2,14 +2,35 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
 const SECRET_SERVICE: &str = "EntityManager";
+static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 fn app_health() -> &'static str {
     "EntityManager desktop shell is ready"
+}
+
+#[tauri::command]
+fn start_extension_bridge_server(app_handle: tauri::AppHandle) -> Result<String, String> {
+    if EXTENSION_BRIDGE_STARTED.swap(true, Ordering::SeqCst) {
+        return Ok("Extension bridge server is already running at http://127.0.0.1:17321".to_string());
+    }
+
+    std::thread::spawn(move || {
+        if let Ok(listener) = TcpListener::bind("127.0.0.1:17321") {
+            for stream in listener.incoming().flatten() {
+                handle_extension_bridge_stream(stream, app_handle.clone());
+            }
+        }
+    });
+
+    Ok("Extension bridge server started at http://127.0.0.1:17321".to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,7 +200,7 @@ fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn get_money_site(app_handle: tauri::AppHandle) -> Result<MoneySiteRecord, String> {
-    let connection = open_database(&app_handle)?;
+    let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
 
     let mut statement = connection
@@ -868,7 +889,14 @@ fn complete_captcha_injection(
     app_handle: tauri::AppHandle,
     request: CaptchaInjectionCompleteRequest,
 ) -> Result<CaptchaInjectionResult, String> {
-    let connection = open_database(&app_handle)?;
+    complete_captcha_injection_record(&app_handle, request)
+}
+
+fn complete_captcha_injection_record(
+    app_handle: &tauri::AppHandle,
+    request: CaptchaInjectionCompleteRequest,
+) -> Result<CaptchaInjectionResult, String> {
+    let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
 
     let mut item = get_automation_queue_item_record(&connection, &request.queue_id)?;
@@ -1198,6 +1226,63 @@ fn parse_captcha_payload(payload: &str) -> Result<serde_json::Value, String> {
     });
 
     Ok(parsed)
+}
+
+fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppHandle) {
+    let mut buffer = vec![0; 32 * 1024];
+    let bytes_read = match stream.read(&mut buffer) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+    if request.starts_with("OPTIONS ") {
+        let _ = write_http_response(&mut stream, 204, "");
+        return;
+    }
+
+    if !request.starts_with("POST /captcha/injection/complete ") {
+        let _ = write_http_response(&mut stream, 404, "{\"error\":\"not found\"}");
+        return;
+    }
+
+    let Some(body) = request.split("\r\n\r\n").nth(1) else {
+        let _ = write_http_response(&mut stream, 400, "{\"error\":\"missing body\"}");
+        return;
+    };
+
+    let response = match serde_json::from_str::<CaptchaInjectionCompleteRequest>(body) {
+        Ok(payload) => match complete_captcha_injection_record(&app_handle, payload) {
+            Ok(result) => serde_json::to_string(&result).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 400, &json!({ "error": error }).to_string());
+                return;
+            }
+        },
+        Err(error) => {
+            let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string());
+            return;
+        }
+    };
+
+    let _ = write_http_response(&mut stream, 200, &response);
+}
+
+fn write_http_response(stream: &mut TcpStream, status: u16, body: &str) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        404 => "Not Found",
+        _ => "OK",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    stream.write_all(response.as_bytes())
 }
 
 fn secret_account(setting_type: &str) -> String {
@@ -1894,6 +1979,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             app_health,
+            start_extension_bridge_server,
             local_config_path,
             get_money_site,
             save_money_site,
