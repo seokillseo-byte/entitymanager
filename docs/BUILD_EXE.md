@@ -44,6 +44,24 @@ Capture the full log with:
 pnpm desktop:build 2>&1 | Tee-Object build.log
 ```
 
+## Build On GitHub
+
+GitHub Actions can build the Windows `.exe` so normal testing does not require a local Rust/Tauri build.
+
+1. Open the GitHub repository.
+2. Go to `Actions`.
+3. Choose `Build Windows EXE`.
+4. Click `Run workflow`.
+5. Wait for the Windows build to finish.
+6. Download the artifact named `EntityManager-Windows-Installer`.
+7. Extract the downloaded `.zip`, then open the `.exe` installer inside it.
+
+The workflow file is:
+
+```text
+.github/workflows/build-windows-exe.yml
+```
+
 ## Packaging Rule
 
 The packaged desktop build must not require normal users to manually start Docker, PostgreSQL, Redis, or a web server. Use local SQLite and local workflow state for V1.
