@@ -604,6 +604,12 @@ textarea {
   background: #f8fafc;
 }
 
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
