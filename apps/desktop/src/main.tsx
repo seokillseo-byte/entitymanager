@@ -123,6 +123,7 @@ function App() {
 
   useEffect(() => {
     void loadLocalData();
+    void startExtensionBridge();
   }, []);
 
   const readiness = useMemo(() => calculateEntityReadiness(demoProjectSeed.readinessInput), []);
@@ -204,6 +205,15 @@ function App() {
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
+    }
+  }
+
+  async function startExtensionBridge() {
+    try {
+      const message = await invoke<string>("start_extension_bridge_server");
+      setStatusMessage(message);
+    } catch {
+      setStatusMessage("Preview mode: Extension bridge server is not running.");
     }
   }
 
@@ -1028,6 +1038,7 @@ function App() {
                       <span>{captchaBridgePayload.action} → {captchaBridgePayload.nextStep}</span>
                     </div>
                     <code>{captchaBridgePayload.tokenField}: {maskToken(captchaBridgePayload.solutionToken)}</code>
+                    <textarea readOnly rows={7} value={JSON.stringify(captchaBridgePayload, null, 2)} />
                     <div className="queue-actions">
                       <button className="secondary-action" type="button" onClick={() => completeCaptchaInjection(true)}>Mark Injected</button>
                       <button className="secondary-action danger-action" type="button" onClick={() => completeCaptchaInjection(false)}>Mark Failed</button>
