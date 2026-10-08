@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @entitymanager/desktop dev",
     "desktop:dev": "pnpm --filter @entitymanager/desktop tauri:dev",
+    "desktop:icon": "powershell -ExecutionPolicy Bypass -File scripts/ensure-tauri-icon.ps1",
     "desktop:build": "pnpm --filter @entitymanager/desktop tauri:build",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
