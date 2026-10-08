@@ -38,6 +38,8 @@ Phase 1.2 source work started:
 - Added Tauri v2 desktop capability config for the `main` window.
 - Removed the empty Tauri bundle icon array to avoid packaging-time config failure.
 - Added GitHub Actions workflow `Build Windows EXE` so the `.exe` can be built in GitHub and downloaded as an artifact.
+- Added Tauri icon generation and bundle metadata for cleaner Windows packaging.
+- Added automatic GitHub Release publishing for successful Windows installer builds.
 
 Implemented foundation:
 
@@ -79,7 +81,7 @@ Rust/Tauri backend compile still needs verification on a machine with `cargo`; t
 
 If `apps/desktop/src-tauri/target/release/bundle/nsis/` is missing after `pnpm desktop:build`, the Tauri build failed before packaging. Capture the full Windows log with `pnpm desktop:build 2>&1 | Tee-Object build.log`.
 
-For normal testing, prefer GitHub Actions: run `Build Windows EXE`, download `EntityManager-Windows-Installer`, extract it, then open the installer `.exe`.
+For normal testing, prefer GitHub Releases. Each successful `Build Windows EXE` run publishes a release with the Windows installer attached.
 
 `pnpm db:push` should be verified on Windows/local dev. In the current Linux sandbox, Prisma validation passes but `db:push` returns a blank schema-engine error under Node 24.
 
@@ -110,6 +112,15 @@ PostgreSQL, Redis, and Docker should not be required for normal end users. They 
 - API Integrations
 - Reports
 - Settings
+
+## Next Implementation Phase
+
+Phase 1.3 should continue with the real Platform Library:
+
+- SQLite table and Tauri commands for platforms.
+- Seeded platform records for social, blog 2.0, profile, forum, citation, portfolio, video, audio, and document-sharing entities.
+- Platform Library screen with filters, scoring, automation mode, difficulty, and entity value.
+- Preparation for Account Creation and Entity Care workflows.
 
 ## First Data Models To Design
 
