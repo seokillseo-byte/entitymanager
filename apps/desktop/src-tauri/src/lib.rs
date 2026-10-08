@@ -67,6 +67,22 @@ struct EntityProfileRecord {
     trust_signals: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountRecord {
+    id: String,
+    platform_id: String,
+    platform_name: String,
+    recommended_username: String,
+    status: String,
+    priority: String,
+    automation_mode: String,
+    evidence_url: String,
+    notes: String,
+    created_at: String,
+    updated_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -287,6 +303,53 @@ fn save_entity_profile(
     Ok(profile)
 }
 
+#[tauri::command]
+fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<AccountRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, platform_id, platform_name, recommended_username, status, priority,
+                    automation_mode, evidence_url, notes, created_at, updated_at
+             FROM accounts
+             ORDER BY
+                CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+                platform_name ASC",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AccountRecord {
+                id: row.get(0)?,
+                platform_id: row.get(1)?,
+                platform_name: row.get(2)?,
+                recommended_username: row.get(3)?,
+                status: row.get(4)?,
+                priority: row.get(5)?,
+                automation_mode: row.get(6)?,
+                evidence_url: row.get(7)?,
+                notes: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_account(app_handle: tauri::AppHandle, account: AccountRecord) -> Result<AccountRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_account_record(&connection, &account)?;
+
+    Ok(account)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -355,6 +418,20 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 topical_niche TEXT NOT NULL,
                 expertise_proof TEXT NOT NULL,
                 trust_signals TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS accounts (
+                id TEXT PRIMARY KEY,
+                platform_id TEXT NOT NULL,
+                platform_name TEXT NOT NULL,
+                recommended_username TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                automation_mode TEXT NOT NULL,
+                evidence_url TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             ",
         )
@@ -525,6 +602,43 @@ fn save_entity_profile_record(connection: &Connection, profile: &EntityProfileRe
     Ok(())
 }
 
+fn save_account_record(connection: &Connection, account: &AccountRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO accounts (
+                id, platform_id, platform_name, recommended_username, status, priority,
+                automation_mode, evidence_url, notes, created_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id)
+             DO UPDATE SET platform_id = excluded.platform_id,
+                           platform_name = excluded.platform_name,
+                           recommended_username = excluded.recommended_username,
+                           status = excluded.status,
+                           priority = excluded.priority,
+                           automation_mode = excluded.automation_mode,
+                           evidence_url = excluded.evidence_url,
+                           notes = excluded.notes,
+                           updated_at = excluded.updated_at",
+            params![
+                account.id,
+                account.platform_id,
+                account.platform_name,
+                account.recommended_username,
+                account.status,
+                account.priority,
+                account.automation_mode,
+                account.evidence_url,
+                account.notes,
+                account.created_at,
+                account.updated_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 fn default_money_site() -> MoneySiteRecord {
     MoneySiteRecord {
         domain: "example-money-site.com".to_string(),
@@ -616,7 +730,9 @@ pub fn run() {
             get_platforms,
             save_platform,
             get_entity_profile,
-            save_entity_profile
+            save_entity_profile,
+            get_accounts,
+            save_account
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
