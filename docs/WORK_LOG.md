@@ -111,6 +111,16 @@
 - Injection completion now updates the queue payload with injection metadata and writes a workflow run event for submit/verify readiness.
 - Updated the Entity Builder queue UI with a Bridge Payload preview plus Mark Injected / Mark Failed actions for desktop-side validation before a real extension is attached.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.11 changes.
+- Started Phase 1.12 Chrome Extension Bridge MVP.
+- Added `apps/extension`, a minimal Manifest V3 Chrome extension package.
+- Added a popup workflow that accepts the Desktop Bridge Payload JSON and local callback URL.
+- Added a content script that injects solved CAPTCHA tokens into `g-recaptcha-response` or the configured token field, then dispatches `input` and `change` events.
+- Added a background service worker that reports injection success or failure back to Desktop through the local bridge callback.
+- Added a Desktop local bridge server at `http://127.0.0.1:17321` with `POST /captcha/injection/complete`.
+- Desktop now starts the local extension bridge on app load and reuses the existing CAPTCHA injection completion workflow.
+- Added a read-only Bridge Payload JSON box in the Desktop UI so the MVP extension can be tested without native messaging yet.
+- Added `extension:build` and extension package build scripts.
+- Re-verified direct TypeScript checks for the extension, desktop, and shared package plus the direct extension static build after Phase 1.12 changes.
 
 ## Current Decision
 
@@ -122,4 +132,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.11 in the packaged `.exe`, especially resolved CAPTCHA payload handoff, Bridge Payload preview, Mark Injected / Mark Failed, workflow history creation, and account transition toward submit/verify readiness. Then implement the real browser automation or Chrome Extension side of the bridge.
+Validate Phase 1.12 in the packaged `.exe`: build the extension, load `apps/extension/dist` as an unpacked Chrome extension, paste the Desktop Bridge Payload JSON, inject into a test page with `g-recaptcha-response`, and confirm Desktop receives the callback plus workflow history update. Then move to Phase 1.13: submit/verify account step and automatic payload fetching so the extension no longer needs manual JSON copy/paste.
