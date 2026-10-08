@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "EntityManager",
         "width": 1440,
         "height": 920,
@@ -25,7 +26,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": []
+    "targets": ["nsis"]
   }
 }
