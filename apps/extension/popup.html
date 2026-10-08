@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EntityManager Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <strong>EntityManager Bridge</strong>
+        <span>CAPTCHA token injector MVP</span>
+      </header>
+
+      <label>
+        Bridge payload JSON
+        <textarea id="payloadInput" rows="10" placeholder="Paste Bridge Payload JSON from EntityManager"></textarea>
+      </label>
+
+      <label>
+        Desktop callback URL
+        <input id="callbackUrlInput" placeholder="http://127.0.0.1:17321/captcha/injection/complete" />
+      </label>
+
+      <div class="actions">
+        <button id="savePayloadButton" type="button">Save Payload</button>
+        <button id="injectButton" type="button">Inject Active Tab</button>
+      </div>
+
+      <pre id="statusOutput">Ready.</pre>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>
