@@ -46,6 +46,27 @@ struct PlatformRecord {
     notes: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntityProfileRecord {
+    id: String,
+    profile_type: String,
+    brand_name: String,
+    legal_name: String,
+    short_description: String,
+    full_description: String,
+    founder_name: String,
+    author_name: String,
+    email: String,
+    phone: String,
+    address: String,
+    same_as_urls: String,
+    target_keywords: String,
+    topical_niche: String,
+    expertise_proof: String,
+    trust_signals: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -207,6 +228,65 @@ fn save_platform(app_handle: tauri::AppHandle, platform: PlatformRecord) -> Resu
     Ok(platform)
 }
 
+#[tauri::command]
+fn get_entity_profile(app_handle: tauri::AppHandle) -> Result<EntityProfileRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, profile_type, brand_name, legal_name, short_description, full_description,
+                    founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
+                    topical_niche, expertise_proof, trust_signals
+             FROM entity_profiles
+             WHERE id = 'primary'",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let result = statement.query_row([], |row| {
+        Ok(EntityProfileRecord {
+            id: row.get(0)?,
+            profile_type: row.get(1)?,
+            brand_name: row.get(2)?,
+            legal_name: row.get(3)?,
+            short_description: row.get(4)?,
+            full_description: row.get(5)?,
+            founder_name: row.get(6)?,
+            author_name: row.get(7)?,
+            email: row.get(8)?,
+            phone: row.get(9)?,
+            address: row.get(10)?,
+            same_as_urls: row.get(11)?,
+            target_keywords: row.get(12)?,
+            topical_niche: row.get(13)?,
+            expertise_proof: row.get(14)?,
+            trust_signals: row.get(15)?,
+        })
+    });
+
+    match result {
+        Ok(record) => Ok(record),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            let fallback = default_entity_profile();
+            save_entity_profile_record(&connection, &fallback)?;
+            Ok(fallback)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+fn save_entity_profile(
+    app_handle: tauri::AppHandle,
+    profile: EntityProfileRecord,
+) -> Result<EntityProfileRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_entity_profile_record(&connection, &profile)?;
+
+    Ok(profile)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -256,6 +336,25 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 requires_captcha INTEGER NOT NULL DEFAULT 0,
                 requires_email INTEGER NOT NULL DEFAULT 1,
                 notes TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS entity_profiles (
+                id TEXT PRIMARY KEY,
+                profile_type TEXT NOT NULL,
+                brand_name TEXT NOT NULL,
+                legal_name TEXT NOT NULL,
+                short_description TEXT NOT NULL,
+                full_description TEXT NOT NULL,
+                founder_name TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                address TEXT NOT NULL,
+                same_as_urls TEXT NOT NULL,
+                target_keywords TEXT NOT NULL,
+                topical_niche TEXT NOT NULL,
+                expertise_proof TEXT NOT NULL,
+                trust_signals TEXT NOT NULL
             );
             ",
         )
@@ -377,6 +476,55 @@ fn save_platform_record(connection: &Connection, platform: &PlatformRecord) -> R
     Ok(())
 }
 
+fn save_entity_profile_record(connection: &Connection, profile: &EntityProfileRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO entity_profiles (
+                id, profile_type, brand_name, legal_name, short_description, full_description,
+                founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
+                topical_niche, expertise_proof, trust_signals
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id)
+             DO UPDATE SET profile_type = excluded.profile_type,
+                           brand_name = excluded.brand_name,
+                           legal_name = excluded.legal_name,
+                           short_description = excluded.short_description,
+                           full_description = excluded.full_description,
+                           founder_name = excluded.founder_name,
+                           author_name = excluded.author_name,
+                           email = excluded.email,
+                           phone = excluded.phone,
+                           address = excluded.address,
+                           same_as_urls = excluded.same_as_urls,
+                           target_keywords = excluded.target_keywords,
+                           topical_niche = excluded.topical_niche,
+                           expertise_proof = excluded.expertise_proof,
+                           trust_signals = excluded.trust_signals",
+            params![
+                profile.id,
+                profile.profile_type,
+                profile.brand_name,
+                profile.legal_name,
+                profile.short_description,
+                profile.full_description,
+                profile.founder_name,
+                profile.author_name,
+                profile.email,
+                profile.phone,
+                profile.address,
+                profile.same_as_urls,
+                profile.target_keywords,
+                profile.topical_niche,
+                profile.expertise_proof,
+                profile.trust_signals
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 fn default_money_site() -> MoneySiteRecord {
     MoneySiteRecord {
         domain: "example-money-site.com".to_string(),
@@ -385,6 +533,27 @@ fn default_money_site() -> MoneySiteRecord {
         language: "Vietnamese".to_string(),
         target_country: "Vietnam".to_string(),
         industry: "SEO services".to_string(),
+    }
+}
+
+fn default_entity_profile() -> EntityProfileRecord {
+    EntityProfileRecord {
+        id: "primary".to_string(),
+        profile_type: "organization".to_string(),
+        brand_name: "Example Money Site".to_string(),
+        legal_name: "Example Money Site Co., Ltd.".to_string(),
+        short_description: "SEO services brand focused on entity growth and authority building.".to_string(),
+        full_description: "Example Money Site helps businesses improve organic visibility through entity optimization, EEAT content planning, and durable authority signals across trusted platforms.".to_string(),
+        founder_name: "Nguyen Van A".to_string(),
+        author_name: "SEO Editorial Team".to_string(),
+        email: "contact@example-money-site.com".to_string(),
+        phone: "+84 900 000 000".to_string(),
+        address: "Ho Chi Minh City, Vietnam".to_string(),
+        same_as_urls: "https://example-money-site.com/about\nhttps://example-money-site.com/contact".to_string(),
+        target_keywords: "entity SEO, EEAT SEO, SEO services Vietnam".to_string(),
+        topical_niche: "SEO services and entity authority building".to_string(),
+        expertise_proof: "Case studies, client results, process documentation, author bio, and service pages.".to_string(),
+        trust_signals: "Consistent NAP, branded profiles, author pages, social proof, privacy/contact pages, and clear ownership.".to_string(),
     }
 }
 
@@ -445,7 +614,9 @@ pub fn run() {
             get_integration_settings,
             save_integration_setting,
             get_platforms,
-            save_platform
+            save_platform,
+            get_entity_profile,
+            save_entity_profile
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
