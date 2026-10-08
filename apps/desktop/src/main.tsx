@@ -3,8 +3,8 @@ import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { DashboardMetric, EntityModule } from "@entitymanager/shared";
-import { demoProjectSeed } from "@entitymanager/shared/seed";
+import type { AutomationMode, DashboardMetric, EntityModule, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
+import { demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
 
@@ -68,6 +68,10 @@ interface IntegrationSettingForm {
   isEnabled: boolean;
 }
 
+type PlatformTypeFilter = "all" | PlatformType;
+type AutomationModeFilter = "all" | AutomationMode;
+type DifficultyFilter = "all" | PlatformDifficulty;
+
 const fallbackMoneySite: MoneySiteForm = {
   domain: demoProjectSeed.moneySite.domain,
   homepageUrl: demoProjectSeed.moneySite.homepageUrl,
@@ -84,10 +88,20 @@ const fallbackSettings: IntegrationSettingForm[] = demoProjectSeed.integrations.
   isEnabled: integration.isEnabled
 }));
 
+const fallbackPlatforms: PlatformLibraryRecord[] = platformLibrarySeed;
+
+const platformTypes: PlatformTypeFilter[] = ["all", "social", "blog", "forum", "citation", "profile", "media", "document", "video", "audio", "portfolio", "qa", "local"];
+const automationModes: AutomationModeFilter[] = ["all", "auto", "semi_auto", "manual_review"];
+const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
+  const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
+  const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
+  const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
+  const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
   const [statusMessage, setStatusMessage] = useState("SQLite local data ready");
 
   useEffect(() => {
@@ -95,20 +109,56 @@ function App() {
   }, []);
 
   const readiness = useMemo(() => calculateEntityReadiness(demoProjectSeed.readinessInput), []);
+  const filteredPlatforms = useMemo(() => {
+    return platforms.filter((platform) => {
+      const typeMatches = platformTypeFilter === "all" || platform.type === platformTypeFilter;
+      const automationMatches = automationModeFilter === "all" || platform.automationMode === automationModeFilter;
+      const difficultyMatches = difficultyFilter === "all" || platform.difficulty === difficultyFilter;
+
+      return typeMatches && automationMatches && difficultyMatches;
+    });
+  }, [automationModeFilter, difficultyFilter, platformTypeFilter, platforms]);
+
+  const platformStats = useMemo(() => {
+    const total = platforms.length;
+    const semiAuto = platforms.filter((platform) => platform.automationMode === "semi_auto").length;
+    const manual = platforms.filter((platform) => platform.automationMode === "manual_review").length;
+    const averageAuthority = total
+      ? Math.round(platforms.reduce((sum, platform) => sum + platform.authorityScore, 0) / total)
+      : 0;
+
+    return { total, semiAuto, manual, averageAuthority };
+  }, [platforms]);
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
-        invoke<IntegrationSettingForm[]>("get_integration_settings")
+        invoke<IntegrationSettingForm[]>("get_integration_settings"),
+        invoke<PlatformLibraryRecord[]>("get_platforms")
       ]);
 
       setMoneySite(storedMoneySite);
       setSettings(storedSettings);
+      setPlatforms(storedPlatforms);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
     }
+  }
+
+  async function savePlatform(platform: PlatformLibraryRecord) {
+    try {
+      const saved = await invoke<PlatformLibraryRecord>("save_platform", { platform });
+      setPlatforms((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+      setStatusMessage(`${saved.name} platform saved`);
+    } catch {
+      setStatusMessage("Preview mode: Platform changes are local only");
+    }
+  }
+
+  function updatePlatform(id: string, patch: Partial<PlatformLibraryRecord>) {
+    setPlatforms((current) => current.map((platform) => (platform.id === id ? { ...platform, ...patch } : platform)));
   }
 
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
@@ -152,7 +202,11 @@ function App() {
           {modules.map((module) => {
             const Icon = icons[module];
             return (
-              <button className={module === activeModule ? "nav-item active" : "nav-item"} key={module} onClick={() => setActiveModule(module)}>
+              <button
+                className={module === activeModule ? "nav-item active" : "nav-item"}
+                key={module}
+                onClick={() => setActiveModule(module)}
+              >
                 <Icon size={18} />
                 <span>{module}</span>
               </button>
@@ -243,24 +297,136 @@ function App() {
                     <p className="eyebrow">Platform Library Seed</p>
                     <h2>Starter platform candidates</h2>
                   </div>
-                  <span className="badge">{demoProjectSeed.platforms.length} platforms</span>
+                  <span className="badge">{platforms.length} platforms</span>
                 </div>
                 <div className="platform-table">
-                  {demoProjectSeed.platforms.map((platform) => (
+                  {platforms.slice(0, 5).map((platform) => (
                     <div className="platform-row" key={platform.id}>
                       <div>
                         <strong>{platform.name}</strong>
-                        <span>{platform.type} / {platform.fit}</span>
+                        <span>{platform.type} / {platform.entityValue}</span>
                       </div>
-                      <span>Difficulty {platform.difficulty}</span>
+                      <span>Authority {platform.authorityScore}</span>
                       <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
-                      <em>{platform.supportsSemiAuto ? "Semi-auto" : "Manual"}</em>
+                      <em>{platform.automationMode.replace("_", " ")}</em>
                     </div>
                   ))}
                 </div>
               </article>
             </section>
           </>
+        )}
+
+        {activeModule === "Platform Library" && (
+          <section className="single-panel">
+            <section className="metrics-grid">
+              <article className="metric-card good">
+                <span>Total Platforms</span>
+                <strong>{platformStats.total}</strong>
+              </article>
+              <article className="metric-card neutral">
+                <span>Avg Authority</span>
+                <strong>{platformStats.averageAuthority}</strong>
+              </article>
+              <article className="metric-card warning">
+                <span>Semi-auto Ready</span>
+                <strong>{platformStats.semiAuto}</strong>
+              </article>
+              <article className="metric-card neutral">
+                <span>Manual Review</span>
+                <strong>{platformStats.manual}</strong>
+              </article>
+            </section>
+
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Platform Library</p>
+                  <h2>SQLite-backed entity platform catalog</h2>
+                </div>
+                <span className="badge">{filteredPlatforms.length} shown</span>
+              </div>
+
+              <div className="filter-bar">
+                <label>
+                  Type
+                  <select value={platformTypeFilter} onChange={(event) => setPlatformTypeFilter(event.target.value as PlatformTypeFilter)}>
+                    {platformTypes.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Automation
+                  <select value={automationModeFilter} onChange={(event) => setAutomationModeFilter(event.target.value as AutomationModeFilter)}>
+                    {automationModes.map((mode) => (
+                      <option key={mode} value={mode}>{mode.replace("_", " ")}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Difficulty
+                  <select value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value as DifficultyFilter)}>
+                    {difficulties.map((difficulty) => (
+                      <option key={difficulty} value={difficulty}>{difficulty}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="platform-library">
+                {filteredPlatforms.map((platform) => (
+                  <article className="platform-card" key={platform.id}>
+                    <div className="platform-card-header">
+                      <div>
+                        <p className="eyebrow">{platform.type} / {platform.entityValue}</p>
+                        <h2>{platform.name}</h2>
+                        <a href={platform.homepageUrl}>{platform.homepageUrl}</a>
+                      </div>
+                      <div className="authority-score">
+                        <span>Authority</span>
+                        <strong>{platform.authorityScore}</strong>
+                      </div>
+                    </div>
+
+                    <p className="platform-notes">{platform.notes}</p>
+
+                    <div className="platform-meta">
+                      <span>{platform.difficulty}</span>
+                      <span>{platform.automationMode.replace("_", " ")}</span>
+                      <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                      <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
+                    </div>
+
+                    <div className="platform-edit-grid">
+                      <label>
+                        Authority
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={platform.authorityScore}
+                          onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Automation
+                        <select
+                          value={platform.automationMode}
+                          onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}
+                        >
+                          <option value="auto">auto</option>
+                          <option value="semi_auto">semi auto</option>
+                          <option value="manual_review">manual review</option>
+                        </select>
+                      </label>
+                      <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save Platform</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </article>
+          </section>
         )}
 
         {activeModule === "Money Sites" && (
@@ -274,12 +440,30 @@ function App() {
                 <button className="primary-action" type="submit">Save Money Site</button>
               </div>
               <div className="form-grid">
-                <label>Domain<input value={moneySite.domain} onChange={(event) => setMoneySite({ ...moneySite, domain: event.target.value })} /></label>
-                <label>Homepage URL<input value={moneySite.homepageUrl} onChange={(event) => setMoneySite({ ...moneySite, homepageUrl: event.target.value })} /></label>
-                <label>Sitemap URL<input value={moneySite.sitemapUrl} onChange={(event) => setMoneySite({ ...moneySite, sitemapUrl: event.target.value })} /></label>
-                <label>Language<input value={moneySite.language} onChange={(event) => setMoneySite({ ...moneySite, language: event.target.value })} /></label>
-                <label>Target Country<input value={moneySite.targetCountry} onChange={(event) => setMoneySite({ ...moneySite, targetCountry: event.target.value })} /></label>
-                <label>Industry<input value={moneySite.industry} onChange={(event) => setMoneySite({ ...moneySite, industry: event.target.value })} /></label>
+                <label>
+                  Domain
+                  <input value={moneySite.domain} onChange={(event) => setMoneySite({ ...moneySite, domain: event.target.value })} />
+                </label>
+                <label>
+                  Homepage URL
+                  <input value={moneySite.homepageUrl} onChange={(event) => setMoneySite({ ...moneySite, homepageUrl: event.target.value })} />
+                </label>
+                <label>
+                  Sitemap URL
+                  <input value={moneySite.sitemapUrl} onChange={(event) => setMoneySite({ ...moneySite, sitemapUrl: event.target.value })} />
+                </label>
+                <label>
+                  Language
+                  <input value={moneySite.language} onChange={(event) => setMoneySite({ ...moneySite, language: event.target.value })} />
+                </label>
+                <label>
+                  Target Country
+                  <input value={moneySite.targetCountry} onChange={(event) => setMoneySite({ ...moneySite, targetCountry: event.target.value })} />
+                </label>
+                <label>
+                  Industry
+                  <input value={moneySite.industry} onChange={(event) => setMoneySite({ ...moneySite, industry: event.target.value })} />
+                </label>
               </div>
             </form>
           </section>
@@ -288,29 +472,41 @@ function App() {
         {activeModule === "Settings" && (
           <section className="single-panel">
             <article className="panel form-panel">
-              <div className="panel-header">
-                <div>
-                  <p className="eyebrow">Settings</p>
-                  <h2>API keys stored in local SQLite</h2>
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h2>API keys stored in local SQLite</h2>
+              </div>
+            </div>
+            <div className="settings-grid">
+              {settings.map((setting) => (
+                <div className="setting-card" key={setting.settingType}>
+                  <label>
+                    Provider
+                    <input value={setting.provider} onChange={(event) => updateSetting(setting.settingType, { provider: event.target.value })} />
+                  </label>
+                  <label>
+                    API Key
+                    <input
+                      type="password"
+                      value={setting.apiKey}
+                      placeholder={`${setting.settingType} API key`}
+                      onChange={(event) => updateSetting(setting.settingType, { apiKey: event.target.value })}
+                    />
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={setting.isEnabled}
+                      onChange={(event) => updateSetting(setting.settingType, { isEnabled: event.target.checked })}
+                    />
+                    Enable {setting.settingType}
+                  </label>
+                  <button className="secondary-action" type="button" onClick={() => saveSetting(setting)}>Save</button>
                 </div>
-              </div>
-              <div className="settings-grid">
-                {settings.map((setting) => (
-                  <div className="setting-card" key={setting.settingType}>
-                    <label>Provider<input value={setting.provider} onChange={(event) => updateSetting(setting.settingType, { provider: event.target.value })} /></label>
-                    <label>
-                      API Key
-                      <input type="password" value={setting.apiKey} placeholder={`${setting.settingType} API key`} onChange={(event) => updateSetting(setting.settingType, { apiKey: event.target.value })} />
-                    </label>
-                    <label className="checkbox-row">
-                      <input type="checkbox" checked={setting.isEnabled} onChange={(event) => updateSetting(setting.settingType, { isEnabled: event.target.checked })} />
-                      Enable {setting.settingType}
-                    </label>
-                    <button className="secondary-action" type="button" onClick={() => saveSetting(setting)}>Save</button>
-                  </div>
-                ))}
-              </div>
-            </article>
+              ))}
+            </div>
+          </article>
           </section>
         )}
       </section>
