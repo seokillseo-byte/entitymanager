@@ -593,6 +593,18 @@ h2 {
   font-size: 12px;
 }
 
+.bridge-preview textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
 .form-grid,
 .settings-grid {
   display: grid;
