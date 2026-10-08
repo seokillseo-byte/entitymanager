@@ -22,6 +22,7 @@ pnpm desktop:dev
 ```bash
 pnpm install
 pnpm db:generate
+pnpm desktop:icon
 pnpm desktop:build
 ```
 
@@ -55,6 +56,14 @@ GitHub Actions can build the Windows `.exe` so normal testing does not require a
 5. Wait for the Windows build to finish.
 6. Download the artifact named `EntityManager-Windows-Installer`.
 7. Extract the downloaded `.zip`, then open the `.exe` installer inside it.
+
+Successful GitHub builds also create a release named like:
+
+```text
+EntityManager Desktop v0.1.0 build <run-number>
+```
+
+For the easiest download path, open `Releases` and download the `.exe` installer asset directly.
 
 The workflow file is:
 
