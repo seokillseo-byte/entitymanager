@@ -41,6 +41,12 @@
 - Added a reusable PowerShell icon generator for Tauri Windows packaging.
 - Configured Tauri bundle icon and publisher metadata.
 - Updated the Windows build workflow to publish successful installer builds as GitHub Releases.
+- Started Phase 1.3 Platform Library.
+- Added shared Platform Library record types and expanded seeded platform data across social, blog, profile, citation, portfolio, video, audio, document, QA, local, and media entities.
+- Added local SQLite `platforms` table with seed records.
+- Added Tauri commands `get_platforms` and `save_platform`.
+- Added a real Platform Library screen with type, automation, and difficulty filters plus platform authority/entity metadata.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Platform Library changes.
 
 ## Current Decision
 
@@ -52,4 +58,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue with Phase 1.3 by using GitHub Releases for installer downloads, then start the real Platform Library screen and SQLite-backed platform data.
+Continue Phase 1.3 by validating the Platform Library in the packaged `.exe`, then implement Entity Profile Builder and Account Creation workflow scaffolding.
