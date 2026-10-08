@@ -96,6 +96,14 @@
 - Added an Entity Builder queue action to send CAPTCHA queue items to the configured provider.
 - Kept incomplete CAPTCHA payloads in `waiting` status with a clear message instead of sending invalid provider requests.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.9 frontend/shared changes.
+- Started Phase 1.10 CAPTCHA Result Polling and Token Capture.
+- Added provider result polling for 2Captcha and CapSolver through `getTaskResult`.
+- Added a Tauri command to poll CAPTCHA queue items using the stored provider task id.
+- Captured solved CAPTCHA tokens into queue payload as `solutionToken`.
+- Added an `automationHook` payload block for future browser automation or extension token injection.
+- Updated CAPTCHA queue UI with a Poll Result action.
+- Queue items now move to `resolved` when a provider returns a ready solution token, or remain `waiting` when still processing.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.10 changes.
 
 ## Current Decision
 
@@ -107,4 +115,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.9 in the packaged `.exe`, especially CAPTCHA key save/load, CAPTCHA Live Test, and Send CAPTCHA queue behavior. Then implement CAPTCHA result polling and token capture.
+Validate Phase 1.10 in the packaged `.exe`, especially Send CAPTCHA, Poll Result, resolved queue status, and captured solution token payload. Then implement the browser automation/extension injection bridge.
