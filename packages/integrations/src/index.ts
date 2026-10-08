@@ -16,7 +16,7 @@ export function buildProviderConfig(input: Omit<ProviderConfig, "capabilities">)
 }
 
 export function testIntegrationAdapter(config: ProviderConfig): IntegrationAdapterResult {
-  const hasStoredKey = config.keyStatus === "stored" || config.keyStatus === "masked";
+  const hasStoredKey = config.keyStatus === "stored" || config.keyStatus === "masked" || config.keyStatus === "secure";
   const isReady = config.isEnabled && hasStoredKey;
 
   return {
