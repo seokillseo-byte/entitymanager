@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -98,6 +98,7 @@ const platformTypes: PlatformTypeFilter[] = ["all", "social", "blog", "forum", "
 const automationModes: AutomationModeFilter[] = ["all", "auto", "semi_auto", "manual_review"];
 const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
 const accountStatuses: AccountStatus[] = ["planned", "created", "needs_manual_review", "failed", "verified"];
+const queueStatuses: AutomationQueueStatus[] = ["queued", "waiting", "resolved", "failed"];
 
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
@@ -106,6 +107,8 @@ function App() {
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
+  const [automationQueue, setAutomationQueue] = useState<AutomationQueueItem[]>([]);
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -174,12 +177,14 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile, storedAccounts] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile, storedAccounts, storedRuns, storedQueue] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
         invoke<EntityProfileRecord>("get_entity_profile"),
-        invoke<AccountRecord[]>("get_accounts")
+        invoke<AccountRecord[]>("get_accounts"),
+        invoke<WorkflowRunRecord[]>("get_workflow_runs"),
+        invoke<AutomationQueueItem[]>("get_automation_queue")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -187,6 +192,8 @@ function App() {
       setPlatforms(storedPlatforms);
       setEntityProfile(storedEntityProfile);
       setAccounts(storedAccounts);
+      setWorkflowRuns(storedRuns);
+      setAutomationQueue(storedQueue);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -240,7 +247,8 @@ function App() {
       updatedAt: timestamp
     };
 
-    await persistAccount(account, `${plan.platformName} account saved`);
+    await persistAccount(account, `${plan.platformName} account saved`, "save_account", "Account record created from generated plan");
+    await enqueueAutomationGates(account, plan);
   }
 
   async function updateAccount(id: string, patch: Partial<AccountRecord>) {
@@ -250,10 +258,19 @@ function App() {
       return;
     }
 
-    await persistAccount({ ...current, ...patch, updatedAt: new Date().toISOString() }, `${current.platformName} status saved`);
+    const nextAccount = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    await persistAccount(nextAccount, `${current.platformName} status saved`, "update_status", `Account updated to ${nextAccount.status}`);
+
+    if (patch.status === "needs_manual_review") {
+      await saveQueueItem(buildQueueItem(nextAccount, "manual_review", "waiting", "Manual review requested from account status."));
+    }
+
+    if (patch.status === "verified") {
+      await saveWorkflowRun(nextAccount, "verify_account", "completed", "Account marked as verified.");
+    }
   }
 
-  async function persistAccount(account: AccountRecord, successMessage: string) {
+  async function persistAccount(account: AccountRecord, successMessage: string, action: string, message: string) {
     try {
       const saved = await invoke<AccountRecord>("save_account", { account });
       setAccounts((current) => {
@@ -266,6 +283,7 @@ function App() {
         return current.map((item) => (item.id === saved.id ? saved : item));
       });
       setStatusMessage(successMessage);
+      await saveWorkflowRun(saved, action, account.status === "failed" ? "failed" : "completed", message);
     } catch {
       setAccounts((current) => {
         const exists = current.some((item) => item.id === account.id);
@@ -277,7 +295,82 @@ function App() {
         return current.map((item) => (item.id === account.id ? account : item));
       });
       setStatusMessage("Preview mode: Account changes are local only");
+      await saveWorkflowRun(account, action, "completed", message);
     }
+  }
+
+  async function saveWorkflowRun(account: AccountRecord, action: string, status: WorkflowRunStatus, message: string) {
+    const timestamp = new Date().toISOString();
+    const run: WorkflowRunRecord = {
+      id: `run-${account.id}-${Date.now()}`,
+      accountId: account.id,
+      platformName: account.platformName,
+      action,
+      status,
+      message,
+      createdAt: timestamp
+    };
+
+    try {
+      const saved = await invoke<WorkflowRunRecord>("save_workflow_run", { run });
+      setWorkflowRuns((current) => [saved, ...current].slice(0, 100));
+    } catch {
+      setWorkflowRuns((current) => [run, ...current].slice(0, 100));
+    }
+  }
+
+  async function enqueueAutomationGates(account: AccountRecord, plan: AccountCreationPlanItem) {
+    const gates: AutomationGateType[] = [];
+
+    if (plan.workflowSteps.some((step) => step.toLowerCase().includes("captcha"))) {
+      gates.push("captcha");
+    }
+
+    gates.push("email");
+
+    if (plan.automationMode === "manual_review") {
+      gates.push("manual_review");
+    }
+
+    gates.push("evidence");
+
+    for (const gate of gates) {
+      await saveQueueItem(buildQueueItem(account, gate, gate === "evidence" ? "waiting" : "queued", `${gate.replace("_", " ")} gate prepared for ${account.platformName}.`));
+    }
+  }
+
+  function buildQueueItem(account: AccountRecord, gateType: AutomationGateType, status: AutomationQueueStatus, payload: string): AutomationQueueItem {
+    const timestamp = new Date().toISOString();
+
+    return {
+      id: `queue-${account.id}-${gateType}`,
+      accountId: account.id,
+      platformName: account.platformName,
+      gateType,
+      status,
+      payload,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  async function saveQueueItem(item: AutomationQueueItem) {
+    try {
+      const saved = await invoke<AutomationQueueItem>("save_automation_queue_item", { item });
+      setAutomationQueue((current) => upsertById(current, saved));
+    } catch {
+      setAutomationQueue((current) => upsertById(current, item));
+    }
+  }
+
+  async function updateQueueItem(id: string, patch: Partial<AutomationQueueItem>) {
+    const current = automationQueue.find((item) => item.id === id);
+
+    if (!current) {
+      return;
+    }
+
+    await saveQueueItem({ ...current, ...patch, updatedAt: new Date().toISOString() });
   }
 
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
@@ -686,8 +779,8 @@ function App() {
                 <strong>{accounts.filter((account) => account.status === "needs_manual_review").length}</strong>
               </article>
               <article className="metric-card neutral">
-                <span>Generated Plans</span>
-                <strong>{accountCreationPlan.length}</strong>
+                <span>Queue Items</span>
+                <strong>{automationQueue.length}</strong>
               </article>
             </section>
 
@@ -766,6 +859,56 @@ function App() {
                 })}
               </div>
             </article>
+
+            <section className="entity-builder-grid">
+              <article className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Automation Queue</p>
+                    <h2>Prepared gates for API/manual handling</h2>
+                  </div>
+                  <span className="badge">{automationQueue.filter((item) => item.status !== "resolved").length} open</span>
+                </div>
+
+                <div className="queue-list">
+                  {automationQueue.map((item) => (
+                    <div className="queue-row" key={item.id}>
+                      <div>
+                        <strong>{item.platformName}</strong>
+                        <span>{item.gateType.replace("_", " ")} / {item.payload}</span>
+                      </div>
+                      <select value={item.status} onChange={(event) => updateQueueItem(item.id, { status: event.target.value as AutomationQueueStatus })}>
+                        {queueStatuses.map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Workflow History</p>
+                    <h2>Latest account events</h2>
+                  </div>
+                  <span className="badge">{workflowRuns.length} runs</span>
+                </div>
+
+                <div className="workflow-history">
+                  {workflowRuns.slice(0, 12).map((run) => (
+                    <div className="history-row" key={run.id}>
+                      <div>
+                        <strong>{run.platformName}</strong>
+                        <span>{run.action} / {run.message}</span>
+                      </div>
+                      <em>{run.status}</em>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
           </section>
         )}
 
@@ -864,6 +1007,16 @@ function workflowStepsForPlatform(platform: PlatformLibraryRecord): string[] {
   }
 
   return steps;
+}
+
+function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
+  const exists = items.some((item) => item.id === next.id);
+
+  if (!exists) {
+    return [next, ...items];
+  }
+
+  return items.map((item) => (item.id === next.id ? next : item));
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
