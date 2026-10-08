@@ -1,8 +1,11 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
+
+const SECRET_SERVICE: &str = "EntityManager";
 
 #[tauri::command]
 fn app_health() -> &'static str {
@@ -196,12 +199,20 @@ fn get_integration_settings(app_handle: tauri::AppHandle) -> Result<Vec<Integrat
 
     let rows = statement
         .query_map([], |row| {
+            let setting_type: String = row.get(0)?;
+            let masked_key: String = row.get(2)?;
+            let key_status = if has_secret(&setting_type) {
+                "secure".to_string()
+            } else {
+                key_status_from_mask(&masked_key)
+            };
+
             Ok(IntegrationSettingRecord {
-                setting_type: row.get(0)?,
+                setting_type,
                 provider: row.get(1)?,
-                api_key: row.get(2)?,
+                api_key: masked_key,
                 is_enabled: row.get::<_, i64>(3)? == 1,
-                key_status: key_status_from_mask(&row.get::<_, String>(2)?),
+                key_status,
                 last_test_at: row.get(4)?,
             })
         })
@@ -218,12 +229,19 @@ fn save_integration_setting(
 ) -> Result<IntegrationSettingRecord, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
-    let stored_key = if setting.api_key.trim().is_empty() {
-        existing_integration_key(&connection, &setting.setting_type)?
+    let (masked_key, key_status) = if setting.api_key.trim().is_empty() {
+        let existing_key = existing_integration_key(&connection, &setting.setting_type)?;
+        let status = if has_secret(&setting.setting_type) {
+            "secure".to_string()
+        } else {
+            key_status_from_mask(&existing_key)
+        };
+
+        (existing_key, status)
     } else {
-        mask_secret(&setting.api_key)
+        save_secret(&setting.setting_type, &setting.api_key)?;
+        (mask_secret(&setting.api_key), "secure".to_string())
     };
-    let key_status = key_status_from_mask(&stored_key);
 
     connection
         .execute(
@@ -237,7 +255,7 @@ fn save_integration_setting(
             params![
                 setting.setting_type,
                 setting.provider,
-                stored_key,
+                masked_key,
                 if setting.is_enabled { 1 } else { 0 },
                 key_status
             ],
@@ -245,7 +263,7 @@ fn save_integration_setting(
         .map_err(|error| error.to_string())?;
 
     Ok(IntegrationSettingRecord {
-        api_key: stored_key,
+        api_key: masked_key,
         key_status,
         ..setting
     })
@@ -259,10 +277,11 @@ fn test_integration_setting(
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
     let stored_key = existing_integration_key(&connection, &setting.setting_type)?;
+    let has_secure_key = has_secret(&setting.setting_type);
     let capabilities = integration_capabilities(&setting.setting_type);
-    let is_ready = setting.is_enabled && !stored_key.is_empty();
+    let is_ready = setting.is_enabled && (has_secure_key || !stored_key.is_empty());
     let message = if is_ready {
-        format!("{} adapter is configured for dry-run validation.", setting.provider)
+        format!("{} adapter is configured for dry-run validation with secure key metadata.", setting.provider)
     } else {
         format!("{} adapter needs an enabled setting and stored key before live use.", setting.provider)
     };
@@ -283,6 +302,62 @@ fn test_integration_setting(
         message,
         capabilities,
     })
+}
+
+#[tauri::command]
+async fn test_live_integration_setting(
+    app_handle: tauri::AppHandle,
+    setting: IntegrationSettingRecord,
+) -> Result<IntegrationAdapterResult, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let capabilities = integration_capabilities(&setting.setting_type);
+    let timestamp = setting.last_test_at.clone();
+
+    if !setting.is_enabled {
+        update_integration_test_time(&connection, &setting.setting_type, &timestamp)?;
+
+        return Ok(IntegrationAdapterResult {
+            setting_type: setting.setting_type,
+            provider: setting.provider,
+            is_ready: false,
+            mode: "live".to_string(),
+            message: "Enable this provider before running a live adapter test.".to_string(),
+            capabilities,
+        });
+    }
+
+    let api_key = match read_secret(&setting.setting_type) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            update_integration_test_time(&connection, &setting.setting_type, &timestamp)?;
+
+            return Ok(IntegrationAdapterResult {
+                setting_type: setting.setting_type,
+                provider: setting.provider,
+                is_ready: false,
+                mode: "live".to_string(),
+                message: "No encrypted API key found in the OS credential store. Save the key again first.".to_string(),
+                capabilities,
+            });
+        }
+    };
+
+    let result = match setting.setting_type.as_str() {
+        "ai" => test_live_ai_provider(&setting.provider, &api_key, capabilities).await,
+        _ => Ok(IntegrationAdapterResult {
+            setting_type: setting.setting_type.clone(),
+            provider: setting.provider.clone(),
+            is_ready: false,
+            mode: "live".to_string(),
+            message: "Live adapter is currently implemented for AI/Gemini first. This provider is queued for the next adapter pass.".to_string(),
+            capabilities,
+        }),
+    }?;
+
+    update_integration_test_time(&connection, &setting.setting_type, &timestamp)?;
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -725,6 +800,45 @@ fn existing_integration_key(connection: &Connection, setting_type: &str) -> Resu
     }
 }
 
+fn update_integration_test_time(connection: &Connection, setting_type: &str, timestamp: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE integration_settings SET last_test_at = ?1 WHERE setting_type = ?2",
+            params![timestamp, setting_type],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn secret_account(setting_type: &str) -> String {
+    format!("integration:{setting_type}")
+}
+
+fn save_secret(setting_type: &str, value: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(SECRET_SERVICE, &secret_account(setting_type))
+        .map_err(|error| format!("Failed to open OS credential store: {error}"))?;
+
+    entry
+        .set_password(value.trim())
+        .map_err(|error| format!("Failed to save encrypted API key: {error}"))
+}
+
+fn read_secret(setting_type: &str) -> Result<String, String> {
+    let entry = keyring::Entry::new(SECRET_SERVICE, &secret_account(setting_type))
+        .map_err(|error| format!("Failed to open OS credential store: {error}"))?;
+
+    entry
+        .get_password()
+        .map_err(|error| format!("Failed to read encrypted API key: {error}"))
+}
+
+fn has_secret(setting_type: &str) -> bool {
+    read_secret(setting_type)
+        .map(|secret| !secret.trim().is_empty())
+        .unwrap_or(false)
+}
+
 fn key_status_from_mask(value: &str) -> String {
     if value.trim().is_empty() {
         "missing".to_string()
@@ -764,6 +878,78 @@ fn integration_capabilities(setting_type: &str) -> Vec<String> {
         "indexing" => vec!["index_url".to_string()],
         _ => Vec::new(),
     }
+}
+
+async fn test_live_ai_provider(
+    provider: &str,
+    api_key: &str,
+    capabilities: Vec<String>,
+) -> Result<IntegrationAdapterResult, String> {
+    let normalized_provider = provider.to_lowercase();
+
+    if !normalized_provider.contains("gemini") && !normalized_provider.contains("google") {
+        return Ok(IntegrationAdapterResult {
+            setting_type: "ai".to_string(),
+            provider: provider.to_string(),
+            is_ready: false,
+            mode: "live".to_string(),
+            message: "First live AI adapter supports Google Gemini providers. Rename/select Gemini or keep this provider in dry-run mode.".to_string(),
+            capabilities,
+        });
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        ))
+        .json(&json!({
+            "contents": [{
+                "parts": [{
+                    "text": "Reply with exactly: EntityManager AI adapter ready."
+                }]
+            }]
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Gemini adapter request failed: {error}"))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Gemini adapter response could not be read: {error}"))?;
+
+    if !status.is_success() {
+        return Ok(IntegrationAdapterResult {
+            setting_type: "ai".to_string(),
+            provider: provider.to_string(),
+            is_ready: false,
+            mode: "live".to_string(),
+            message: format!("Gemini live test failed with HTTP {status}. Check API key, quota, billing, and provider access."),
+            capabilities,
+        });
+    }
+
+    let preview = extract_text_preview(&body);
+
+    Ok(IntegrationAdapterResult {
+        setting_type: "ai".to_string(),
+        provider: provider.to_string(),
+        is_ready: true,
+        mode: "live".to_string(),
+        message: format!("Gemini live adapter responded successfully: {preview}"),
+        capabilities,
+    })
+}
+
+fn extract_text_preview(body: &str) -> String {
+    let parsed = serde_json::from_str::<serde_json::Value>(body).unwrap_or_else(|_| json!({}));
+    let text = parsed["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .unwrap_or("response received");
+
+    text.chars().take(120).collect()
 }
 
 fn ensure_default_platforms(connection: &Connection) -> Result<(), String> {
@@ -1065,6 +1251,7 @@ pub fn run() {
             get_integration_settings,
             save_integration_setting,
             test_integration_setting,
+            test_live_integration_setting,
             get_platforms,
             save_platform,
             get_entity_profile,
