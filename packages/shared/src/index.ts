@@ -43,6 +43,9 @@ export type AccountStatus = "planned" | "created" | "needs_manual_review" | "fai
 export type WorkflowRunStatus = "queued" | "running" | "blocked" | "completed" | "failed";
 export type AutomationGateType = "captcha" | "email" | "manual_review" | "evidence";
 export type AutomationQueueStatus = "queued" | "waiting" | "resolved" | "failed";
+export type IntegrationType = "ai" | "captcha" | "email" | "proxy" | "indexing";
+export type ProviderKeyStatus = "missing" | "stored" | "masked";
+export type IntegrationCapability = "generate_text" | "solve_captcha" | "send_email" | "receive_email" | "proxy" | "index_url";
 
 export interface MoneySiteProfile {
   id: string;
@@ -152,10 +155,28 @@ export interface AutomationQueueItem {
 }
 
 export interface LocalIntegrationSetting {
-  type: "ai" | "captcha" | "email" | "proxy" | "indexing";
+  type: IntegrationType;
   provider: string;
   isEnabled: boolean;
   maskedValue: string;
+}
+
+export interface ProviderConfig {
+  type: IntegrationType;
+  provider: string;
+  isEnabled: boolean;
+  keyStatus: ProviderKeyStatus;
+  maskedValue: string;
+  capabilities: IntegrationCapability[];
+}
+
+export interface IntegrationAdapterResult {
+  type: IntegrationType;
+  provider: string;
+  isReady: boolean;
+  mode: "dry_run" | "live";
+  message: string;
+  capabilities: IntegrationCapability[];
 }
 
 export interface DemoProjectSeed {
