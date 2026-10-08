@@ -143,6 +143,11 @@ h2 {
   cursor: pointer;
 }
 
+.danger-action {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
 .status-banner {
   border: 1px solid #bfdbfe;
   border-radius: 8px;
@@ -555,6 +560,37 @@ h2 {
 .queue-actions {
   display: grid;
   gap: 8px;
+}
+
+.bridge-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f0fdfa;
+}
+
+.bridge-preview strong,
+.bridge-preview span,
+.bridge-preview code {
+  display: block;
+}
+
+.bridge-preview span {
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.bridge-preview code {
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ccfbf1;
+  color: #134e4a;
+  font-size: 12px;
 }
 
 .form-grid,
