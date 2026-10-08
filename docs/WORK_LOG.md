@@ -87,6 +87,15 @@
 - Kept non-AI providers behind the adapter interface with honest “queued for next adapter pass” live-test messaging.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.8 frontend/shared changes.
 - Could not run local `cargo check` because this Linux sandbox does not have `cargo`; Windows Rust/Tauri compile should be validated by GitHub Actions.
+- Started Phase 1.9 CAPTCHA Provider Adapter and Queue Execution Hook.
+- Added a Tauri command to execute CAPTCHA automation queue items.
+- Added 2Captcha and CapSolver task submission support for `RecaptchaV2TaskProxyless` / `ReCaptchaV2TaskProxyLess`.
+- Added CAPTCHA live checks through lightweight provider balance endpoints before queue execution.
+- Updated CAPTCHA queue payloads to use JSON with `captchaType`, `websiteUrl`, and `websiteKey`.
+- Added a Settings live test path for CAPTCHA providers.
+- Added an Entity Builder queue action to send CAPTCHA queue items to the configured provider.
+- Kept incomplete CAPTCHA payloads in `waiting` status with a clear message instead of sending invalid provider requests.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.9 frontend/shared changes.
 
 ## Current Decision
 
@@ -98,4 +107,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.8 in the packaged `.exe`, especially saving an AI/Gemini key, reloading Settings, and running Live Test. Then implement the next live provider adapter for CAPTCHA or email.
+Validate Phase 1.9 in the packaged `.exe`, especially CAPTCHA key save/load, CAPTCHA Live Test, and Send CAPTCHA queue behavior. Then implement CAPTCHA result polling and token capture.
