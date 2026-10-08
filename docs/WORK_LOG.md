@@ -69,6 +69,14 @@
 - Added queue generation for CAPTCHA, email, manual review, and evidence gates.
 - Added Automation Queue and Workflow History panels to the Entity Builder screen.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.6 changes.
+- Started Phase 1.7 Integration Adapter Foundation and Secure API Key Handling.
+- Added `@entitymanager/integrations` package with dry-run adapter helpers and normalized provider capabilities.
+- Added shared provider config, key status, capability, and adapter result types.
+- Updated Settings to use secure key placeholders instead of displaying stored secrets.
+- Updated local SQLite integration settings with key status and last test metadata.
+- Added Tauri dry-run command for integration adapter checks.
+- Added Settings dry-run test UI for AI, CAPTCHA, email, proxy, and indexing providers.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.7 changes.
 
 ## Current Decision
 
@@ -80,4 +88,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.6 in the packaged `.exe`, then implement the first real integration adapter hooks for CAPTCHA/email providers.
+Validate Phase 1.7 in the packaged `.exe`, then implement encrypted secret storage and first live CAPTCHA/email provider adapters.
