@@ -29,6 +29,23 @@ struct IntegrationSettingRecord {
     is_enabled: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformRecord {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    platform_type: String,
+    homepage_url: String,
+    authority_score: i64,
+    difficulty: String,
+    automation_mode: String,
+    entity_value: String,
+    requires_captcha: bool,
+    requires_email: bool,
+    notes: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -144,6 +161,52 @@ fn save_integration_setting(
     Ok(setting)
 }
 
+#[tauri::command]
+fn get_platforms(app_handle: tauri::AppHandle) -> Result<Vec<PlatformRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_platforms(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, platform_type, homepage_url, authority_score, difficulty,
+                    automation_mode, entity_value, requires_captcha, requires_email, notes
+             FROM platforms
+             ORDER BY authority_score DESC, name ASC",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(PlatformRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                platform_type: row.get(2)?,
+                homepage_url: row.get(3)?,
+                authority_score: row.get(4)?,
+                difficulty: row.get(5)?,
+                automation_mode: row.get(6)?,
+                entity_value: row.get(7)?,
+                requires_captcha: row.get::<_, i64>(8)? == 1,
+                requires_email: row.get::<_, i64>(9)? == 1,
+                notes: row.get(10)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_platform(app_handle: tauri::AppHandle, platform: PlatformRecord) -> Result<PlatformRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_platform_record(&connection, &platform)?;
+
+    Ok(platform)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -179,6 +242,20 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 provider TEXT NOT NULL,
                 api_key TEXT NOT NULL DEFAULT '',
                 is_enabled INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS platforms (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                platform_type TEXT NOT NULL,
+                homepage_url TEXT NOT NULL,
+                authority_score INTEGER NOT NULL,
+                difficulty TEXT NOT NULL,
+                automation_mode TEXT NOT NULL,
+                entity_value TEXT NOT NULL,
+                requires_captcha INTEGER NOT NULL DEFAULT 0,
+                requires_email INTEGER NOT NULL DEFAULT 1,
+                notes TEXT NOT NULL DEFAULT ''
             );
             ",
         )
@@ -233,6 +310,73 @@ fn ensure_default_settings(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_default_platforms(connection: &Connection) -> Result<(), String> {
+    for platform in default_platforms() {
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO platforms (
+                    id, name, platform_type, homepage_url, authority_score, difficulty,
+                    automation_mode, entity_value, requires_captcha, requires_email, notes
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    platform.id,
+                    platform.name,
+                    platform.platform_type,
+                    platform.homepage_url,
+                    platform.authority_score,
+                    platform.difficulty,
+                    platform.automation_mode,
+                    platform.entity_value,
+                    if platform.requires_captcha { 1 } else { 0 },
+                    if platform.requires_email { 1 } else { 0 },
+                    platform.notes
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn save_platform_record(connection: &Connection, platform: &PlatformRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO platforms (
+                id, name, platform_type, homepage_url, authority_score, difficulty,
+                automation_mode, entity_value, requires_captcha, requires_email, notes
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id)
+             DO UPDATE SET name = excluded.name,
+                           platform_type = excluded.platform_type,
+                           homepage_url = excluded.homepage_url,
+                           authority_score = excluded.authority_score,
+                           difficulty = excluded.difficulty,
+                           automation_mode = excluded.automation_mode,
+                           entity_value = excluded.entity_value,
+                           requires_captcha = excluded.requires_captcha,
+                           requires_email = excluded.requires_email,
+                           notes = excluded.notes",
+            params![
+                platform.id,
+                platform.name,
+                platform.platform_type,
+                platform.homepage_url,
+                platform.authority_score,
+                platform.difficulty,
+                platform.automation_mode,
+                platform.entity_value,
+                if platform.requires_captcha { 1 } else { 0 },
+                if platform.requires_email { 1 } else { 0 },
+                platform.notes
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 fn default_money_site() -> MoneySiteRecord {
     MoneySiteRecord {
         domain: "example-money-site.com".to_string(),
@@ -241,6 +385,52 @@ fn default_money_site() -> MoneySiteRecord {
         language: "Vietnamese".to_string(),
         target_country: "Vietnam".to_string(),
         industry: "SEO services".to_string(),
+    }
+}
+
+fn default_platforms() -> Vec<PlatformRecord> {
+    vec![
+        platform("medium", "Medium", "blog", "https://medium.com", 86, "easy", "semi_auto", "content", false, true, "Strong content hub for brand stories, author posts, and supporting articles."),
+        platform("tumblr", "Tumblr", "blog", "https://www.tumblr.com", 74, "medium", "semi_auto", "media", true, true, "Useful for media-rich supporting properties and light cross-linking."),
+        platform("aboutme", "About.me", "profile", "https://about.me", 69, "easy", "semi_auto", "brand", false, true, "Simple profile entity for brand, founder, or expert identity."),
+        platform("github", "GitHub", "profile", "https://github.com", 90, "medium", "manual_review", "author", true, true, "High-trust author/company profile; use for technical, SaaS, SEO tooling, and docs assets."),
+        platform("pinterest", "Pinterest", "media", "https://www.pinterest.com", 82, "medium", "semi_auto", "media", true, true, "Good for image-led entity reinforcement and visual topical clusters."),
+        platform("youtube", "YouTube", "video", "https://www.youtube.com", 95, "hard", "manual_review", "authority", true, true, "Authority video entity; best for brand proof, tutorials, and EEAT signals."),
+        platform("slideshare", "SlideShare", "document", "https://www.slideshare.net", 76, "medium", "semi_auto", "content", false, true, "Document-sharing property for service decks, process explainers, and branded PDFs."),
+        platform("soundcloud", "SoundCloud", "audio", "https://soundcloud.com", 72, "medium", "manual_review", "media", true, true, "Audio entity option for podcasts, interviews, and brand voice proof."),
+        platform("crunchbase", "Crunchbase", "citation", "https://www.crunchbase.com", 88, "hard", "manual_review", "authority", true, true, "High-authority business citation; best for companies with verifiable brand assets."),
+        platform("behance", "Behance", "portfolio", "https://www.behance.net", 78, "medium", "semi_auto", "brand", false, true, "Portfolio entity for visual case studies, branding, and creative proof."),
+        platform("quora", "Quora", "qa", "https://www.quora.com", 84, "hard", "manual_review", "author", true, true, "Author expertise and topical answer footprint; use carefully for quality."),
+        platform("google-business-profile", "Google Business Profile", "local", "https://www.google.com/business", 96, "hard", "manual_review", "local", true, true, "Core local/NAP entity for real businesses and local SEO trust."),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn platform(
+    id: &str,
+    name: &str,
+    platform_type: &str,
+    homepage_url: &str,
+    authority_score: i64,
+    difficulty: &str,
+    automation_mode: &str,
+    entity_value: &str,
+    requires_captcha: bool,
+    requires_email: bool,
+    notes: &str,
+) -> PlatformRecord {
+    PlatformRecord {
+        id: id.to_string(),
+        name: name.to_string(),
+        platform_type: platform_type.to_string(),
+        homepage_url: homepage_url.to_string(),
+        authority_score,
+        difficulty: difficulty.to_string(),
+        automation_mode: automation_mode.to_string(),
+        entity_value: entity_value.to_string(),
+        requires_captcha,
+        requires_email,
+        notes: notes.to_string(),
     }
 }
 
@@ -253,7 +443,9 @@ pub fn run() {
             get_money_site,
             save_money_site,
             get_integration_settings,
-            save_integration_setting
+            save_integration_setting,
+            get_platforms,
+            save_platform
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
