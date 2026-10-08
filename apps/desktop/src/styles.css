@@ -517,7 +517,7 @@ h2 {
 .queue-row,
 .history-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px;
+  grid-template-columns: minmax(0, 1fr) 170px;
   align-items: center;
   gap: 12px;
   border-radius: 8px;
@@ -544,6 +544,17 @@ h2 {
   font-style: normal;
   font-weight: 800;
   text-transform: capitalize;
+}
+
+.queue-row textarea {
+  width: 100%;
+  margin-top: 8px;
+  resize: vertical;
+}
+
+.queue-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .form-grid,
