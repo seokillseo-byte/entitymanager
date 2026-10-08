@@ -193,8 +193,18 @@ Phase 1.11 validation and next build task:
 - Confirm Bridge Payload returns `queueId`, `accountId`, `platformName`, `websiteUrl`, `websiteKey`, `solutionToken`, `tokenField`, action, and next step.
 - Confirm Mark Injected updates queue payload with injection metadata and creates a workflow history row.
 - Confirm Mark Failed keeps the workflow honest with a failed injection event and review-ready account notes.
-- Build the real Chrome Extension/browser automation side that reads the bridge contract and injects the token into the page DOM.
+- Build the real Chrome Extension/browser automation side that reads the bridge contract and injects the token into the page DOM. Done as a manual Bridge Payload MVP.
+
+Phase 1.12 validation and next build task:
+
+- Run `pnpm extension:build` or `pnpm --filter @entitymanager/extension build`.
+- Load `apps/extension/dist` in Chrome as an unpacked extension.
+- In Desktop, resolve a CAPTCHA queue item, click Bridge Payload, and copy the JSON payload.
+- Paste the payload into the extension popup and keep callback URL as `http://127.0.0.1:17321/captcha/injection/complete`.
+- Open the target signup page or a test page with `g-recaptcha-response`, then click Inject Active Tab.
+- Confirm the extension injects the token, reports back to Desktop, updates queue payload injection metadata, and creates a workflow history row.
 - Add the submit/verify account step after a successful token injection.
+- Replace manual JSON paste with automatic payload fetching from Desktop or a native messaging channel.
 
 ## First Data Models To Design
 
