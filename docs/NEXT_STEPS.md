@@ -166,7 +166,17 @@ Phase 1.8 validation and next build task:
 - Confirm Windows Credential Manager stores AI/Gemini keys and SQLite only stores masked metadata.
 - Confirm Settings reload shows `secure` key status after saving a key.
 - Confirm Live Test succeeds for Gemini with a valid key, and returns useful failure messages for disabled providers, missing keys, quota errors, and unsupported providers.
-- Add CAPTCHA provider adapter next, preferably 2Captcha or CapSolver, and route CAPTCHA queue items toward the configured provider.
+- Add CAPTCHA provider adapter next, preferably 2Captcha or CapSolver, and route CAPTCHA queue items toward the configured provider. Done.
+
+Phase 1.9 validation and next build task:
+
+- Confirm CAPTCHA provider key is saved securely and Settings reload shows `secure`.
+- Confirm CAPTCHA Live Test checks provider access through 2Captcha or CapSolver balance endpoint.
+- Confirm CAPTCHA queue payloads can be edited as JSON with `captchaType`, `websiteUrl`, and `websiteKey`.
+- Confirm Send CAPTCHA keeps incomplete queue items in `waiting` status with a useful message.
+- Confirm Send CAPTCHA submits valid reCAPTCHA v2 queue items to the configured provider and stores the provider task id in queue payload.
+- Add CAPTCHA result polling with provider `getTaskResult`.
+- Add solved token capture into queue payload for later browser/extension injection.
 
 ## First Data Models To Design
 
