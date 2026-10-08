@@ -185,7 +185,16 @@ Phase 1.10 validation and next build task:
 - Confirm pending provider responses keep the queue item in `waiting`.
 - Confirm ready provider responses save `solutionToken` and mark the queue item as `resolved`.
 - Confirm queue payload includes `automationHook.target = browser_or_extension` and `action = inject_recaptcha_token`.
-- Build the browser automation/extension bridge that can read a resolved CAPTCHA queue item and inject `solutionToken` into `g-recaptcha-response`.
+- Build the browser automation/extension bridge that can read a resolved CAPTCHA queue item and inject `solutionToken` into `g-recaptcha-response`. Done.
+
+Phase 1.11 validation and next build task:
+
+- Confirm Bridge Payload is blocked until CAPTCHA queue status is `resolved` and `solutionToken` exists.
+- Confirm Bridge Payload returns `queueId`, `accountId`, `platformName`, `websiteUrl`, `websiteKey`, `solutionToken`, `tokenField`, action, and next step.
+- Confirm Mark Injected updates queue payload with injection metadata and creates a workflow history row.
+- Confirm Mark Failed keeps the workflow honest with a failed injection event and review-ready account notes.
+- Build the real Chrome Extension/browser automation side that reads the bridge contract and injects the token into the page DOM.
+- Add the submit/verify account step after a successful token injection.
 
 ## First Data Models To Design
 
