@@ -12,6 +12,7 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@entitymanager/integrations": "workspace:*",
     "@entitymanager/shared": "workspace:*",
     "@entitymanager/workflow": "workspace:*",
     "@tauri-apps/api": "^2.0.0",
