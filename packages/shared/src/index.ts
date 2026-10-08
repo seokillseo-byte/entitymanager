@@ -37,6 +37,8 @@ export type PlatformType =
 export type AutomationMode = "auto" | "semi_auto" | "manual_review";
 export type PlatformDifficulty = "easy" | "medium" | "hard";
 export type EntityValue = "brand" | "author" | "content" | "local" | "media" | "authority";
+export type EntityProfileType = "brand" | "person" | "local_business" | "organization";
+export type AccountPlanPriority = "high" | "medium" | "low";
 
 export interface MoneySiteProfile {
   id: string;
@@ -73,6 +75,41 @@ export interface PlatformLibraryRecord {
   requiresCaptcha: boolean;
   requiresEmail: boolean;
   notes: string;
+}
+
+export interface EntityProfileRecord {
+  id: string;
+  profileType: EntityProfileType;
+  brandName: string;
+  legalName: string;
+  shortDescription: string;
+  fullDescription: string;
+  founderName: string;
+  authorName: string;
+  email: string;
+  phone: string;
+  address: string;
+  sameAsUrls: string;
+  targetKeywords: string;
+  topicalNiche: string;
+  expertiseProof: string;
+  trustSignals: string;
+}
+
+export interface AccountCreationPlanItem {
+  id: string;
+  platformId: string;
+  platformName: string;
+  platformType: PlatformType;
+  authorityScore: number;
+  automationMode: AutomationMode;
+  difficulty: PlatformDifficulty;
+  entityValue: EntityValue;
+  priority: AccountPlanPriority;
+  recommendedUsername: string;
+  profileAngle: string;
+  requiredAssets: string[];
+  workflowSteps: string[];
 }
 
 export interface LocalIntegrationSetting {
