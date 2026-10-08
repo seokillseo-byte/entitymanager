@@ -15,6 +15,10 @@ export default defineConfig({
         replacement: fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url))
       },
       {
+        find: "@entitymanager/integrations",
+        replacement: fileURLToPath(new URL("../../packages/integrations/src/index.ts", import.meta.url))
+      },
+      {
         find: "@entitymanager/workflow",
         replacement: fileURLToPath(new URL("../../packages/workflow/src/index.ts", import.meta.url))
       }
