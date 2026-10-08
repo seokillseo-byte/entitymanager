@@ -154,6 +154,30 @@ export interface AutomationQueueItem {
   updatedAt: string;
 }
 
+export interface CaptchaInjectionBridgeRequest {
+  queueId: string;
+  accountId: string;
+  injector: "desktop_preview" | "browser_extension" | "browser_automation";
+}
+
+export interface CaptchaInjectionPayload {
+  queueId: string;
+  accountId: string;
+  platformName: string;
+  websiteUrl: string;
+  websiteKey: string;
+  solutionToken: string;
+  tokenField: string;
+  action: "inject_recaptcha_token";
+  nextStep: "submit_or_verify_account";
+}
+
+export interface CaptchaInjectionResult {
+  queueItem: AutomationQueueItem;
+  account: AccountRecord;
+  workflowRun: WorkflowRunRecord;
+}
+
 export interface LocalIntegrationSetting {
   type: IntegrationType;
   provider: string;
