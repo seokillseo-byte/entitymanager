@@ -677,6 +677,100 @@ async fn execute_captcha_queue_item(
     Ok(updated)
 }
 
+#[tauri::command]
+async fn poll_captcha_queue_item(
+    app_handle: tauri::AppHandle,
+    item: AutomationQueueItem,
+) -> Result<AutomationQueueItem, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    if item.gate_type != "captcha" {
+        return Err("Only CAPTCHA queue items can be polled for provider results.".to_string());
+    }
+
+    let setting = get_integration_setting(&connection, "captcha")?;
+
+    if !setting.is_enabled {
+        let updated = queue_item_with_payload(
+            item,
+            "waiting",
+            "CAPTCHA provider is disabled. Enable captcha in Settings before polling.",
+        );
+        save_automation_queue_item_record(&connection, &updated)?;
+
+        return Ok(updated);
+    }
+
+    let api_key = match read_secret("captcha") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            let updated = queue_item_with_payload(
+                item,
+                "waiting",
+                "No encrypted CAPTCHA API key found. Save the captcha key in Settings first.",
+            );
+            save_automation_queue_item_record(&connection, &updated)?;
+
+            return Ok(updated);
+        }
+    };
+
+    let payload = parse_captcha_payload(&item.payload)?;
+    let task_id = payload["providerTaskId"]
+        .as_str()
+        .map(ToString::to_string)
+        .or_else(|| payload["providerTaskId"].as_i64().map(|value| value.to_string()))
+        .unwrap_or_default();
+
+    if task_id.trim().is_empty() {
+        let updated = queue_item_with_payload(
+            item,
+            "waiting",
+            "CAPTCHA queue item has no providerTaskId yet. Send the CAPTCHA task first.",
+        );
+        save_automation_queue_item_record(&connection, &updated)?;
+
+        return Ok(updated);
+    }
+
+    let provider_response = poll_captcha_task(&setting.provider, &api_key, &task_id).await?;
+    let provider_status = provider_response["status"].as_str().unwrap_or("unknown");
+    let solution_token = provider_response["solution"]["gRecaptchaResponse"]
+        .as_str()
+        .or_else(|| provider_response["solution"]["token"].as_str())
+        .unwrap_or("");
+
+    let mut updated_payload = payload.clone();
+    updated_payload["provider"] = json!(setting.provider);
+    updated_payload["providerTaskId"] = json!(task_id);
+    updated_payload["providerStatus"] = json!(provider_status);
+    updated_payload["lastProviderResponse"] = provider_response;
+
+    let status = if provider_status == "ready" && !solution_token.is_empty() {
+        updated_payload["solutionToken"] = json!(solution_token);
+        updated_payload["automationHook"] = json!({
+            "target": "browser_or_extension",
+            "action": "inject_recaptcha_token",
+            "tokenField": "g-recaptcha-response"
+        });
+        "resolved"
+    } else {
+        updated_payload["message"] = json!("CAPTCHA result is not ready yet. Poll again later.");
+        "waiting"
+    };
+
+    let updated = AutomationQueueItem {
+        status: status.to_string(),
+        payload: updated_payload.to_string(),
+        updated_at: now_string(),
+        ..item
+    };
+    save_automation_queue_item_record(&connection, &updated)?;
+
+    Ok(updated)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -1230,6 +1324,63 @@ async fn submit_captcha_task(
     Err("Supported CAPTCHA providers for this phase are 2Captcha and CapSolver.".to_string())
 }
 
+async fn poll_captcha_task(
+    provider: &str,
+    api_key: &str,
+    task_id: &str,
+) -> Result<serde_json::Value, String> {
+    let normalized_provider = provider.to_lowercase();
+    let client = reqwest::Client::new();
+
+    if normalized_provider.contains("2captcha") || normalized_provider.contains("2 captcha") {
+        let response = client
+            .post("https://api.2captcha.com/getTaskResult")
+            .json(&json!({
+                "clientKey": api_key,
+                "taskId": task_id
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("2Captcha result request failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("2Captcha result response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Err(format!("2Captcha result polling failed: {description}"));
+        }
+
+        return Ok(body);
+    }
+
+    if normalized_provider.contains("capsolver") || normalized_provider.contains("cap solver") {
+        let response = client
+            .post("https://api.capsolver.com/getTaskResult")
+            .json(&json!({
+                "clientKey": api_key,
+                "taskId": task_id
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("CapSolver result request failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("CapSolver result response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Err(format!("CapSolver result polling failed: {description}"));
+        }
+
+        return Ok(body);
+    }
+
+    Err("Supported CAPTCHA result polling providers are 2Captcha and CapSolver.".to_string())
+}
+
 fn extract_text_preview(body: &str) -> String {
     let parsed = serde_json::from_str::<serde_json::Value>(body).unwrap_or_else(|_| json!({}));
     let text = parsed["candidates"][0]["content"]["parts"][0]["text"]
@@ -1549,7 +1700,8 @@ pub fn run() {
             save_workflow_run,
             get_automation_queue,
             save_automation_queue_item,
-            execute_captcha_queue_item
+            execute_captcha_queue_item,
+            poll_captcha_queue_item
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
