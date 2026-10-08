@@ -34,6 +34,9 @@
 - Kept Vite/browser preview safe by falling back to seed data when Tauri commands are unavailable.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.2 changes.
 - Could not run `cargo check` in this Linux sandbox because `cargo` is not installed; Rust/Tauri backend needs verification on Windows or a Rust-enabled runner.
+- Added a Tauri v2 capability file and explicit `main` window label for Windows desktop packaging.
+- Removed the empty bundle icon array from `tauri.conf.json` so packaging can proceed without an invalid icon configuration.
+- Updated `.exe` build notes with the expected NSIS output folder and a PowerShell log capture command.
 
 ## Current Decision
 
@@ -45,4 +48,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue Phase 1.2 by verifying the Tauri/Rust SQLite backend on Windows, then building the first `.exe` artifact and confirming Money Site/Settings persistence.
+Continue Phase 1.2 by rebuilding the Tauri app on Windows, confirming the NSIS `.exe` is generated, then checking Money Site/Settings persistence inside the installed app.
