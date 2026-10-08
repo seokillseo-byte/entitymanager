@@ -140,8 +140,15 @@ Phase 1.5 validation and next build task:
 
 - Validate account record save/load in the GitHub-built `.exe`.
 - Validate status changes for planned, created, needs manual review, failed, and verified.
-- Add workflow run history tied to account records.
-- Add first automation queue model for CAPTCHA/email/manual gates.
+- Add workflow run history tied to account records. Done.
+- Add first automation queue model for CAPTCHA/email/manual gates. Done.
+
+Phase 1.6 validation and next build task:
+
+- Validate workflow history creation when saving account records and changing statuses.
+- Validate automation queue items for CAPTCHA, email, manual review, and evidence gates.
+- Add integration adapter interfaces for CAPTCHA and email providers.
+- Add encrypted/local-safe handling strategy for provider API keys before any real API calls.
 
 ## First Data Models To Design
 
