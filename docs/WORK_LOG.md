@@ -47,6 +47,13 @@
 - Added Tauri commands `get_platforms` and `save_platform`.
 - Added a real Platform Library screen with type, automation, and difficulty filters plus platform authority/entity metadata.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Platform Library changes.
+- Started Phase 1.4 Entity Profile Builder and Account Creation workflow scaffolding.
+- Added shared Entity Profile and Account Creation Plan types.
+- Added seeded demo entity profile data for SEO/EEAT identity fields.
+- Added local SQLite `entity_profiles` table with `get_entity_profile` and `save_entity_profile` Tauri commands.
+- Added an Entity Profile screen with brand, legal, NAP, sameAs, keyword, expertise, and trust signal fields.
+- Added an Entity Builder screen that generates account creation plans from Platform Library records.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.4 changes.
 
 ## Current Decision
 
@@ -58,4 +65,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue Phase 1.3 by validating the Platform Library in the packaged `.exe`, then implement Entity Profile Builder and Account Creation workflow scaffolding.
+Validate Phase 1.4 in the packaged `.exe`, then implement persistent Account records and workflow run statuses.
