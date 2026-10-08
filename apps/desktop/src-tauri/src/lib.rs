@@ -83,6 +83,31 @@ struct AccountRecord {
     updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowRunRecord {
+    id: String,
+    account_id: String,
+    platform_name: String,
+    action: String,
+    status: String,
+    message: String,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutomationQueueItem {
+    id: String,
+    account_id: String,
+    platform_name: String,
+    gate_type: String,
+    status: String,
+    payload: String,
+    created_at: String,
+    updated_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -350,6 +375,96 @@ fn save_account(app_handle: tauri::AppHandle, account: AccountRecord) -> Result<
     Ok(account)
 }
 
+#[tauri::command]
+fn get_workflow_runs(app_handle: tauri::AppHandle) -> Result<Vec<WorkflowRunRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, account_id, platform_name, action, status, message, created_at
+             FROM workflow_runs
+             ORDER BY created_at DESC
+             LIMIT 100",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(WorkflowRunRecord {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                platform_name: row.get(2)?,
+                action: row.get(3)?,
+                status: row.get(4)?,
+                message: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_workflow_run(
+    app_handle: tauri::AppHandle,
+    run: WorkflowRunRecord,
+) -> Result<WorkflowRunRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_workflow_run_record(&connection, &run)?;
+
+    Ok(run)
+}
+
+#[tauri::command]
+fn get_automation_queue(app_handle: tauri::AppHandle) -> Result<Vec<AutomationQueueItem>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, account_id, platform_name, gate_type, status, payload, created_at, updated_at
+             FROM automation_queue
+             ORDER BY
+                CASE status WHEN 'queued' THEN 1 WHEN 'waiting' THEN 2 WHEN 'failed' THEN 3 ELSE 4 END,
+                updated_at DESC",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AutomationQueueItem {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                platform_name: row.get(2)?,
+                gate_type: row.get(3)?,
+                status: row.get(4)?,
+                payload: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_automation_queue_item(
+    app_handle: tauri::AppHandle,
+    item: AutomationQueueItem,
+) -> Result<AutomationQueueItem, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_automation_queue_item_record(&connection, &item)?;
+
+    Ok(item)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -430,6 +545,27 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 automation_mode TEXT NOT NULL,
                 evidence_url TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                platform_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS automation_queue (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                platform_name TEXT NOT NULL,
+                gate_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -639,6 +775,63 @@ fn save_account_record(connection: &Connection, account: &AccountRecord) -> Resu
     Ok(())
 }
 
+fn save_workflow_run_record(connection: &Connection, run: &WorkflowRunRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO workflow_runs (id, account_id, platform_name, action, status, message, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id)
+             DO UPDATE SET account_id = excluded.account_id,
+                           platform_name = excluded.platform_name,
+                           action = excluded.action,
+                           status = excluded.status,
+                           message = excluded.message,
+                           created_at = excluded.created_at",
+            params![
+                run.id,
+                run.account_id,
+                run.platform_name,
+                run.action,
+                run.status,
+                run.message,
+                run.created_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn save_automation_queue_item_record(connection: &Connection, item: &AutomationQueueItem) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO automation_queue (
+                id, account_id, platform_name, gate_type, status, payload, created_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id)
+             DO UPDATE SET account_id = excluded.account_id,
+                           platform_name = excluded.platform_name,
+                           gate_type = excluded.gate_type,
+                           status = excluded.status,
+                           payload = excluded.payload,
+                           updated_at = excluded.updated_at",
+            params![
+                item.id,
+                item.account_id,
+                item.platform_name,
+                item.gate_type,
+                item.status,
+                item.payload,
+                item.created_at,
+                item.updated_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 fn default_money_site() -> MoneySiteRecord {
     MoneySiteRecord {
         domain: "example-money-site.com".to_string(),
@@ -732,7 +925,11 @@ pub fn run() {
             get_entity_profile,
             save_entity_profile,
             get_accounts,
-            save_account
+            save_account,
+            get_workflow_runs,
+            save_workflow_run,
+            get_automation_queue,
+            save_automation_queue_item
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
