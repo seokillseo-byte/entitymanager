@@ -27,6 +27,20 @@ struct IntegrationSettingRecord {
     provider: String,
     api_key: String,
     is_enabled: bool,
+    key_status: String,
+    last_test_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationAdapterResult {
+    #[serde(rename = "type")]
+    setting_type: String,
+    provider: String,
+    is_ready: bool,
+    mode: String,
+    message: String,
+    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -174,7 +188,7 @@ fn get_integration_settings(app_handle: tauri::AppHandle) -> Result<Vec<Integrat
 
     let mut statement = connection
         .prepare(
-            "SELECT setting_type, provider, api_key, is_enabled
+            "SELECT setting_type, provider, api_key, is_enabled, last_test_at
              FROM integration_settings
              ORDER BY setting_type",
         )
@@ -187,6 +201,8 @@ fn get_integration_settings(app_handle: tauri::AppHandle) -> Result<Vec<Integrat
                 provider: row.get(1)?,
                 api_key: row.get(2)?,
                 is_enabled: row.get::<_, i64>(3)? == 1,
+                key_status: key_status_from_mask(&row.get::<_, String>(2)?),
+                last_test_at: row.get(4)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -202,25 +218,71 @@ fn save_integration_setting(
 ) -> Result<IntegrationSettingRecord, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
+    let stored_key = if setting.api_key.trim().is_empty() {
+        existing_integration_key(&connection, &setting.setting_type)?
+    } else {
+        mask_secret(&setting.api_key)
+    };
+    let key_status = key_status_from_mask(&stored_key);
 
     connection
         .execute(
-            "INSERT INTO integration_settings (setting_type, provider, api_key, is_enabled)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO integration_settings (setting_type, provider, api_key, is_enabled, key_status)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(setting_type)
              DO UPDATE SET provider = excluded.provider,
                            api_key = excluded.api_key,
-                           is_enabled = excluded.is_enabled",
+                           is_enabled = excluded.is_enabled,
+                           key_status = excluded.key_status",
             params![
                 setting.setting_type,
                 setting.provider,
-                setting.api_key,
-                if setting.is_enabled { 1 } else { 0 }
+                stored_key,
+                if setting.is_enabled { 1 } else { 0 },
+                key_status
             ],
         )
         .map_err(|error| error.to_string())?;
 
-    Ok(setting)
+    Ok(IntegrationSettingRecord {
+        api_key: stored_key,
+        key_status,
+        ..setting
+    })
+}
+
+#[tauri::command]
+fn test_integration_setting(
+    app_handle: tauri::AppHandle,
+    setting: IntegrationSettingRecord,
+) -> Result<IntegrationAdapterResult, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let stored_key = existing_integration_key(&connection, &setting.setting_type)?;
+    let capabilities = integration_capabilities(&setting.setting_type);
+    let is_ready = setting.is_enabled && !stored_key.is_empty();
+    let message = if is_ready {
+        format!("{} adapter is configured for dry-run validation.", setting.provider)
+    } else {
+        format!("{} adapter needs an enabled setting and stored key before live use.", setting.provider)
+    };
+    let timestamp = setting.last_test_at;
+
+    connection
+        .execute(
+            "UPDATE integration_settings SET last_test_at = ?1 WHERE setting_type = ?2",
+            params![timestamp, setting.setting_type],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(IntegrationAdapterResult {
+        setting_type: setting.setting_type,
+        provider: setting.provider,
+        is_ready,
+        mode: "dry_run".to_string(),
+        message,
+        capabilities,
+    })
 }
 
 #[tauri::command]
@@ -499,7 +561,9 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 setting_type TEXT PRIMARY KEY,
                 provider TEXT NOT NULL,
                 api_key TEXT NOT NULL DEFAULT '',
-                is_enabled INTEGER NOT NULL DEFAULT 0
+                is_enabled INTEGER NOT NULL DEFAULT 0,
+                key_status TEXT NOT NULL DEFAULT 'missing',
+                last_test_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS platforms (
@@ -571,7 +635,32 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );
             ",
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+
+    ensure_column(connection, "integration_settings", "key_status", "TEXT NOT NULL DEFAULT 'missing'")?;
+    ensure_column(connection, "integration_settings", "last_test_at", "TEXT NOT NULL DEFAULT ''")?;
+
+    Ok(())
+}
+
+fn ensure_column(connection: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?;
+    let columns = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+
+    if !columns.iter().any(|existing| existing == column) {
+        connection
+            .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 fn save_money_site_record(connection: &Connection, money_site: &MoneySiteRecord) -> Result<(), String> {
@@ -612,14 +701,69 @@ fn ensure_default_settings(connection: &Connection) -> Result<(), String> {
     for (setting_type, provider) in defaults {
         connection
             .execute(
-                "INSERT OR IGNORE INTO integration_settings (setting_type, provider, api_key, is_enabled)
-                 VALUES (?1, ?2, '', 0)",
+                "INSERT OR IGNORE INTO integration_settings (setting_type, provider, api_key, is_enabled, key_status, last_test_at)
+                 VALUES (?1, ?2, '', 0, 'missing', '')",
                 params![setting_type, provider],
             )
             .map_err(|error| error.to_string())?;
     }
 
     Ok(())
+}
+
+fn existing_integration_key(connection: &Connection, setting_type: &str) -> Result<String, String> {
+    let result = connection.query_row(
+        "SELECT api_key FROM integration_settings WHERE setting_type = ?1",
+        params![setting_type],
+        |row| row.get(0),
+    );
+
+    match result {
+        Ok(value) => Ok(value),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(String::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn key_status_from_mask(value: &str) -> String {
+    if value.trim().is_empty() {
+        "missing".to_string()
+    } else if value.contains('…') {
+        "masked".to_string()
+    } else {
+        "stored".to_string()
+    }
+}
+
+fn mask_secret(value: &str) -> String {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let prefix: String = trimmed.chars().take(4).collect();
+    let suffix: String = trimmed
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+
+    format!("{prefix}…{suffix}")
+}
+
+fn integration_capabilities(setting_type: &str) -> Vec<String> {
+    match setting_type {
+        "ai" => vec!["generate_text".to_string()],
+        "captcha" => vec!["solve_captcha".to_string()],
+        "email" => vec!["send_email".to_string(), "receive_email".to_string()],
+        "proxy" => vec!["proxy".to_string()],
+        "indexing" => vec!["index_url".to_string()],
+        _ => Vec::new(),
+    }
 }
 
 fn ensure_default_platforms(connection: &Connection) -> Result<(), String> {
@@ -920,6 +1064,7 @@ pub fn run() {
             save_money_site,
             get_integration_settings,
             save_integration_setting,
+            test_integration_setting,
             get_platforms,
             save_platform,
             get_entity_profile,
