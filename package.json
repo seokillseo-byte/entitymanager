@@ -8,6 +8,7 @@
     "desktop:dev": "pnpm --filter @entitymanager/desktop tauri:dev",
     "desktop:icon": "powershell -ExecutionPolicy Bypass -File scripts/ensure-tauri-icon.ps1",
     "desktop:build": "pnpm --filter @entitymanager/desktop tauri:build",
+    "extension:build": "pnpm --filter @entitymanager/extension build",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @entitymanager/database db:generate",
