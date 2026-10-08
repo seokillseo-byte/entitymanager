@@ -735,7 +735,10 @@ async fn poll_captcha_queue_item(
     }
 
     let provider_response = poll_captcha_task(&setting.provider, &api_key, &task_id).await?;
-    let provider_status = provider_response["status"].as_str().unwrap_or("unknown");
+    let provider_status = provider_response["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
     let solution_token = provider_response["solution"]["gRecaptchaResponse"]
         .as_str()
         .or_else(|| provider_response["solution"]["token"].as_str())
