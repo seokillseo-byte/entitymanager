@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -97,6 +97,7 @@ const fallbackEntityProfile: EntityProfileRecord = {
 const platformTypes: PlatformTypeFilter[] = ["all", "social", "blog", "forum", "citation", "profile", "media", "document", "video", "audio", "portfolio", "qa", "local"];
 const automationModes: AutomationModeFilter[] = ["all", "auto", "semi_auto", "manual_review"];
 const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
+const accountStatuses: AccountStatus[] = ["planned", "created", "needs_manual_review", "failed", "verified"];
 
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
@@ -104,6 +105,7 @@ function App() {
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -172,17 +174,19 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile, storedAccounts] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
-        invoke<EntityProfileRecord>("get_entity_profile")
+        invoke<EntityProfileRecord>("get_entity_profile"),
+        invoke<AccountRecord[]>("get_accounts")
       ]);
 
       setMoneySite(storedMoneySite);
       setSettings(storedSettings);
       setPlatforms(storedPlatforms);
       setEntityProfile(storedEntityProfile);
+      setAccounts(storedAccounts);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -217,6 +221,63 @@ function App() {
 
   function updateEntityProfile(patch: Partial<EntityProfileRecord>) {
     setEntityProfile((current) => ({ ...current, ...patch }));
+  }
+
+  async function saveAccountFromPlan(plan: AccountCreationPlanItem) {
+    const existing = accounts.find((account) => account.platformId === plan.platformId);
+    const timestamp = new Date().toISOString();
+    const account: AccountRecord = {
+      id: existing?.id ?? `account-${plan.platformId}`,
+      platformId: plan.platformId,
+      platformName: plan.platformName,
+      recommendedUsername: plan.recommendedUsername,
+      status: existing?.status ?? "planned",
+      priority: plan.priority,
+      automationMode: plan.automationMode,
+      evidenceUrl: existing?.evidenceUrl ?? "",
+      notes: existing?.notes ?? plan.profileAngle,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+
+    await persistAccount(account, `${plan.platformName} account saved`);
+  }
+
+  async function updateAccount(id: string, patch: Partial<AccountRecord>) {
+    const current = accounts.find((account) => account.id === id);
+
+    if (!current) {
+      return;
+    }
+
+    await persistAccount({ ...current, ...patch, updatedAt: new Date().toISOString() }, `${current.platformName} status saved`);
+  }
+
+  async function persistAccount(account: AccountRecord, successMessage: string) {
+    try {
+      const saved = await invoke<AccountRecord>("save_account", { account });
+      setAccounts((current) => {
+        const exists = current.some((item) => item.id === saved.id);
+
+        if (!exists) {
+          return [...current, saved];
+        }
+
+        return current.map((item) => (item.id === saved.id ? saved : item));
+      });
+      setStatusMessage(successMessage);
+    } catch {
+      setAccounts((current) => {
+        const exists = current.some((item) => item.id === account.id);
+
+        if (!exists) {
+          return [...current, account];
+        }
+
+        return current.map((item) => (item.id === account.id ? account : item));
+      });
+      setStatusMessage("Preview mode: Account changes are local only");
+    }
   }
 
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
@@ -613,20 +674,20 @@ function App() {
           <section className="single-panel">
             <section className="metrics-grid">
               <article className="metric-card good">
-                <span>Account Plans</span>
-                <strong>{accountCreationPlan.length}</strong>
+                <span>Saved Accounts</span>
+                <strong>{accounts.length}</strong>
               </article>
               <article className="metric-card neutral">
-                <span>High Priority</span>
-                <strong>{accountCreationPlan.filter((item) => item.priority === "high").length}</strong>
+                <span>Verified</span>
+                <strong>{accounts.filter((account) => account.status === "verified").length}</strong>
               </article>
               <article className="metric-card warning">
-                <span>Semi-auto</span>
-                <strong>{accountCreationPlan.filter((item) => item.automationMode === "semi_auto").length}</strong>
+                <span>Manual Review</span>
+                <strong>{accounts.filter((account) => account.status === "needs_manual_review").length}</strong>
               </article>
               <article className="metric-card neutral">
-                <span>Manual</span>
-                <strong>{accountCreationPlan.filter((item) => item.automationMode === "manual_review").length}</strong>
+                <span>Generated Plans</span>
+                <strong>{accountCreationPlan.length}</strong>
               </article>
             </section>
 
@@ -636,11 +697,14 @@ function App() {
                   <p className="eyebrow">Account Creation Workflow</p>
                   <h2>{entityProfile.brandName} platform rollout plan</h2>
                 </div>
-                <span className="badge">Generated from Platform Library</span>
+                <span className="badge">SQLite account records</span>
               </div>
 
               <div className="account-plan-list">
-                {accountCreationPlan.map((item) => (
+                {accountCreationPlan.map((item) => {
+                  const account = accounts.find((savedAccount) => savedAccount.platformId === item.platformId);
+
+                  return (
                   <article className="account-plan-card" key={item.id}>
                     <div className="platform-card-header">
                       <div>
@@ -653,6 +717,13 @@ function App() {
                         <strong>{item.authorityScore}</strong>
                       </div>
                     </div>
+
+                    {account && (
+                      <div className={`account-status status-${account.status}`}>
+                        <strong>{account.status.replace(/_/g, " ")}</strong>
+                        <span>Updated {new Date(account.updatedAt).toLocaleString()}</span>
+                      </div>
+                    )}
 
                     <p className="platform-notes">{item.profileAngle}</p>
 
@@ -667,8 +738,32 @@ function App() {
                         <span key={step}>{step}</span>
                       ))}
                     </div>
+
+                    {account ? (
+                      <div className="account-edit-grid">
+                        <label>
+                          Status
+                          <select value={account.status} onChange={(event) => updateAccount(account.id, { status: event.target.value as AccountStatus })}>
+                            {accountStatuses.map((status) => (
+                              <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Evidence URL
+                          <input value={account.evidenceUrl} onChange={(event) => updateAccount(account.id, { evidenceUrl: event.target.value })} />
+                        </label>
+                        <label className="full-span">
+                          Notes
+                          <textarea rows={2} value={account.notes} onChange={(event) => updateAccount(account.id, { notes: event.target.value })} />
+                        </label>
+                      </div>
+                    ) : (
+                      <button className="secondary-action" type="button" onClick={() => saveAccountFromPlan(item)}>Save as Account Record</button>
+                    )}
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </article>
           </section>
