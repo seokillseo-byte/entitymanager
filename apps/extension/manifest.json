@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "EntityManager Bridge",
+  "description": "MVP bridge for injecting solved CAPTCHA tokens from EntityManager into signup pages.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "EntityManager Bridge",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
