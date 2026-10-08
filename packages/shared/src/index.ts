@@ -27,10 +27,16 @@ export type PlatformType =
   | "citation"
   | "profile"
   | "media"
+  | "document"
+  | "video"
+  | "audio"
+  | "portfolio"
   | "qa"
   | "local";
 
 export type AutomationMode = "auto" | "semi_auto" | "manual_review";
+export type PlatformDifficulty = "easy" | "medium" | "hard";
+export type EntityValue = "brand" | "author" | "content" | "local" | "media" | "authority";
 
 export interface MoneySiteProfile {
   id: string;
@@ -53,6 +59,20 @@ export interface PlatformSeed {
   requiresCaptcha: boolean;
   requiresEmail: boolean;
   fit: "brand" | "author" | "content" | "local" | "media";
+}
+
+export interface PlatformLibraryRecord {
+  id: string;
+  name: string;
+  type: PlatformType;
+  homepageUrl: string;
+  authorityScore: number;
+  difficulty: PlatformDifficulty;
+  automationMode: AutomationMode;
+  entityValue: EntityValue;
+  requiresCaptcha: boolean;
+  requiresEmail: boolean;
+  notes: string;
 }
 
 export interface LocalIntegrationSetting {
