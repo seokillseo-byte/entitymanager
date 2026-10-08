@@ -345,6 +345,7 @@ async fn test_live_integration_setting(
 
     let result = match setting.setting_type.as_str() {
         "ai" => test_live_ai_provider(&setting.provider, &api_key, capabilities).await,
+        "captcha" => test_live_captcha_provider(&setting.provider, &api_key, capabilities).await,
         _ => Ok(IntegrationAdapterResult {
             setting_type: setting.setting_type.clone(),
             provider: setting.provider.clone(),
@@ -602,6 +603,80 @@ fn save_automation_queue_item(
     Ok(item)
 }
 
+#[tauri::command]
+async fn execute_captcha_queue_item(
+    app_handle: tauri::AppHandle,
+    item: AutomationQueueItem,
+) -> Result<AutomationQueueItem, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    if item.gate_type != "captcha" {
+        return Err("Only CAPTCHA queue items can be sent to the CAPTCHA provider.".to_string());
+    }
+
+    let setting = get_integration_setting(&connection, "captcha")?;
+
+    if !setting.is_enabled {
+        let updated = queue_item_with_payload(
+            item,
+            "waiting",
+            "CAPTCHA provider is disabled. Enable captcha in Settings first.",
+        );
+        save_automation_queue_item_record(&connection, &updated)?;
+
+        return Ok(updated);
+    }
+
+    let api_key = match read_secret("captcha") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            let updated = queue_item_with_payload(
+                item,
+                "waiting",
+                "No encrypted CAPTCHA API key found. Save the captcha key in Settings first.",
+            );
+            save_automation_queue_item_record(&connection, &updated)?;
+
+            return Ok(updated);
+        }
+    };
+
+    let payload = parse_captcha_payload(&item.payload)?;
+    let website_url = payload["websiteUrl"].as_str().unwrap_or("").trim();
+    let website_key = payload["websiteKey"].as_str().unwrap_or("").trim();
+
+    if website_url.is_empty() || website_key.is_empty() {
+        let updated = queue_item_with_payload(
+            item,
+            "waiting",
+            "CAPTCHA payload needs JSON with websiteUrl and websiteKey before provider submission.",
+        );
+        save_automation_queue_item_record(&connection, &updated)?;
+
+        return Ok(updated);
+    }
+
+    let provider_response = submit_captcha_task(&setting.provider, &api_key, &payload).await?;
+    let updated_payload = json!({
+        "provider": setting.provider,
+        "providerTaskId": provider_response["taskId"].as_i64().map(|value| value.to_string()).unwrap_or_else(|| provider_response["taskId"].as_str().unwrap_or("").to_string()),
+        "providerStatus": "submitted",
+        "websiteUrl": website_url,
+        "websiteKey": website_key,
+        "message": "CAPTCHA task submitted to provider. Result polling will be added in the next pass."
+    });
+    let updated = AutomationQueueItem {
+        status: "waiting".to_string(),
+        payload: updated_payload.to_string(),
+        updated_at: now_string(),
+        ..item
+    };
+    save_automation_queue_item_record(&connection, &updated)?;
+
+    Ok(updated)
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -800,6 +875,31 @@ fn existing_integration_key(connection: &Connection, setting_type: &str) -> Resu
     }
 }
 
+fn get_integration_setting(connection: &Connection, setting_type: &str) -> Result<IntegrationSettingRecord, String> {
+    let result = connection.query_row(
+        "SELECT setting_type, provider, api_key, is_enabled, key_status, last_test_at
+         FROM integration_settings
+         WHERE setting_type = ?1",
+        params![setting_type],
+        |row| {
+            Ok(IntegrationSettingRecord {
+                setting_type: row.get(0)?,
+                provider: row.get(1)?,
+                api_key: row.get(2)?,
+                is_enabled: row.get::<_, i64>(3)? == 1,
+                key_status: row.get(4)?,
+                last_test_at: row.get(5)?,
+            })
+        },
+    );
+
+    match result {
+        Ok(record) => Ok(record),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err("CAPTCHA integration setting was not found.".to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 fn update_integration_test_time(connection: &Connection, setting_type: &str, timestamp: &str) -> Result<(), String> {
     connection
         .execute(
@@ -809,6 +909,40 @@ fn update_integration_test_time(connection: &Connection, setting_type: &str, tim
         .map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+fn now_string() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => format!("{}", duration.as_secs()),
+        Err(_) => String::new(),
+    }
+}
+
+fn queue_item_with_payload(item: AutomationQueueItem, status: &str, message: &str) -> AutomationQueueItem {
+    let payload = json!({
+        "previousPayload": item.payload,
+        "message": message
+    });
+
+    AutomationQueueItem {
+        status: status.to_string(),
+        payload: payload.to_string(),
+        updated_at: now_string(),
+        ..item
+    }
+}
+
+fn parse_captcha_payload(payload: &str) -> Result<serde_json::Value, String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(payload).unwrap_or_else(|_| {
+        json!({
+            "captchaType": "recaptcha_v2",
+            "websiteUrl": "",
+            "websiteKey": "",
+            "note": payload
+        })
+    });
+
+    Ok(parsed)
 }
 
 fn secret_account(setting_type: &str) -> String {
@@ -941,6 +1075,159 @@ async fn test_live_ai_provider(
         message: format!("Gemini live adapter responded successfully: {preview}"),
         capabilities,
     })
+}
+
+async fn test_live_captcha_provider(
+    provider: &str,
+    api_key: &str,
+    capabilities: Vec<String>,
+) -> Result<IntegrationAdapterResult, String> {
+    let normalized_provider = provider.to_lowercase();
+    let client = reqwest::Client::new();
+
+    if normalized_provider.contains("2captcha") || normalized_provider.contains("2 captcha") {
+        let response = client
+            .post("https://api.2captcha.com/getBalance")
+            .json(&json!({ "clientKey": api_key }))
+            .send()
+            .await
+            .map_err(|error| format!("2Captcha balance check failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("2Captcha balance response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Ok(IntegrationAdapterResult {
+                setting_type: "captcha".to_string(),
+                provider: provider.to_string(),
+                is_ready: false,
+                mode: "live".to_string(),
+                message: format!("2Captcha live check failed: {description}"),
+                capabilities,
+            });
+        }
+
+        return Ok(IntegrationAdapterResult {
+            setting_type: "captcha".to_string(),
+            provider: provider.to_string(),
+            is_ready: true,
+            mode: "live".to_string(),
+            message: "2Captcha live adapter is ready. Balance check succeeded.".to_string(),
+            capabilities,
+        });
+    }
+
+    if normalized_provider.contains("capsolver") || normalized_provider.contains("cap solver") {
+        let response = client
+            .post("https://api.capsolver.com/getBalance")
+            .json(&json!({ "clientKey": api_key }))
+            .send()
+            .await
+            .map_err(|error| format!("CapSolver balance check failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("CapSolver balance response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Ok(IntegrationAdapterResult {
+                setting_type: "captcha".to_string(),
+                provider: provider.to_string(),
+                is_ready: false,
+                mode: "live".to_string(),
+                message: format!("CapSolver live check failed: {description}"),
+                capabilities,
+            });
+        }
+
+        return Ok(IntegrationAdapterResult {
+            setting_type: "captcha".to_string(),
+            provider: provider.to_string(),
+            is_ready: true,
+            mode: "live".to_string(),
+            message: "CapSolver live adapter is ready. Balance check succeeded.".to_string(),
+            capabilities,
+        });
+    }
+
+    Ok(IntegrationAdapterResult {
+        setting_type: "captcha".to_string(),
+        provider: provider.to_string(),
+        is_ready: false,
+        mode: "live".to_string(),
+        message: "Supported CAPTCHA providers are 2Captcha and CapSolver. Rename/select one of them to run live checks.".to_string(),
+        capabilities,
+    })
+}
+
+async fn submit_captcha_task(
+    provider: &str,
+    api_key: &str,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let normalized_provider = provider.to_lowercase();
+    let website_url = payload["websiteUrl"].as_str().unwrap_or("");
+    let website_key = payload["websiteKey"].as_str().unwrap_or("");
+    let client = reqwest::Client::new();
+
+    if normalized_provider.contains("2captcha") || normalized_provider.contains("2 captcha") {
+        let response = client
+            .post("https://api.2captcha.com/createTask")
+            .json(&json!({
+                "clientKey": api_key,
+                "task": {
+                    "type": "RecaptchaV2TaskProxyless",
+                    "websiteURL": website_url,
+                    "websiteKey": website_key
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("2Captcha request failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("2Captcha response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Err(format!("2Captcha rejected the task: {description}"));
+        }
+
+        return Ok(body);
+    }
+
+    if normalized_provider.contains("capsolver") || normalized_provider.contains("cap solver") {
+        let response = client
+            .post("https://api.capsolver.com/createTask")
+            .json(&json!({
+                "clientKey": api_key,
+                "task": {
+                    "type": "ReCaptchaV2TaskProxyLess",
+                    "websiteURL": website_url,
+                    "websiteKey": website_key
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("CapSolver request failed: {error}"))?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("CapSolver response could not be read: {error}"))?;
+
+        if body["errorId"].as_i64().unwrap_or(1) != 0 {
+            let description = body["errorDescription"].as_str().unwrap_or("unknown provider error");
+            return Err(format!("CapSolver rejected the task: {description}"));
+        }
+
+        return Ok(body);
+    }
+
+    Err("Supported CAPTCHA providers for this phase are 2Captcha and CapSolver.".to_string())
 }
 
 fn extract_text_preview(body: &str) -> String {
@@ -1261,7 +1548,8 @@ pub fn run() {
             get_workflow_runs,
             save_workflow_run,
             get_automation_queue,
-            save_automation_queue_item
+            save_automation_queue_item,
+            execute_captcha_queue_item
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
