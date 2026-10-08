@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -62,10 +63,12 @@ interface MoneySiteForm {
 }
 
 interface IntegrationSettingForm {
-  settingType: string;
+  settingType: IntegrationType;
   provider: string;
   apiKey: string;
   isEnabled: boolean;
+  keyStatus: ProviderKeyStatus;
+  lastTestAt: string;
 }
 
 type PlatformTypeFilter = "all" | PlatformType;
@@ -85,7 +88,9 @@ const fallbackSettings: IntegrationSettingForm[] = demoProjectSeed.integrations.
   settingType: integration.type,
   provider: integration.provider,
   apiKey: "",
-  isEnabled: integration.isEnabled
+  isEnabled: integration.isEnabled,
+  keyStatus: "missing",
+  lastTestAt: ""
 }));
 
 const fallbackPlatforms: PlatformLibraryRecord[] = platformLibrarySeed;
@@ -109,6 +114,7 @@ function App() {
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
   const [automationQueue, setAutomationQueue] = useState<AutomationQueueItem[]>([]);
+  const [adapterResults, setAdapterResults] = useState<Record<string, IntegrationAdapterResult>>({});
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -397,6 +403,29 @@ function App() {
 
   function updateSetting(settingType: string, patch: Partial<IntegrationSettingForm>) {
     setSettings((current) => current.map((setting) => (setting.settingType === settingType ? { ...setting, ...patch } : setting)));
+  }
+
+  async function testSetting(setting: IntegrationSettingForm) {
+    const timestamp = new Date().toISOString();
+    const payload = { ...setting, lastTestAt: timestamp };
+
+    try {
+      const result = await invoke<IntegrationAdapterResult>("test_integration_setting", { setting: payload });
+      setAdapterResults((current) => ({ ...current, [setting.settingType]: result }));
+      updateSetting(setting.settingType, { lastTestAt: timestamp });
+      setStatusMessage(`${setting.provider} adapter dry-run complete`);
+    } catch {
+      const config = buildProviderConfig({
+        type: setting.settingType,
+        provider: setting.provider,
+        isEnabled: setting.isEnabled,
+        keyStatus: setting.keyStatus,
+        maskedValue: setting.apiKey
+      });
+      const result = testIntegrationAdapter(config);
+      setAdapterResults((current) => ({ ...current, [setting.settingType]: result }));
+      setStatusMessage("Preview mode: Adapter dry-run is local only");
+    }
   }
 
   return (
@@ -918,7 +947,7 @@ function App() {
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Settings</p>
-                <h2>API keys stored in local SQLite</h2>
+                <h2>Provider config and secure key placeholders</h2>
               </div>
             </div>
             <div className="settings-grid">
@@ -929,14 +958,22 @@ function App() {
                     <input value={setting.provider} onChange={(event) => updateSetting(setting.settingType, { provider: event.target.value })} />
                   </label>
                   <label>
-                    API Key
+                    Secret Key
                     <input
                       type="password"
-                      value={setting.apiKey}
-                      placeholder={`${setting.settingType} API key`}
+                      value={setting.keyStatus === "masked" ? "" : setting.apiKey}
+                      placeholder={setting.keyStatus === "masked" ? `Stored as ${setting.apiKey}` : `${setting.settingType} API key`}
                       onChange={(event) => updateSetting(setting.settingType, { apiKey: event.target.value })}
                     />
                   </label>
+                  <div className="platform-meta">
+                    <span>{setting.settingType}</span>
+                    <span>{setting.keyStatus}</span>
+                    <span>{setting.lastTestAt ? `tested ${new Date(setting.lastTestAt).toLocaleString()}` : "not tested"}</span>
+                  </div>
+                  {adapterResults[setting.settingType] && (
+                    <p className="platform-notes">{adapterResults[setting.settingType].message}</p>
+                  )}
                   <label className="checkbox-row">
                     <input
                       type="checkbox"
@@ -945,7 +982,10 @@ function App() {
                     />
                     Enable {setting.settingType}
                   </label>
-                  <button className="secondary-action" type="button" onClick={() => saveSetting(setting)}>Save</button>
+                  <div className="settings-actions">
+                    <button className="secondary-action" type="button" onClick={() => saveSetting(setting)}>Save</button>
+                    <button className="secondary-action" type="button" onClick={() => testSetting(setting)}>Dry-run Test</button>
+                  </div>
                 </div>
               ))}
             </div>
