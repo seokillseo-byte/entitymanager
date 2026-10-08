@@ -3,8 +3,8 @@ import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AutomationMode, DashboardMetric, EntityModule, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
-import { demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
+import type { AccountCreationPlanItem, AccountPlanPriority, AutomationMode, DashboardMetric, EntityModule, EntityProfileRecord, PlatformDifficulty, PlatformLibraryRecord, PlatformType } from "@entitymanager/shared";
+import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
 
@@ -89,6 +89,10 @@ const fallbackSettings: IntegrationSettingForm[] = demoProjectSeed.integrations.
 }));
 
 const fallbackPlatforms: PlatformLibraryRecord[] = platformLibrarySeed;
+const fallbackEntityProfile: EntityProfileRecord = {
+  ...demoEntityProfileSeed,
+  id: "primary"
+};
 
 const platformTypes: PlatformTypeFilter[] = ["all", "social", "blog", "forum", "citation", "profile", "media", "document", "video", "audio", "portfolio", "qa", "local"];
 const automationModes: AutomationModeFilter[] = ["all", "auto", "semi_auto", "manual_review"];
@@ -99,6 +103,7 @@ function App() {
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
+  const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -130,17 +135,54 @@ function App() {
     return { total, semiAuto, manual, averageAuthority };
   }, [platforms]);
 
+  const accountCreationPlan = useMemo<AccountCreationPlanItem[]>(() => {
+    const cleanBrand = entityProfile.brandName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 22) || "entitybrand";
+
+    return platforms
+      .map((platform) => {
+        const priority: AccountPlanPriority = platform.authorityScore >= 88 || platform.entityValue === "authority"
+          ? "high"
+          : platform.authorityScore >= 78
+            ? "medium"
+            : "low";
+
+        const profileAngle = buildProfileAngle(platform, entityProfile);
+
+        return {
+          id: `${platform.id}-account-plan`,
+          platformId: platform.id,
+          platformName: platform.name,
+          platformType: platform.type,
+          authorityScore: platform.authorityScore,
+          automationMode: platform.automationMode,
+          difficulty: platform.difficulty,
+          entityValue: platform.entityValue,
+          priority,
+          recommendedUsername: `${cleanBrand}${platform.type === "local" ? "local" : ""}`,
+          profileAngle,
+          requiredAssets: requiredAssetsForPlatform(platform),
+          workflowSteps: workflowStepsForPlatform(platform)
+        };
+      })
+      .sort((first, second) => second.authorityScore - first.authorityScore);
+  }, [entityProfile, platforms]);
+
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
-        invoke<PlatformLibraryRecord[]>("get_platforms")
+        invoke<PlatformLibraryRecord[]>("get_platforms"),
+        invoke<EntityProfileRecord>("get_entity_profile")
       ]);
 
       setMoneySite(storedMoneySite);
       setSettings(storedSettings);
       setPlatforms(storedPlatforms);
+      setEntityProfile(storedEntityProfile);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -159,6 +201,22 @@ function App() {
 
   function updatePlatform(id: string, patch: Partial<PlatformLibraryRecord>) {
     setPlatforms((current) => current.map((platform) => (platform.id === id ? { ...platform, ...patch } : platform)));
+  }
+
+  async function saveEntityProfileForm(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    try {
+      const saved = await invoke<EntityProfileRecord>("save_entity_profile", { profile: entityProfile });
+      setEntityProfile(saved);
+      setStatusMessage("Entity Profile saved to SQLite");
+    } catch {
+      setStatusMessage("Preview mode: Entity Profile changes are local only");
+    }
+  }
+
+  function updateEntityProfile(patch: Partial<EntityProfileRecord>) {
+    setEntityProfile((current) => ({ ...current, ...patch }));
   }
 
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
@@ -469,6 +527,153 @@ function App() {
           </section>
         )}
 
+        {activeModule === "Entity Profile" && (
+          <section className="single-panel">
+            <form className="panel form-panel entity-profile-form" onSubmit={saveEntityProfileForm}>
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Entity Profile Builder</p>
+                  <h2>SEO / EEAT identity source</h2>
+                </div>
+                <button className="primary-action" type="submit">Save Entity Profile</button>
+              </div>
+
+              <div className="form-grid">
+                <label>
+                  Profile Type
+                  <select value={entityProfile.profileType} onChange={(event) => updateEntityProfile({ profileType: event.target.value as EntityProfileRecord["profileType"] })}>
+                    <option value="organization">organization</option>
+                    <option value="brand">brand</option>
+                    <option value="person">person</option>
+                    <option value="local_business">local business</option>
+                  </select>
+                </label>
+                <label>
+                  Brand Name
+                  <input value={entityProfile.brandName} onChange={(event) => updateEntityProfile({ brandName: event.target.value })} />
+                </label>
+                <label>
+                  Legal Name
+                  <input value={entityProfile.legalName} onChange={(event) => updateEntityProfile({ legalName: event.target.value })} />
+                </label>
+                <label>
+                  Topical Niche
+                  <input value={entityProfile.topicalNiche} onChange={(event) => updateEntityProfile({ topicalNiche: event.target.value })} />
+                </label>
+                <label>
+                  Founder Name
+                  <input value={entityProfile.founderName} onChange={(event) => updateEntityProfile({ founderName: event.target.value })} />
+                </label>
+                <label>
+                  Author Name
+                  <input value={entityProfile.authorName} onChange={(event) => updateEntityProfile({ authorName: event.target.value })} />
+                </label>
+                <label>
+                  Email
+                  <input value={entityProfile.email} onChange={(event) => updateEntityProfile({ email: event.target.value })} />
+                </label>
+                <label>
+                  Phone
+                  <input value={entityProfile.phone} onChange={(event) => updateEntityProfile({ phone: event.target.value })} />
+                </label>
+                <label className="full-span">
+                  Address / NAP
+                  <input value={entityProfile.address} onChange={(event) => updateEntityProfile({ address: event.target.value })} />
+                </label>
+                <label className="full-span">
+                  Short Description
+                  <textarea rows={2} value={entityProfile.shortDescription} onChange={(event) => updateEntityProfile({ shortDescription: event.target.value })} />
+                </label>
+                <label className="full-span">
+                  Full Description
+                  <textarea rows={4} value={entityProfile.fullDescription} onChange={(event) => updateEntityProfile({ fullDescription: event.target.value })} />
+                </label>
+                <label className="full-span">
+                  SameAs URLs
+                  <textarea rows={3} value={entityProfile.sameAsUrls} onChange={(event) => updateEntityProfile({ sameAsUrls: event.target.value })} />
+                </label>
+                <label>
+                  Target Keywords
+                  <textarea rows={3} value={entityProfile.targetKeywords} onChange={(event) => updateEntityProfile({ targetKeywords: event.target.value })} />
+                </label>
+                <label>
+                  Expertise Proof
+                  <textarea rows={3} value={entityProfile.expertiseProof} onChange={(event) => updateEntityProfile({ expertiseProof: event.target.value })} />
+                </label>
+                <label className="full-span">
+                  Trust Signals
+                  <textarea rows={3} value={entityProfile.trustSignals} onChange={(event) => updateEntityProfile({ trustSignals: event.target.value })} />
+                </label>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {activeModule === "Entity Builder" && (
+          <section className="single-panel">
+            <section className="metrics-grid">
+              <article className="metric-card good">
+                <span>Account Plans</span>
+                <strong>{accountCreationPlan.length}</strong>
+              </article>
+              <article className="metric-card neutral">
+                <span>High Priority</span>
+                <strong>{accountCreationPlan.filter((item) => item.priority === "high").length}</strong>
+              </article>
+              <article className="metric-card warning">
+                <span>Semi-auto</span>
+                <strong>{accountCreationPlan.filter((item) => item.automationMode === "semi_auto").length}</strong>
+              </article>
+              <article className="metric-card neutral">
+                <span>Manual</span>
+                <strong>{accountCreationPlan.filter((item) => item.automationMode === "manual_review").length}</strong>
+              </article>
+            </section>
+
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Account Creation Workflow</p>
+                  <h2>{entityProfile.brandName} platform rollout plan</h2>
+                </div>
+                <span className="badge">Generated from Platform Library</span>
+              </div>
+
+              <div className="account-plan-list">
+                {accountCreationPlan.map((item) => (
+                  <article className="account-plan-card" key={item.id}>
+                    <div className="platform-card-header">
+                      <div>
+                        <p className="eyebrow">{item.platformType} / {item.entityValue}</p>
+                        <h2>{item.platformName}</h2>
+                        <span className="muted-text">@{item.recommendedUsername}</span>
+                      </div>
+                      <div className="authority-score">
+                        <span>{item.priority}</span>
+                        <strong>{item.authorityScore}</strong>
+                      </div>
+                    </div>
+
+                    <p className="platform-notes">{item.profileAngle}</p>
+
+                    <div className="platform-meta">
+                      <span>{item.automationMode.replace("_", " ")}</span>
+                      <span>{item.difficulty}</span>
+                      <span>{item.requiredAssets.join(" + ")}</span>
+                    </div>
+
+                    <div className="workflow-step-list">
+                      {item.workflowSteps.map((step) => (
+                        <span key={step}>{step}</span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </article>
+          </section>
+        )}
+
         {activeModule === "Settings" && (
           <section className="single-panel">
             <article className="panel form-panel">
@@ -512,6 +717,58 @@ function App() {
       </section>
     </main>
   );
+}
+
+function buildProfileAngle(platform: PlatformLibraryRecord, profile: EntityProfileRecord): string {
+  if (platform.entityValue === "author") {
+    return `Position ${profile.authorName || profile.founderName} as the expert voice for ${profile.topicalNiche}.`;
+  }
+
+  if (platform.entityValue === "local") {
+    return `Reinforce NAP consistency for ${profile.brandName} using address, phone, and official website data.`;
+  }
+
+  if (platform.entityValue === "media") {
+    return `Use branded visuals and proof assets to make ${profile.brandName} recognizable across media platforms.`;
+  }
+
+  if (platform.entityValue === "authority") {
+    return `Build high-trust authority proof around ${profile.legalName || profile.brandName} with clear ownership and expertise signals.`;
+  }
+
+  return `Create a consistent ${profile.profileType} profile for ${profile.brandName} and connect it back to the money site.`;
+}
+
+function requiredAssetsForPlatform(platform: PlatformLibraryRecord): string[] {
+  const assets = ["brand bio", "logo"];
+
+  if (platform.entityValue === "author") {
+    assets.push("author bio");
+  }
+
+  if (platform.entityValue === "local") {
+    assets.push("NAP");
+  }
+
+  if (["media", "video", "audio", "portfolio"].includes(platform.type)) {
+    assets.push("media asset");
+  }
+
+  return assets;
+}
+
+function workflowStepsForPlatform(platform: PlatformLibraryRecord): string[] {
+  const steps = ["Prepare profile data", "Create or review account", "Add brand/EEAT details", "Attach evidence URL"];
+
+  if (platform.requiresCaptcha) {
+    steps.splice(2, 0, "Solve CAPTCHA/manual gate");
+  }
+
+  if (platform.automationMode === "manual_review") {
+    steps.push("Manual QA before publishing");
+  }
+
+  return steps;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
