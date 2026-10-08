@@ -347,6 +347,14 @@ function App() {
 
   function buildQueueItem(account: AccountRecord, gateType: AutomationGateType, status: AutomationQueueStatus, payload: string): AutomationQueueItem {
     const timestamp = new Date().toISOString();
+    const queuePayload = gateType === "captcha"
+      ? JSON.stringify({
+          captchaType: "recaptcha_v2",
+          websiteUrl: "",
+          websiteKey: "",
+          note: payload
+        })
+      : payload;
 
     return {
       id: `queue-${account.id}-${gateType}`,
@@ -354,7 +362,7 @@ function App() {
       platformName: account.platformName,
       gateType,
       status,
-      payload,
+      payload: queuePayload,
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -377,6 +385,16 @@ function App() {
     }
 
     await saveQueueItem({ ...current, ...patch, updatedAt: new Date().toISOString() });
+  }
+
+  async function executeCaptchaQueueItem(item: AutomationQueueItem) {
+    try {
+      const saved = await invoke<AutomationQueueItem>("execute_captcha_queue_item", { item });
+      setAutomationQueue((current) => upsertById(current, saved));
+      setStatusMessage(`CAPTCHA queue sent for ${saved.platformName}`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "CAPTCHA provider execution failed");
+    }
   }
 
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
@@ -919,12 +937,24 @@ function App() {
                       <div>
                         <strong>{item.platformName}</strong>
                         <span>{item.gateType.replace("_", " ")} / {item.payload}</span>
+                        {item.gateType === "captcha" && (
+                          <textarea
+                            rows={4}
+                            value={item.payload}
+                            onChange={(event) => updateQueueItem(item.id, { payload: event.target.value })}
+                          />
+                        )}
                       </div>
-                      <select value={item.status} onChange={(event) => updateQueueItem(item.id, { status: event.target.value as AutomationQueueStatus })}>
-                        {queueStatuses.map((status) => (
-                          <option key={status} value={status}>{status}</option>
-                        ))}
-                      </select>
+                      <div className="queue-actions">
+                        <select value={item.status} onChange={(event) => updateQueueItem(item.id, { status: event.target.value as AutomationQueueStatus })}>
+                          {queueStatuses.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                        {item.gateType === "captcha" && (
+                          <button className="secondary-action" type="button" onClick={() => executeCaptchaQueueItem(item)}>Send CAPTCHA</button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
