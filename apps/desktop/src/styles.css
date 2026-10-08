@@ -343,7 +343,21 @@ h2 {
   gap: 14px;
 }
 
+.account-plan-list {
+  display: grid;
+  gap: 14px;
+}
+
 .platform-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.account-plan-card {
   display: grid;
   gap: 14px;
   border: 1px solid #dbe4ee;
@@ -396,6 +410,13 @@ h2 {
   line-height: 1.5;
 }
 
+.muted-text {
+  display: inline-block;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .platform-meta {
   display: flex;
   flex-wrap: wrap;
@@ -419,6 +440,21 @@ h2 {
   align-items: end;
 }
 
+.workflow-step-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-step-list span {
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .form-grid,
 .settings-grid {
   display: grid;
@@ -427,6 +463,10 @@ h2 {
 
 .form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.full-span {
+  grid-column: 1 / -1;
 }
 
 .settings-grid {
@@ -442,7 +482,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -453,9 +494,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: #0f766e;
   outline: 3px solid rgba(15, 118, 110, 0.14);
+}
+
+textarea {
+  min-height: 88px;
+  resize: vertical;
 }
 
 .setting-card {
