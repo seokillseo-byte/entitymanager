@@ -742,7 +742,8 @@ async fn poll_captcha_queue_item(
     let solution_token = provider_response["solution"]["gRecaptchaResponse"]
         .as_str()
         .or_else(|| provider_response["solution"]["token"].as_str())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
 
     let mut updated_payload = payload.clone();
     updated_payload["provider"] = json!(setting.provider);
