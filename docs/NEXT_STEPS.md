@@ -147,8 +147,16 @@ Phase 1.6 validation and next build task:
 
 - Validate workflow history creation when saving account records and changing statuses.
 - Validate automation queue items for CAPTCHA, email, manual review, and evidence gates.
-- Add integration adapter interfaces for CAPTCHA and email providers.
-- Add encrypted/local-safe handling strategy for provider API keys before any real API calls.
+- Add integration adapter interfaces for CAPTCHA and email providers. Started.
+- Add encrypted/local-safe handling strategy for provider API keys before any real API calls. Started with masked placeholders.
+
+Phase 1.7 validation and next build task:
+
+- Validate Settings save/load with masked secret placeholders.
+- Validate dry-run adapter checks for AI, CAPTCHA, email, proxy, and indexing providers.
+- Replace placeholder masking with OS-backed encrypted secret storage.
+- Implement first live CAPTCHA provider adapter behind the dry-run interface.
+- Implement first live email provider adapter behind the dry-run interface.
 
 ## First Data Models To Design
 
