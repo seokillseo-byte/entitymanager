@@ -37,6 +37,7 @@ Phase 1.2 source work started:
 - Kept browser/Vite preview usable with seed-data fallback.
 - Added Tauri v2 desktop capability config for the `main` window.
 - Removed the empty Tauri bundle icon array to avoid packaging-time config failure.
+- Added GitHub Actions workflow `Build Windows EXE` so the `.exe` can be built in GitHub and downloaded as an artifact.
 
 Implemented foundation:
 
@@ -77,6 +78,8 @@ Tauri `.exe` packaging still needs verification on Windows because this executio
 Rust/Tauri backend compile still needs verification on a machine with `cargo`; this sandbox does not have `cargo` installed.
 
 If `apps/desktop/src-tauri/target/release/bundle/nsis/` is missing after `pnpm desktop:build`, the Tauri build failed before packaging. Capture the full Windows log with `pnpm desktop:build 2>&1 | Tee-Object build.log`.
+
+For normal testing, prefer GitHub Actions: run `Build Windows EXE`, download `EntityManager-Windows-Installer`, extract it, then open the installer `.exe`.
 
 `pnpm db:push` should be verified on Windows/local dev. In the current Linux sandbox, Prisma validation passes but `db:push` returns a blank schema-engine error under Node 24.
 
