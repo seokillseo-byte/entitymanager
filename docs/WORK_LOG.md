@@ -54,6 +54,13 @@
 - Added an Entity Profile screen with brand, legal, NAP, sameAs, keyword, expertise, and trust signal fields.
 - Added an Entity Builder screen that generates account creation plans from Platform Library records.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.4 changes.
+- Started Phase 1.5 Persistent Account Records and Workflow Status.
+- Added shared Account Record and Account Status types.
+- Added local SQLite `accounts` table with planned, created, needs manual review, failed, and verified statuses.
+- Added Tauri commands `get_accounts` and `save_account`.
+- Updated Entity Builder so generated platform plans can be saved as persistent account records.
+- Added account status, evidence URL, and notes editing in the Entity Builder screen.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.5 changes.
 
 ## Current Decision
 
@@ -65,4 +72,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.4 in the packaged `.exe`, then implement persistent Account records and workflow run statuses.
+Validate Phase 1.5 in the packaged `.exe`, then implement workflow run history and evidence capture flows.
