@@ -154,9 +154,19 @@ Phase 1.7 validation and next build task:
 
 - Validate Settings save/load with masked secret placeholders.
 - Validate dry-run adapter checks for AI, CAPTCHA, email, proxy, and indexing providers.
-- Replace placeholder masking with OS-backed encrypted secret storage.
-- Implement first live CAPTCHA provider adapter behind the dry-run interface.
-- Implement first live email provider adapter behind the dry-run interface.
+- Replace placeholder masking with OS-backed encrypted secret storage. Done for newly saved keys.
+- Implement first live AI provider adapter behind the dry-run interface. Done for Google Gemini live test.
+- Validate encrypted key save/load in the packaged Windows `.exe`.
+- Validate Gemini Live Test with a real API key and quota-enabled account.
+- Implement first live CAPTCHA provider adapter behind the adapter interface.
+- Implement first live email provider adapter behind the adapter interface.
+
+Phase 1.8 validation and next build task:
+
+- Confirm Windows Credential Manager stores AI/Gemini keys and SQLite only stores masked metadata.
+- Confirm Settings reload shows `secure` key status after saving a key.
+- Confirm Live Test succeeds for Gemini with a valid key, and returns useful failure messages for disabled providers, missing keys, quota errors, and unsupported providers.
+- Add CAPTCHA provider adapter next, preferably 2Captcha or CapSolver, and route CAPTCHA queue items toward the configured provider.
 
 ## First Data Models To Design
 
