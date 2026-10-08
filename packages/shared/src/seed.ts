@@ -1,4 +1,4 @@
-import type { DemoProjectSeed, PlatformLibraryRecord } from "./index";
+import type { DemoProjectSeed, EntityProfileRecord, PlatformLibraryRecord } from "./index";
 
 export const platformLibrarySeed: PlatformLibraryRecord[] = [
   {
@@ -198,4 +198,24 @@ export const demoProjectSeed: DemoProjectSeed = {
     { type: "proxy", provider: "Custom proxy", isEnabled: false, maskedValue: "Optional" },
     { type: "indexing", provider: "IndexNow / Google API", isEnabled: false, maskedValue: "Optional" }
   ]
+};
+
+export const demoEntityProfileSeed: EntityProfileRecord = {
+  id: "demo-entity-profile",
+  profileType: "organization",
+  brandName: "Example Money Site",
+  legalName: "Example Money Site Co., Ltd.",
+  shortDescription: "SEO services brand focused on entity growth and authority building.",
+  fullDescription:
+    "Example Money Site helps businesses improve organic visibility through entity optimization, EEAT content planning, and durable authority signals across trusted platforms.",
+  founderName: "Nguyen Van A",
+  authorName: "SEO Editorial Team",
+  email: "contact@example-money-site.com",
+  phone: "+84 900 000 000",
+  address: "Ho Chi Minh City, Vietnam",
+  sameAsUrls: "https://example-money-site.com/about\nhttps://example-money-site.com/contact",
+  targetKeywords: "entity SEO, EEAT SEO, SEO services Vietnam",
+  topicalNiche: "SEO services and entity authority building",
+  expertiseProof: "Case studies, client results, process documentation, author bio, and service pages.",
+  trustSignals: "Consistent NAP, branded profiles, author pages, social proof, privacy/contact pages, and clear ownership."
 };
