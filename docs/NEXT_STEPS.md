@@ -132,8 +132,16 @@ Phase 1.4 validation and next build task:
 
 - Validate Entity Profile save/load in the GitHub-built `.exe`.
 - Validate Entity Builder account plan generation from Platform Library records.
-- Add persistent Account records with statuses such as planned, created, needs manual review, failed, and verified.
+- Add persistent Account records with statuses such as planned, created, needs manual review, failed, and verified. Done.
 - Add workflow run history for account creation tasks.
+- Add evidence URL capture and verification flow.
+
+Phase 1.5 validation and next build task:
+
+- Validate account record save/load in the GitHub-built `.exe`.
+- Validate status changes for planned, created, needs manual review, failed, and verified.
+- Add workflow run history tied to account records.
+- Add first automation queue model for CAPTCHA/email/manual gates.
 
 ## First Data Models To Design
 
