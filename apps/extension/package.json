@@ -1,0 +1,13 @@
+{
+  "name": "@entitymanager/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc && node scripts/copy-static.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
