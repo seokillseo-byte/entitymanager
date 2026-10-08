@@ -37,6 +37,7 @@
 - Added a Tauri v2 capability file and explicit `main` window label for Windows desktop packaging.
 - Removed the empty bundle icon array from `tauri.conf.json` so packaging can proceed without an invalid icon configuration.
 - Updated `.exe` build notes with the expected NSIS output folder and a PowerShell log capture command.
+- Added a GitHub Actions workflow to build the Windows `.exe` installer on `windows-latest` and upload it as an artifact.
 
 ## Current Decision
 
@@ -48,4 +49,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Continue Phase 1.2 by rebuilding the Tauri app on Windows, confirming the NSIS `.exe` is generated, then checking Money Site/Settings persistence inside the installed app.
+Continue Phase 1.2 by running the GitHub Actions Windows build, downloading the installer artifact, then checking Money Site/Settings persistence inside the installed app.
