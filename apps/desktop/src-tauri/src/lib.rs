@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use tauri::Manager;
 
 #[tauri::command]
 fn app_health() -> &'static str {
@@ -246,7 +247,6 @@ fn default_money_site() -> MoneySiteRecord {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             app_health,
             local_config_path,
