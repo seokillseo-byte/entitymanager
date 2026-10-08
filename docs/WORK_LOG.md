@@ -61,6 +61,14 @@
 - Updated Entity Builder so generated platform plans can be saved as persistent account records.
 - Added account status, evidence URL, and notes editing in the Entity Builder screen.
 - Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.5 changes.
+- Started Phase 1.6 Workflow Run History and Automation Queue Foundation.
+- Added shared Workflow Run and Automation Queue item types.
+- Added local SQLite `workflow_runs` and `automation_queue` tables.
+- Added Tauri commands for reading/saving workflow runs and queue items.
+- Updated Entity Builder to write workflow run history when account records are saved or statuses change.
+- Added queue generation for CAPTCHA, email, manual review, and evidence gates.
+- Added Automation Queue and Workflow History panels to the Entity Builder screen.
+- Re-verified `pnpm typecheck` and `pnpm --filter @entitymanager/desktop build` after Phase 1.6 changes.
 
 ## Current Decision
 
@@ -72,4 +80,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.5 in the packaged `.exe`, then implement workflow run history and evidence capture flows.
+Validate Phase 1.6 in the packaged `.exe`, then implement the first real integration adapter hooks for CAPTCHA/email providers.
