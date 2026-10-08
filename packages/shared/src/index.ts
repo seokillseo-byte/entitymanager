@@ -44,7 +44,7 @@ export type WorkflowRunStatus = "queued" | "running" | "blocked" | "completed" |
 export type AutomationGateType = "captcha" | "email" | "manual_review" | "evidence";
 export type AutomationQueueStatus = "queued" | "waiting" | "resolved" | "failed";
 export type IntegrationType = "ai" | "captcha" | "email" | "proxy" | "indexing";
-export type ProviderKeyStatus = "missing" | "stored" | "masked";
+export type ProviderKeyStatus = "missing" | "stored" | "masked" | "secure";
 export type IntegrationCapability = "generate_text" | "solve_captcha" | "send_email" | "receive_email" | "proxy" | "index_url";
 
 export interface MoneySiteProfile {
