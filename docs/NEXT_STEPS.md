@@ -117,10 +117,16 @@ PostgreSQL, Redis, and Docker should not be required for normal end users. They 
 
 Phase 1.3 should continue with the real Platform Library:
 
-- SQLite table and Tauri commands for platforms.
-- Seeded platform records for social, blog 2.0, profile, forum, citation, portfolio, video, audio, and document-sharing entities.
-- Platform Library screen with filters, scoring, automation mode, difficulty, and entity value.
+- SQLite table and Tauri commands for platforms. Done.
+- Seeded platform records for social, blog 2.0, profile, forum, citation, portfolio, video, audio, and document-sharing entities. Started.
+- Platform Library screen with filters, scoring, automation mode, difficulty, and entity value. Done.
 - Preparation for Account Creation and Entity Care workflows.
+
+Next recommended build task:
+
+- Validate Platform Library in the GitHub-built `.exe`.
+- Add Entity Profile Builder backed by SQLite.
+- Add Account Creation workflow scaffolding using Platform Library records.
 
 ## First Data Models To Design
 
