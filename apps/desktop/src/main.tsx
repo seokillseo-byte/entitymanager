@@ -397,6 +397,16 @@ function App() {
     }
   }
 
+  async function pollCaptchaQueueItem(item: AutomationQueueItem) {
+    try {
+      const saved = await invoke<AutomationQueueItem>("poll_captcha_queue_item", { item });
+      setAutomationQueue((current) => upsertById(current, saved));
+      setStatusMessage(saved.status === "resolved" ? `CAPTCHA token captured for ${saved.platformName}` : `CAPTCHA result checked for ${saved.platformName}`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "CAPTCHA result polling failed");
+    }
+  }
+
   async function saveMoneySiteForm(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -953,6 +963,9 @@ function App() {
                         </select>
                         {item.gateType === "captcha" && (
                           <button className="secondary-action" type="button" onClick={() => executeCaptchaQueueItem(item)}>Send CAPTCHA</button>
+                        )}
+                        {item.gateType === "captcha" && (
+                          <button className="secondary-action" type="button" onClick={() => pollCaptchaQueueItem(item)}>Poll Result</button>
                         )}
                       </div>
                     </div>
