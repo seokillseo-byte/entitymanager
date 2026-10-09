@@ -203,8 +203,19 @@ Phase 1.12 validation and next build task:
 - Paste the payload into the extension popup and keep callback URL as `http://127.0.0.1:17321/captcha/injection/complete`.
 - Open the target signup page or a test page with `g-recaptcha-response`, then click Inject Active Tab.
 - Confirm the extension injects the token, reports back to Desktop, updates queue payload injection metadata, and creates a workflow history row.
-- Add the submit/verify account step after a successful token injection.
-- Replace manual JSON paste with automatic payload fetching from Desktop or a native messaging channel.
+- Add the submit/verify account step after a successful token injection. Done.
+- Replace manual JSON paste with automatic payload fetching from Desktop or a native messaging channel. Done with a local HTTP MVP.
+
+Phase 1.13 validation and next build task:
+
+- Confirm Desktop starts the local bridge server at `http://127.0.0.1:17321`.
+- Confirm `GET /captcha/injection/next` returns the oldest resolved CAPTCHA queue item with a `solutionToken` and no completed injection marker.
+- Confirm the extension Fetch Next Payload action fills the popup JSON automatically.
+- Confirm Inject Active Tab posts back to `POST /captcha/injection/complete`.
+- Confirm successful injection creates a `submit_verify` queue item.
+- Confirm Mark Verified resolves `submit_verify`, marks the account `verified`, and writes workflow history.
+- Confirm Mark Submit Failed marks the queue failed and moves the account to manual review.
+- Build platform-specific submit/verify browser automation with evidence URL capture.
 
 ## First Data Models To Design
 
