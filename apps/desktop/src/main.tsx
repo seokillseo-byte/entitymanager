@@ -154,6 +154,34 @@ function App() {
     return { total, semiAuto, manual, averageAuthority };
   }, [platforms]);
 
+  const selectorFailureAnalytics = useMemo(() => {
+    const grouped = new Map<string, { platformId: string; platformName: string; runs: number; failures: number; issueCounts: Map<string, number> }>();
+    for (const record of dryRunHistory) {
+      const entry = grouped.get(record.platformId) ?? {
+        platformId: record.platformId,
+        platformName: record.platformName,
+        runs: 0,
+        failures: 0,
+        issueCounts: new Map<string, number>()
+      };
+      entry.runs += 1;
+      const issues = [...record.missingChecks];
+      if (!record.plannedSelector) issues.push("submitButton");
+      if (!record.plannedFields.length) issues.push("noPlannedFields");
+      if (issues.length) entry.failures += 1;
+      for (const issue of new Set(issues)) entry.issueCounts.set(issue, (entry.issueCounts.get(issue) ?? 0) + 1);
+      grouped.set(record.platformId, entry);
+    }
+    return Array.from(grouped.values())
+      .map((entry) => ({
+        ...entry,
+        repeatedIssues: Array.from(entry.issueCounts.entries())
+          .filter(([, count]) => count > 1)
+          .sort((a, b) => b[1] - a[1])
+      }))
+      .sort((a, b) => b.failures - a.failures || b.runs - a.runs);
+  }, [dryRunHistory]);
+
   const accountCreationPlan = useMemo<AccountCreationPlanItem[]>(() => {
     const cleanBrand = entityProfile.brandName
       .toLowerCase()
@@ -275,6 +303,73 @@ function App() {
       setSelectorRecipes((current) => current.map((item) => (item.platformId === recipe.platformId ? nextRecipe : item)));
       setStatusMessage("Preview mode: Selector recipe changes are local only");
     }
+  }
+
+  function draftRecipeSuggestions(platformId: string) {
+    const recipe = selectorRecipes.find((item) => item.platformId === platformId);
+    const failedRuns = dryRunHistory.filter((item) => item.platformId === platformId && (item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0));
+    if (!recipe || !failedRuns.length) {
+      setStatusMessage("No failed dry-run data available for this platform yet.");
+      return;
+    }
+
+    let selectors: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(recipe.fieldSelectorsJson || "{}") as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) selectors = parsed as Record<string, unknown>;
+    } catch {
+      setStatusMessage("Recipe field selector JSON is invalid. Fix the JSON before applying suggestions.");
+      return;
+    }
+
+    const fallbackSelectors: Record<string, string[]> = {
+      username: ['input[name="username"]', "input#username", 'input[autocomplete="username"]'],
+      email: ['input[type="email"]', 'input[name="email"]', "input#email"],
+      displayName: ['input[name="displayName"]', 'input[name="name"]', "input#displayName"],
+      bio: ['textarea[name="bio"]', "textarea#bio", "textarea"],
+      websiteUrl: ['input[type="url"]', 'input[name="website"]', 'input[name="url"]']
+    };
+    const fieldKeyMap: Record<string, string> = {
+      username: "username", email: "email", displayName: "displayName", bio: "bio",
+      websiteUrl: "websiteUrl", display_name: "displayName", website_url: "websiteUrl"
+    };
+    const submitSelectors = recipe.submitSelectors.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    let fieldSuggestions = 0;
+    let needsSubmitSuggestion = false;
+
+    for (const run of failedRuns) {
+      const issues = [...run.missingChecks];
+      if (!run.plannedSelector) issues.push("submitButton");
+      if (!run.plannedFields.length) issues.push("noPlannedFields");
+      for (const issue of issues) {
+        if (issue === "submitButton") {
+          needsSubmitSuggestion = true;
+          continue;
+        }
+        const [rawField, problem] = issue.split(":");
+        if (problem !== "selector" && problem !== undefined) continue;
+        const field = fieldKeyMap[rawField];
+        if (!field || !fallbackSelectors[field]) continue;
+        const current = Array.isArray(selectors[field]) ? (selectors[field] as unknown[]).filter((value): value is string => typeof value === "string") : [];
+        const additions = fallbackSelectors[field].filter((candidate) => !current.includes(candidate));
+        if (additions.length) {
+          selectors[field] = [...current, ...additions];
+          fieldSuggestions += additions.length;
+        }
+      }
+    }
+
+    const nextSubmitSelectors = needsSubmitSuggestion
+      ? [...new Set([...submitSelectors, "button[type='submit']", "input[type='submit']", "button[name='submit']"])]
+      : submitSelectors;
+    const drafted: SelectorRecipeRecord = {
+      ...recipe,
+      fieldSelectorsJson: JSON.stringify(selectors, null, 2),
+      submitSelectors: nextSubmitSelectors.join("\n"),
+      updatedAt: new Date().toISOString()
+    };
+    setSelectorRecipes((current) => current.map((item) => item.platformId === platformId ? drafted : item));
+    setStatusMessage(`Drafted ${fieldSuggestions} field selector fallback(s)${needsSubmitSuggestion ? " and submit-button fallbacks" : ""} for ${recipe.platformName}. Review the editor, then click Save Recipe to persist.`);
   }
 
   async function saveEntityProfileForm(event: React.FormEvent<HTMLFormElement>) {
@@ -854,6 +949,22 @@ function App() {
                 <label className="full-span">Import recipes JSON<textarea rows={5} value={recipeImportJson} onChange={(event) => setRecipeImportJson(event.target.value)} placeholder="Paste JSON export..." /></label>
                 <button className="primary-action" type="button" onClick={() => void importSelectorRecipes()}>Import JSON to SQLite</button>
                 {recipeImportMessage && <p className="muted-text">{recipeImportMessage}</p>}
+              </div>
+              <div className="panel-header"><div><p className="eyebrow">Selector Failure Analytics</p><h2>Failures by platform</h2></div><span className="badge">{dryRunHistory.filter((item) => item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0).length} failed previews</span></div>
+              <div className="queue-list">
+                {selectorFailureAnalytics.map((item) => (
+                  <div className="queue-row" key={item.platformId}>
+                    <div>
+                      <strong>{item.platformName} — {item.failures}/{item.runs} previews need review</strong>
+                      <span>Platform ID: {item.platformId}</span>
+                      <span>Repeated issues: {item.repeatedIssues.map(([issue, count]) => `${issue} (${count})`).join(", ") || "No repeated issue detected yet"}</span>
+                    </div>
+                    <div className="queue-actions">
+                      <button className="secondary-action" type="button" disabled={!item.failures} onClick={() => draftRecipeSuggestions(item.platformId)}>Draft recipe suggestions</button>
+                    </div>
+                  </div>
+                ))}
+                {!selectorFailureAnalytics.length && <p className="muted-text">Analytics sẽ xuất hiện sau khi extension gửi dry-run history.</p>}
               </div>
               <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><span className="badge">{dryRunHistory.length} records</span></div>
               <div className="queue-list">
