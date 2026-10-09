@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -113,6 +113,9 @@ function App() {
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
+  const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
+  const [recipeImportJson, setRecipeImportJson] = useState("");
+  const [recipeImportMessage, setRecipeImportMessage] = useState("");
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
@@ -188,7 +191,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -196,7 +199,8 @@ function App() {
         invoke<EntityProfileRecord>("get_entity_profile"),
         invoke<AccountRecord[]>("get_accounts"),
         invoke<WorkflowRunRecord[]>("get_workflow_runs"),
-        invoke<AutomationQueueItem[]>("get_automation_queue")
+        invoke<AutomationQueueItem[]>("get_automation_queue"),
+        invoke<DryRunHistoryRecord[]>("get_dry_run_history")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -207,6 +211,7 @@ function App() {
       setAccounts(storedAccounts);
       setWorkflowRuns(storedRuns);
       setAutomationQueue(storedQueue);
+      setDryRunHistory(storedDryRunHistory);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -238,6 +243,25 @@ function App() {
 
   function updateSelectorRecipe(platformId: string, patch: Partial<SelectorRecipeRecord>) {
     setSelectorRecipes((current) => current.map((recipe) => (recipe.platformId === platformId ? { ...recipe, ...patch } : recipe)));
+  }
+
+  async function importSelectorRecipes() {
+    try {
+      const parsed = JSON.parse(recipeImportJson) as unknown;
+      const candidates = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === "object" && Array.isArray((parsed as { recipes?: unknown }).recipes) ? (parsed as { recipes: unknown[] }).recipes : []);
+      const valid = candidates.filter((item): item is SelectorRecipeRecord => Boolean(item && typeof item === "object" && typeof (item as SelectorRecipeRecord).platformId === "string" && typeof (item as SelectorRecipeRecord).platformName === "string" && typeof (item as SelectorRecipeRecord).fieldSelectorsJson === "string"));
+      if (!valid.length) throw new Error("JSON không chứa selector recipe hợp lệ.");
+      for (const recipe of valid) await saveSelectorRecipe({ ...recipe, updatedAt: new Date().toISOString() });
+      setRecipeImportMessage(`Đã import ${valid.length} recipe.`);
+    } catch (error) { setRecipeImportMessage(error instanceof Error ? error.message : "Import JSON thất bại."); }
+  }
+
+  function exportSelectorRecipes() {
+    const blob = new Blob([JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), recipes: selectorRecipes }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url; anchor.download = "entitymanager-selector-recipes.json"; anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   async function saveSelectorRecipe(recipe: SelectorRecipeRecord) {
@@ -823,6 +847,25 @@ function App() {
                   <h2>Platform field mapping and submit safety rules</h2>
                 </div>
                 <span className="badge">{selectorRecipes.length} recipes</span>
+              </div>
+
+              <div className="form-grid">
+                <button className="secondary-action" type="button" onClick={exportSelectorRecipes}>Export JSON</button>
+                <label className="full-span">Import recipes JSON<textarea rows={5} value={recipeImportJson} onChange={(event) => setRecipeImportJson(event.target.value)} placeholder="Paste JSON export..." /></label>
+                <button className="primary-action" type="button" onClick={() => void importSelectorRecipes()}>Import JSON to SQLite</button>
+                {recipeImportMessage && <p className="muted-text">{recipeImportMessage}</p>}
+              </div>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><span className="badge">{dryRunHistory.length} records</span></div>
+              <div className="queue-list">
+                {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
+                  <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
+                  <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : "Time unknown"} · Account {item.accountId}</span>
+                  <span>Planned fields: {item.plannedFields.join(", ") || "none"}</span>
+                  <span>Planned selector: {item.plannedSelector || "none"}</span>
+                  <span>Missing checks: {item.missingChecks.join(", ") || "none"}</span>
+                  <a href={item.currentUrl} target="_blank" rel="noreferrer">{item.currentUrl || "URL unavailable"}</a>
+                </div></div>)}
+                {!dryRunHistory.length && <p className="muted-text">Chưa có lịch sử. Chạy Dry-run Preview từ extension khi Desktop đang mở.</p>}
               </div>
 
               <div className="queue-list">
