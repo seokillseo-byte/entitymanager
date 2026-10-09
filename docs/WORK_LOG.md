@@ -198,3 +198,12 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added `pnpm test:selector-health` and wired it into the Windows GitHub Actions workflow before typecheck/build.
 - Corrected timestamp parsing to support ISO dates and numeric Unix timestamps in seconds or milliseconds; future-dated runs are excluded from the 30-day window.
 - GitHub Actions typecheck, Windows packaging, and release status must still be checked before considering this phase complete. Do not publish a manual release if CI is red or pending.
+
+
+## 2026-10-09 — Phase 1.21 Packaged App Validation & Legacy Data Tests
+
+- Added a defensive normalizer for legacy/malformed dry-run history records. Missing arrays and strings receive safe defaults; missing or invalid timestamps are not fabricated, so time-window and recipe before/after calculations exclude them.
+- Selector-health aggregation evaluates normalized records, and Desktop normalizes SQLite-loaded and refreshed dry-run history before rendering analytics.
+- Added regression tests for historical records with missing fields, malformed values, and invalid/absent/non-finite timestamps.
+- Packaged Windows `.exe` validation with a real extension callback and direct SQLite/dashboard reconciliation still requires a human-run test against the downloaded installer; this environment cannot execute the Windows app or inspect its local SQLite database.
+- Do not publish a new release until GitHub Actions Windows build is green and packaged-app validation is recorded.
