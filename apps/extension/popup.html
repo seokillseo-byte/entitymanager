@@ -28,10 +28,21 @@
         <input id="callbackUrlInput" placeholder="http://127.0.0.1:17321/captcha/injection/complete" />
       </label>
 
+      <label>
+        Submit/verify fetch URL
+        <input id="submitFetchUrlInput" placeholder="http://127.0.0.1:17321/account/submit-verify/next" />
+      </label>
+
+      <label>
+        Submit/verify callback URL
+        <input id="submitCallbackUrlInput" placeholder="http://127.0.0.1:17321/account/submit-verify/complete" />
+      </label>
+
       <div class="actions">
         <button id="fetchPayloadButton" type="button">Fetch Next Payload</button>
         <button id="savePayloadButton" type="button">Save Payload</button>
         <button id="injectButton" type="button">Inject Active Tab</button>
+        <button id="submitVerifyButton" type="button">Submit/Verify Tab</button>
       </div>
 
       <pre id="statusOutput">Ready.</pre>
