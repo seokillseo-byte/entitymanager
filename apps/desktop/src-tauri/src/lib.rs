@@ -17,6 +17,25 @@ fn app_health() -> &'static str {
 }
 
 #[tauri::command]
+fn open_extension_download() -> Result<(), String> {
+    const EXTENSION_DOWNLOAD_URL: &str = "https://github.com/seokillseo-byte/entitymanager/releases/latest/download/EntityManager-Chrome-Extension.zip";
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", EXTENSION_DOWNLOAD_URL])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Không mở được trình duyệt để tải extension: {error}"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Tải extension qua nút này hiện chỉ được hỗ trợ trên Windows.".to_string())
+    }
+}
+
+#[tauri::command]
 fn start_extension_bridge_server(app_handle: tauri::AppHandle) -> Result<String, String> {
     if EXTENSION_BRIDGE_STARTED.swap(true, Ordering::SeqCst) {
         return Ok("Extension bridge server is already running at http://127.0.0.1:17321".to_string());
@@ -2888,6 +2907,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             app_health,
+            open_extension_download,
             start_extension_bridge_server,
             local_config_path,
             get_money_site,
