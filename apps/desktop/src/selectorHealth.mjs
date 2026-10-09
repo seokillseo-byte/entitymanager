@@ -35,6 +35,10 @@ export function isSuccessfulDryRun(run) {
 }
 
 export function calculateSelectorHealthTrends(dryRunHistory, selectorRecipes, now = Date.now()) {
+  dryRunHistory = Array.isArray(dryRunHistory)
+    ? dryRunHistory.map((record, index) => normalizeDryRunHistoryRecord(record, index))
+    : [];
+  selectorRecipes = Array.isArray(selectorRecipes) ? selectorRecipes : [];
   const cutoff = now - 30 * DAY_MS;
   const byPlatform = new Map();
 
