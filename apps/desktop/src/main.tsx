@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -19,6 +19,7 @@ const modules: EntityModule[] = [
   "Entity Graph",
   "Evidence Bank",
   "Platform Library",
+  "Selector Recipes",
   "API Integrations",
   "Reports",
   "Settings"
@@ -34,6 +35,7 @@ const icons = {
   "Entity Graph": GitBranch,
   "Evidence Bank": FileCheck2,
   "Platform Library": Library,
+  "Selector Recipes": Bot,
   "API Integrations": KeyRound,
   Reports: Database,
   Settings
@@ -110,6 +112,7 @@ function App() {
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
+  const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
@@ -185,10 +188,11 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedEntityProfile, storedAccounts, storedRuns, storedQueue] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
+        invoke<SelectorRecipeRecord[]>("get_selector_recipes"),
         invoke<EntityProfileRecord>("get_entity_profile"),
         invoke<AccountRecord[]>("get_accounts"),
         invoke<WorkflowRunRecord[]>("get_workflow_runs"),
@@ -198,6 +202,7 @@ function App() {
       setMoneySite(storedMoneySite);
       setSettings(storedSettings);
       setPlatforms(storedPlatforms);
+      setSelectorRecipes(storedRecipes);
       setEntityProfile(storedEntityProfile);
       setAccounts(storedAccounts);
       setWorkflowRuns(storedRuns);
@@ -229,6 +234,23 @@ function App() {
 
   function updatePlatform(id: string, patch: Partial<PlatformLibraryRecord>) {
     setPlatforms((current) => current.map((platform) => (platform.id === id ? { ...platform, ...patch } : platform)));
+  }
+
+  function updateSelectorRecipe(platformId: string, patch: Partial<SelectorRecipeRecord>) {
+    setSelectorRecipes((current) => current.map((recipe) => (recipe.platformId === platformId ? { ...recipe, ...patch } : recipe)));
+  }
+
+  async function saveSelectorRecipe(recipe: SelectorRecipeRecord) {
+    const nextRecipe = { ...recipe, updatedAt: new Date().toISOString() };
+
+    try {
+      const saved = await invoke<SelectorRecipeRecord>("save_selector_recipe", { recipe: nextRecipe });
+      setSelectorRecipes((current) => current.map((item) => (item.platformId === saved.platformId ? saved : item)));
+      setStatusMessage(`${saved.platformName} selector recipe saved`);
+    } catch {
+      setSelectorRecipes((current) => current.map((item) => (item.platformId === recipe.platformId ? nextRecipe : item)));
+      setStatusMessage("Preview mode: Selector recipe changes are local only");
+    }
   }
 
   async function saveEntityProfileForm(event: React.FormEvent<HTMLFormElement>) {
@@ -786,6 +808,74 @@ function App() {
                       <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save Platform</button>
                     </div>
                   </article>
+                ))}
+              </div>
+            </article>
+          </section>
+        )}
+
+        {activeModule === "Selector Recipes" && (
+          <section className="single-panel">
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Selector Recipe Editor</p>
+                  <h2>Platform field mapping and submit safety rules</h2>
+                </div>
+                <span className="badge">{selectorRecipes.length} recipes</span>
+              </div>
+
+              <div className="queue-list">
+                {selectorRecipes.map((recipe) => (
+                  <div className="queue-row recipe-row" key={recipe.platformId}>
+                    <div>
+                      <strong>{recipe.platformName}</strong>
+                      <span>{recipe.platformId} / updated {recipe.updatedAt ? new Date(Number.isNaN(Number(recipe.updatedAt)) ? recipe.updatedAt : Number(recipe.updatedAt) * 1000).toLocaleString() : "never"}</span>
+                      <label className="full-span">
+                        Field selectors JSON
+                        <textarea
+                          rows={7}
+                          value={recipe.fieldSelectorsJson}
+                          onChange={(event) => updateSelectorRecipe(recipe.platformId, { fieldSelectorsJson: event.target.value })}
+                        />
+                      </label>
+                      <label className="full-span">
+                        Submit selectors
+                        <textarea
+                          rows={4}
+                          value={recipe.submitSelectors}
+                          onChange={(event) => updateSelectorRecipe(recipe.platformId, { submitSelectors: event.target.value })}
+                        />
+                      </label>
+                      <label className="full-span">
+                        Verify selectors
+                        <textarea
+                          rows={3}
+                          value={recipe.verifySelectors}
+                          onChange={(event) => updateSelectorRecipe(recipe.platformId, { verifySelectors: event.target.value })}
+                        />
+                      </label>
+                      <label className="full-span">
+                        Required fields
+                        <textarea
+                          rows={2}
+                          value={recipe.requiredFields}
+                          onChange={(event) => updateSelectorRecipe(recipe.platformId, { requiredFields: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <div className="queue-actions">
+                      <label className="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={recipe.requiresCaptchaToken}
+                          onChange={(event) => updateSelectorRecipe(recipe.platformId, { requiresCaptchaToken: event.target.checked })}
+                        />
+                        Require CAPTCHA token
+                      </label>
+                      <button className="secondary-action" type="button" onClick={() => saveSelectorRecipe(recipe)}>Save Recipe</button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </article>
