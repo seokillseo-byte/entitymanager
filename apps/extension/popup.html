@@ -15,7 +15,12 @@
 
       <label>
         Bridge payload JSON
-        <textarea id="payloadInput" rows="10" placeholder="Paste Bridge Payload JSON from EntityManager"></textarea>
+        <textarea id="payloadInput" rows="10" placeholder="Auto-fetch from EntityManager, or paste Bridge Payload JSON for fallback"></textarea>
+      </label>
+
+      <label>
+        Desktop fetch URL
+        <input id="fetchUrlInput" placeholder="http://127.0.0.1:17321/captcha/injection/next" />
       </label>
 
       <label>
@@ -24,6 +29,7 @@
       </label>
 
       <div class="actions">
+        <button id="fetchPayloadButton" type="button">Fetch Next Payload</button>
         <button id="savePayloadButton" type="button">Save Payload</button>
         <button id="injectButton" type="button">Inject Active Tab</button>
       </div>
