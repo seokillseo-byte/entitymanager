@@ -180,3 +180,12 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Suggestions update the editable recipe form only; they are not written to SQLite until the user reviews the proposed selectors and clicks Save Recipe.
 - Windows TypeScript/Rust build and installer still require GitHub Actions verification before release distribution.
 
+
+
+## 2026-10-09 — Phase 1.19 Selector Health Trends & Success Rate Dashboard
+
+- Added a per-platform dry-run success-rate dashboard with overall success/failure counts and a rolling 30-day success rate.
+- Added recipe before/after comparison based on dry-run timestamps relative to the recipe's saved `updatedAt`.
+- A recipe is only labelled as having a confirmed improvement when at least one successful dry-run exists after the recipe update; saving alone never marks it improved.
+- Trend outcomes are derived from the existing dry-run history: a run is successful only when required checks are clear, at least one field is planned, and a submit selector is found.
+- TypeScript/build and Windows Tauri packaging still need verification through CI before release.
