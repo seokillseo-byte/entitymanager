@@ -309,3 +309,14 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - If CI fails, inspect the failing job/log, fix the root cause, and rerun Actions before releasing.
 - Publish/accept a new `.exe` only after the workflow finishes green and the release asset is present. Until then, keep the last verified installer as the stable fallback.
 - Next: validate the dashboard using dry-run callbacks from the packaged Windows app and add regression coverage for malformed or legacy history records.
+
+
+## Phase 1.21 — Packaged App Validation & Legacy Data Tests
+
+- Normalize legacy/malformed dry-run history on load and refresh; never invent timestamps for records with missing or invalid dates.
+- Regression tests cover missing fields, malformed records, invalid timestamps, and exclusion from 30-day and recipe before/after calculations.
+- Packaged validation checklist: launch the current Windows `.exe`, run extension Dry-run Preview against a test form, confirm the extension reports callback success, and verify the same ID, platform/account, planned fields, selector, missing checks, URL, and timestamp appear in Desktop history.
+- Compare dashboard total/success/failure and 30-day counts with the exact SQLite `dry_run_history` rows; include at least one old record, one record with missing fields (if safely reproducible), and one invalid timestamp.
+- This session cannot run the Windows installer or inspect the user's local SQLite database. Treat packaged validation as pending until confirmed on Windows.
+- Run `pnpm test:selector-health`, extension/desktop/shared typechecks, and the Windows GitHub Actions installer workflow. Only distribute a new `.exe` after Actions is green and the release asset exists.
+- Next: add a read-only in-app diagnostic export that summarizes dry-run SQLite rows and computed dashboard totals for easier reconciliation.
