@@ -189,3 +189,12 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - A recipe is only labelled as having a confirmed improvement when at least one successful dry-run exists after the recipe update; saving alone never marks it improved.
 - Trend outcomes are derived from the existing dry-run history: a run is successful only when required checks are clear, at least one field is planned, and a submit selector is found.
 - TypeScript/build and Windows Tauri packaging still need verification through CI before release.
+
+
+## 2026-10-09 — Phase 1.20 Selector Health Tests & Release Verification
+
+- Extracted selector health aggregation into a pure module so success-rate and before/after rules can be unit tested independently of the React view.
+- Added automated Node.js tests for empty history, overall success rates, the rolling 30-day window, recipe saves without a later dry-run, failed post-update dry-runs, successful post-update confirmation, and Unix timestamp formats.
+- Added `pnpm test:selector-health` and wired it into the Windows GitHub Actions workflow before typecheck/build.
+- Corrected timestamp parsing to support ISO dates and numeric Unix timestamps in seconds or milliseconds; future-dated runs are excluded from the 30-day window.
+- GitHub Actions typecheck, Windows packaging, and release status must still be checked before considering this phase complete. Do not publish a manual release if CI is red or pending.
