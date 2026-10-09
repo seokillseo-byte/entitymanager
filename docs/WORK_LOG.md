@@ -207,3 +207,11 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added regression tests for historical records with missing fields, malformed values, and invalid/absent/non-finite timestamps.
 - Packaged Windows `.exe` validation with a real extension callback and direct SQLite/dashboard reconciliation still requires a human-run test against the downloaded installer; this environment cannot execute the Windows app or inspect its local SQLite database.
 - Do not publish a new release until GitHub Actions Windows build is green and packaged-app validation is recorded.
+
+
+## Phase 1.22 — Dashboard Chrome Extension Download
+
+- Added an always-visible Chrome Extension download panel to the Overview dashboard, pointing to the latest GitHub Release asset.
+- Updated the Windows GitHub Actions workflow to build `apps/extension`, package `apps/extension/dist` as `EntityManager-Chrome-Extension.zip`, upload it as an Actions artifact, and attach it to each successful desktop release.
+- Added plain-language installation steps directly beside the dashboard download link.
+- Validation is pending the next Windows Actions run; the latest-release download link will only work after a release containing the ZIP is published.
