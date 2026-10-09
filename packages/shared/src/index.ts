@@ -41,7 +41,7 @@ export type EntityProfileType = "brand" | "person" | "local_business" | "organiz
 export type AccountPlanPriority = "high" | "medium" | "low";
 export type AccountStatus = "planned" | "created" | "needs_manual_review" | "failed" | "verified";
 export type WorkflowRunStatus = "queued" | "running" | "blocked" | "completed" | "failed";
-export type AutomationGateType = "captcha" | "email" | "manual_review" | "evidence";
+export type AutomationGateType = "captcha" | "email" | "manual_review" | "evidence" | "submit_verify";
 export type AutomationQueueStatus = "queued" | "waiting" | "resolved" | "failed";
 export type IntegrationType = "ai" | "captcha" | "email" | "proxy" | "indexing";
 export type ProviderKeyStatus = "missing" | "stored" | "masked" | "secure";
@@ -173,6 +173,21 @@ export interface CaptchaInjectionPayload {
 }
 
 export interface CaptchaInjectionResult {
+  queueItem: AutomationQueueItem;
+  account: AccountRecord;
+  workflowRun: WorkflowRunRecord;
+  submitVerifyQueueItem?: AutomationQueueItem;
+}
+
+export interface AccountSubmitVerifyRequest {
+  queueId: string;
+  accountId: string;
+  success: boolean;
+  evidenceUrl: string;
+  message: string;
+}
+
+export interface AccountSubmitVerifyResult {
   queueItem: AutomationQueueItem;
   account: AccountRecord;
   workflowRun: WorkflowRunRecord;
