@@ -300,3 +300,12 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Do not mark a recipe as improved merely because it was saved. Require at least one successful dry-run newer than that update.
 - Validation: confirm rates from mixed successful/failed history, confirm post-update successful dry-run is required for improvement status, and verify Windows build through GitHub Actions.
 - Next: add automated tests for trend aggregation and verify the dashboard against real extension callbacks in the packaged Windows app.
+
+
+## Phase 1.20 — Selector Health Tests & Release Verification
+
+- Run `pnpm test:selector-health` for deterministic coverage of success rate, the 30-day window, empty history, saved recipes without a follow-up dry-run, failed post-update runs, and successful post-update confirmation.
+- Run the full `pnpm typecheck` and Windows Tauri installer build in GitHub Actions.
+- If CI fails, inspect the failing job/log, fix the root cause, and rerun Actions before releasing.
+- Publish/accept a new `.exe` only after the workflow finishes green and the release asset is present. Until then, keep the last verified installer as the stable fallback.
+- Next: validate the dashboard using dry-run callbacks from the packaged Windows app and add regression coverage for malformed or legacy history records.
