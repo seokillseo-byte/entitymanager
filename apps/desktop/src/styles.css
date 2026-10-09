@@ -679,3 +679,27 @@ textarea {
   width: 16px;
   height: 16px;
 }
+
+
+.panel-description {
+  margin: 0 0 16px;
+  color: #52616b;
+  line-height: 1.55;
+}
+
+.extension-download-panel {
+  align-self: stretch;
+}
+
+.extension-download-action {
+  width: fit-content;
+  text-decoration: none;
+}
+
+.panel-hint {
+  margin: 14px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
