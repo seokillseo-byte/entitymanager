@@ -244,6 +244,19 @@ struct SubmitVerifyFieldSelectors {
     website_url: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectorRecipeRecord {
+    platform_id: String,
+    platform_name: String,
+    field_selectors_json: String,
+    submit_selectors: String,
+    verify_selectors: String,
+    required_fields: String,
+    requires_captcha_token: bool,
+    updated_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -524,6 +537,51 @@ fn save_platform(app_handle: tauri::AppHandle, platform: PlatformRecord) -> Resu
     save_platform_record(&connection, &platform)?;
 
     Ok(platform)
+}
+
+#[tauri::command]
+fn get_selector_recipes(app_handle: tauri::AppHandle) -> Result<Vec<SelectorRecipeRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_selector_recipes(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT platform_id, platform_name, field_selectors_json, submit_selectors,
+                    verify_selectors, required_fields, requires_captcha_token, updated_at
+             FROM selector_recipes
+             ORDER BY platform_name ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(SelectorRecipeRecord {
+                platform_id: row.get(0)?,
+                platform_name: row.get(1)?,
+                field_selectors_json: row.get(2)?,
+                submit_selectors: row.get(3)?,
+                verify_selectors: row.get(4)?,
+                required_fields: row.get(5)?,
+                requires_captcha_token: row.get::<_, i64>(6)? == 1,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_selector_recipe(
+    app_handle: tauri::AppHandle,
+    recipe: SelectorRecipeRecord,
+) -> Result<SelectorRecipeRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_selector_recipe_record(&connection, &recipe)?;
+
+    Ok(recipe)
 }
 
 #[tauri::command]
@@ -1169,11 +1227,28 @@ fn get_next_submit_verify_payload_record(
     let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
     let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
     let payload = serde_json::from_str::<serde_json::Value>(&item.payload).unwrap_or_else(|_| json!({}));
+    let recipe = get_selector_recipe_record(&connection, &account.platform_id).ok();
     let fallback_selectors = submit_verify_selectors(&account.platform_id, &account.platform_name);
     let fallback_field_selectors = submit_verify_field_selectors(&account.platform_id, &account.platform_name);
-    let submit_selectors = json_array_to_strings(&payload["submitSelectors"]);
-    let verify_selectors = json_array_to_strings(&payload["verifySelectors"]);
-    let required_fields = json_array_to_strings(&payload["requiredFields"]);
+    let recipe_field_selectors = recipe
+        .as_ref()
+        .and_then(|item| serde_json::from_str::<serde_json::Value>(&item.field_selectors_json).ok())
+        .unwrap_or_else(|| json!({}));
+    let submit_selectors = recipe
+        .as_ref()
+        .map(|item| lines_to_strings(&item.submit_selectors))
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| json_array_to_strings(&payload["submitSelectors"]));
+    let verify_selectors = recipe
+        .as_ref()
+        .map(|item| lines_to_strings(&item.verify_selectors))
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| json_array_to_strings(&payload["verifySelectors"]));
+    let required_fields = recipe
+        .as_ref()
+        .map(|item| lines_to_strings(&item.required_fields))
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| json_array_to_strings(&payload["requiredFields"]));
 
     Ok(AccountSubmitVerifyPayload {
         queue_id: item.id,
@@ -1189,11 +1264,11 @@ fn get_next_submit_verify_payload_record(
             website_url: money_site.homepage_url,
         },
         field_selectors: SubmitVerifyFieldSelectors {
-            username: json_array_to_strings(&payload["fieldSelectors"]["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
-            email: json_array_to_strings(&payload["fieldSelectors"]["email"]).into_iter().chain(fallback_field_selectors.email).collect(),
-            display_name: json_array_to_strings(&payload["fieldSelectors"]["displayName"]).into_iter().chain(fallback_field_selectors.display_name).collect(),
-            bio: json_array_to_strings(&payload["fieldSelectors"]["bio"]).into_iter().chain(fallback_field_selectors.bio).collect(),
-            website_url: json_array_to_strings(&payload["fieldSelectors"]["websiteUrl"]).into_iter().chain(fallback_field_selectors.website_url).collect(),
+            username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["username"])).chain(fallback_field_selectors.username).collect(),
+            email: json_array_to_strings(&recipe_field_selectors["email"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["email"])).chain(fallback_field_selectors.email).collect(),
+            display_name: json_array_to_strings(&recipe_field_selectors["displayName"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["displayName"])).chain(fallback_field_selectors.display_name).collect(),
+            bio: json_array_to_strings(&recipe_field_selectors["bio"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["bio"])).chain(fallback_field_selectors.bio).collect(),
+            website_url: json_array_to_strings(&recipe_field_selectors["websiteUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["websiteUrl"])).chain(fallback_field_selectors.website_url).collect(),
         },
         required_fields: if required_fields.is_empty() {
             vec![
@@ -1206,7 +1281,10 @@ fn get_next_submit_verify_payload_record(
         } else {
             required_fields
         },
-        requires_captcha_token: payload["requiresCaptchaToken"].as_bool().unwrap_or(true),
+        requires_captcha_token: recipe
+            .as_ref()
+            .map(|item| item.requires_captcha_token)
+            .unwrap_or_else(|| payload["requiresCaptchaToken"].as_bool().unwrap_or(true)),
         submit_selectors: if submit_selectors.is_empty() { fallback_selectors.0 } else { submit_selectors },
         verify_selectors: if verify_selectors.is_empty() { fallback_selectors.1 } else { verify_selectors },
         evidence_capture: payload["evidenceCapture"].as_str().unwrap_or("current_url").to_string(),
@@ -1401,6 +1479,17 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS selector_recipes (
+                platform_id TEXT PRIMARY KEY,
+                platform_name TEXT NOT NULL,
+                field_selectors_json TEXT NOT NULL,
+                submit_selectors TEXT NOT NULL,
+                verify_selectors TEXT NOT NULL,
+                required_fields TEXT NOT NULL,
+                requires_captcha_token INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )
         .map_err(|error| error.to_string())?;
@@ -1472,6 +1561,55 @@ fn ensure_default_settings(connection: &Connection) -> Result<(), String> {
                 "INSERT OR IGNORE INTO integration_settings (setting_type, provider, api_key, is_enabled, key_status, last_test_at)
                  VALUES (?1, ?2, '', 0, 'missing', '')",
                 params![setting_type, provider],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String> {
+    ensure_default_platforms(connection)?;
+    let platforms = get_platform_records(connection)?;
+
+    for platform in platforms {
+        let field_selectors = submit_verify_field_selectors(&platform.id, &platform.name);
+        let submit_verify = submit_verify_selectors(&platform.id, &platform.name);
+        let recipe = SelectorRecipeRecord {
+            platform_id: platform.id,
+            platform_name: platform.name,
+            field_selectors_json: serde_json::to_string(&json!({
+                "username": field_selectors.username,
+                "email": field_selectors.email,
+                "displayName": field_selectors.display_name,
+                "bio": field_selectors.bio,
+                "websiteUrl": field_selectors.website_url
+            }))
+            .unwrap_or_else(|_| "{}".to_string()),
+            submit_selectors: submit_verify.0.join("\n"),
+            verify_selectors: submit_verify.1.join("\n"),
+            required_fields: "username\nemail\ndisplayName\nbio\nwebsiteUrl".to_string(),
+            requires_captcha_token: platform.requires_captcha,
+            updated_at: now_string(),
+        };
+
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO selector_recipes (
+                    platform_id, platform_name, field_selectors_json, submit_selectors,
+                    verify_selectors, required_fields, requires_captcha_token, updated_at
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    recipe.platform_id,
+                    recipe.platform_name,
+                    recipe.field_selectors_json,
+                    recipe.submit_selectors,
+                    recipe.verify_selectors,
+                    recipe.required_fields,
+                    if recipe.requires_captcha_token { 1 } else { 0 },
+                    recipe.updated_at
+                ],
             )
             .map_err(|error| error.to_string())?;
     }
@@ -1577,6 +1715,15 @@ fn json_array_to_strings(value: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn lines_to_strings(value: &str) -> Vec<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn get_money_site_record(connection: &Connection) -> Result<MoneySiteRecord, String> {
     connection
         .query_row(
@@ -1625,6 +1772,93 @@ fn get_entity_profile_record(connection: &Connection) -> Result<EntityProfileRec
                     topical_niche: row.get(13)?,
                     expertise_proof: row.get(14)?,
                     trust_signals: row.get(15)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn get_platform_records(connection: &Connection) -> Result<Vec<PlatformRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, platform_type, homepage_url, authority_score, difficulty,
+                    automation_mode, entity_value, requires_captcha, requires_email, notes
+             FROM platforms
+             ORDER BY authority_score DESC, name ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(PlatformRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                platform_type: row.get(2)?,
+                homepage_url: row.get(3)?,
+                authority_score: row.get(4)?,
+                difficulty: row.get(5)?,
+                automation_mode: row.get(6)?,
+                entity_value: row.get(7)?,
+                requires_captcha: row.get::<_, i64>(8)? == 1,
+                requires_email: row.get::<_, i64>(9)? == 1,
+                notes: row.get(10)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+fn save_selector_recipe_record(connection: &Connection, recipe: &SelectorRecipeRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO selector_recipes (
+                platform_id, platform_name, field_selectors_json, submit_selectors,
+                verify_selectors, required_fields, requires_captcha_token, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(platform_id)
+             DO UPDATE SET platform_name = excluded.platform_name,
+                           field_selectors_json = excluded.field_selectors_json,
+                           submit_selectors = excluded.submit_selectors,
+                           verify_selectors = excluded.verify_selectors,
+                           required_fields = excluded.required_fields,
+                           requires_captcha_token = excluded.requires_captcha_token,
+                           updated_at = excluded.updated_at",
+            params![
+                recipe.platform_id,
+                recipe.platform_name,
+                recipe.field_selectors_json,
+                recipe.submit_selectors,
+                recipe.verify_selectors,
+                recipe.required_fields,
+                if recipe.requires_captcha_token { 1 } else { 0 },
+                recipe.updated_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn get_selector_recipe_record(connection: &Connection, platform_id: &str) -> Result<SelectorRecipeRecord, String> {
+    connection
+        .query_row(
+            "SELECT platform_id, platform_name, field_selectors_json, submit_selectors,
+                    verify_selectors, required_fields, requires_captcha_token, updated_at
+             FROM selector_recipes
+             WHERE platform_id = ?1",
+            params![platform_id],
+            |row| {
+                Ok(SelectorRecipeRecord {
+                    platform_id: row.get(0)?,
+                    platform_name: row.get(1)?,
+                    field_selectors_json: row.get(2)?,
+                    submit_selectors: row.get(3)?,
+                    verify_selectors: row.get(4)?,
+                    required_fields: row.get(5)?,
+                    requires_captcha_token: row.get::<_, i64>(6)? == 1,
+                    updated_at: row.get(7)?,
                 })
             },
         )
@@ -2571,6 +2805,8 @@ pub fn run() {
             test_live_integration_setting,
             get_platforms,
             save_platform,
+            get_selector_recipes,
+            save_selector_recipe,
             get_entity_profile,
             save_entity_profile,
             get_accounts,
