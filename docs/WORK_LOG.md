@@ -136,6 +136,14 @@
 - Updated the Chrome extension content script so it can click visible submit/verify elements and capture the current URL as evidence.
 - Updated the extension popup with a Submit/Verify Tab action and submit/verify bridge URLs.
 - Updated the extension background callback handling to report both CAPTCHA injection and submit/verify completion back to Desktop.
+- Started Phase 1.15 Platform Form Fill Recipes and Pre-submit Safety Checks.
+- Added submit/verify form values to the bridge payload: username, email, display name, bio, and website URL.
+- Desktop now builds submit/verify payloads from SQLite account records, entity profile, and money site data.
+- Added field selector recipes for username, email, display name, bio, and website URL with generic selectors plus GitHub, Medium, Tumblr, and Pinterest hints.
+- Added required field and CAPTCHA-token safety metadata to submit/verify payloads.
+- Updated the extension to fill available form fields before submit/verify.
+- Extension now blocks submit when required values, matching fields, or CAPTCHA token are missing and reports the exact missing checks back to Desktop.
+- Extension submit/verify callback now includes filled fields, missing checks, clicked selector, and evidence URL.
 
 ## Current Decision
 
@@ -147,4 +155,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.14 in the packaged `.exe`: resolve and inject a CAPTCHA, confirm `submit_verify` appears, open the target account page, click Submit/Verify Tab in the extension, and confirm Desktop marks the queue resolved, account verified, and evidence URL saved. Then add per-platform field-fill recipes and safer pre-submit checks before broad automation.
+Validate Phase 1.15 in the packaged `.exe`: confirm submit/verify payload contains form values from Entity Profile and Money Site, confirm extension fills username/email/display name/bio/website URL where matching fields exist, confirm missing field/CAPTCHA checks block unsafe submit, and confirm successful submit/verify stores evidence URL. Then expand platform-specific recipes and add manual override controls for selector/value mappings.
