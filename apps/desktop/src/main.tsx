@@ -808,15 +808,18 @@ function App() {
                 <p className="panel-description">
                   Tải tiện ích Chrome tại đây bất cứ lúc nào. Dùng tiện ích để kết nối Chrome với ứng dụng EntityManager đang mở.
                 </p>
-                <a
+                <button
                   className="primary-action extension-download-action"
-                  href="https://github.com/seokillseo-byte/entitymanager/releases/latest/download/EntityManager-Chrome-Extension.zip"
-                  target="_blank"
-                  rel="noreferrer"
+                  type="button"
+                  onClick={() => {
+                    void invoke("open_extension_download").catch((error) => {
+                      setStatusMessage(`Không mở được link tải extension: ${String(error)}`);
+                    });
+                  }}
                 >
                   <Download size={18} />
                   Tải Chrome Extension (.zip)
-                </a>
+                </button>
                 <p className="panel-hint">
                   Sau khi tải: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
                 </p>
