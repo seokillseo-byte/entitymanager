@@ -282,3 +282,12 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Save extension dry-run previews to local SQLite through the desktop bridge.
 - Review recent previews, planned selectors, missing checks, platform/account and URL in Selector Recipes.
 - Next: verify import/export round-trip and selector-failure scenarios in the Windows .exe; distribute only after GitHub Actions succeeds.
+
+## Phase 1.18 — Selector Failure Analytics & Recipe Suggestions
+
+- Aggregate dry-run failures by platform and identify repeated missing checks.
+- Draft generic selector fallbacks for repeated field-selector failures and submit-button failures.
+- Keep suggested changes in the editor only; users must review them and click Save Recipe before SQLite is changed.
+- Validate analytics against repeated dry-run reports, verify suggestions do not auto-submit forms, and check the Windows installer build in GitHub Actions.
+- Next: add selector health trend and per-platform success-rate reporting after the Phase 1.18 build is verified.
+
