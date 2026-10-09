@@ -320,3 +320,12 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - This session cannot run the Windows installer or inspect the user's local SQLite database. Treat packaged validation as pending until confirmed on Windows.
 - Run `pnpm test:selector-health`, extension/desktop/shared typechecks, and the Windows GitHub Actions installer workflow. Only distribute a new `.exe` after Actions is green and the release asset exists.
 - Next: add a read-only in-app diagnostic export that summarizes dry-run SQLite rows and computed dashboard totals for easier reconciliation.
+
+
+## Phase 1.22 — Dashboard Chrome Extension Download
+
+- Overview dashboard now includes a direct link to download `EntityManager-Chrome-Extension.zip` from the latest GitHub Release.
+- The Windows Actions workflow builds the extension package and attaches the ZIP to each successful release, as well as uploading it as a separate Actions artifact.
+- Install instructions are displayed in the dashboard: extract ZIP, open `chrome://extensions`, enable Developer mode, select Load unpacked, and choose the extracted folder.
+- Verify the next Actions run builds and uploads the ZIP, then confirm the latest release has the extension asset and that the dashboard link downloads it.
+- If a new installer is needed to show this dashboard panel, wait for the same workflow to finish green before installing it.
