@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateSelectorHealthTrends, parseTimestamp } from "./selectorHealth.mjs";
+import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord, parseTimestamp } from "./selectorHealth.mjs";
 
 const NOW = Date.parse("2026-10-09T12:00:00.000Z");
 const successfulRun = (createdAt, platformId = "p1") => ({
@@ -85,4 +85,45 @@ test("only a successful post-update dry-run confirms improvement", () => {
 test("numeric Unix timestamps in seconds and milliseconds are both supported", () => {
   assert.equal(parseTimestamp("1791547200"), 1791547200000);
   assert.equal(parseTimestamp(1791547200000), 1791547200000);
+});
+
+
+test("legacy dry-run records with missing fields normalize safely and count as failures", () => {
+  const legacy = normalizeDryRunHistoryRecord({ id: "old-1", platformName: "Old platform", createdAt: "2026-10-08T10:00:00Z" });
+  assert.equal(legacy.id, "old-1");
+  assert.equal(legacy.platformId, "unknown-platform");
+  assert.deepEqual(legacy.plannedFields, []);
+  assert.deepEqual(legacy.missingChecks, []);
+  assert.equal(legacy.plannedSelector, "");
+  const result = calculateSelectorHealthTrends([legacy], [], NOW);
+  assert.equal(result.platforms[0].total, 1);
+  assert.equal(result.platforms[0].failures, 1);
+  assert.equal(result.platforms[0].successRate, 0);
+});
+
+test("malformed legacy entries and missing fields never crash aggregation", () => {
+  const records = [
+    normalizeDryRunHistoryRecord(null),
+    normalizeDryRunHistoryRecord({ platformId: "p2", plannedFields: "not-an-array", missingChecks: null, plannedSelector: 12, createdAt: {} })
+  ];
+  const result = calculateSelectorHealthTrends(records, [], NOW);
+  assert.equal(result.platforms.length, 2);
+  assert.ok(result.platforms.every((item) => item.failures === 1));
+  assert.ok(result.platforms.every((item) => item.recent === 0));
+});
+
+test("invalid, absent, and non-finite timestamps are excluded from time-based comparisons", () => {
+  assert.ok(Number.isNaN(parseTimestamp("not-a-date")));
+  assert.ok(Number.isNaN(parseTimestamp("")));
+  assert.ok(Number.isNaN(parseTimestamp(Number.POSITIVE_INFINITY)));
+  const result = calculateSelectorHealthTrends([
+    successfulRun("not-a-date"),
+    successfulRun(""),
+    successfulRun("2026-10-08T10:00:00Z")
+  ], [recipe("not-a-date")], NOW);
+  assert.equal(result.platforms[0].total, 3);
+  assert.equal(result.platforms[0].recent, 1);
+  assert.equal(result.recipes[0].beforeRuns, 0);
+  assert.equal(result.recipes[0].afterRuns, 0);
+  assert.equal(result.recipes[0].confirmed, false);
 });
