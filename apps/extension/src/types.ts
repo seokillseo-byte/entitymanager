@@ -12,6 +12,7 @@ export interface CaptchaInjectionPayload {
 
 export interface BridgeStorage {
   captchaPayload?: CaptchaInjectionPayload;
+  fetchUrl?: string;
   callbackUrl?: string;
 }
 
