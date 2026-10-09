@@ -233,6 +233,18 @@ export interface SelectorRecipeRecord {
   updatedAt: string;
 }
 
+export interface DryRunHistoryRecord {
+  id: string;
+  platformId: string;
+  platformName: string;
+  accountId: string;
+  plannedFields: string[];
+  plannedSelector: string;
+  missingChecks: string[];
+  currentUrl: string;
+  createdAt: string;
+}
+
 export interface LocalIntegrationSetting {
   type: IntegrationType;
   provider: string;
