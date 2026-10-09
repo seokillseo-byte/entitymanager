@@ -12,6 +12,7 @@ This is the Phase 1.13 MVP bridge between the EntityManager desktop app and brow
 6. The content script injects `solutionToken` into `g-recaptcha-response`.
 7. The extension POSTs the injection result to `http://127.0.0.1:17321/captcha/injection/complete`.
 8. Desktop creates a `submit_verify` queue item so the account can move into the submit/verify step.
+9. Click `Submit/Verify Tab` in the extension to fetch `http://127.0.0.1:17321/account/submit-verify/next`, click a matching submit/verify selector on the active tab, and report the current URL back to Desktop as evidence.
 
 Manual JSON paste is still supported as a fallback for debugging.
 
@@ -29,4 +30,4 @@ apps/extension/dist
 
 ## Notes
 
-This MVP intentionally keeps the browser side small. The next pass should let browser automation perform the real submit/verify click and capture an evidence URL automatically.
+This MVP intentionally keeps the browser side small. Submit/verify selectors are platform-aware where known and fall back to common visible submit, continue, verify, and confirm controls. The next pass should add platform-specific form fill recipes and pre-submit safety checks.
