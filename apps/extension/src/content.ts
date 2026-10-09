@@ -1,4 +1,4 @@
-import type { CaptchaInjectionPayload, InjectCaptchaMessage, InjectionResponse } from "./types";
+import type { AccountSubmitVerifyPayload, CaptchaInjectionPayload, InjectCaptchaMessage, InjectionResponse, SubmitVerifyMessage, SubmitVerifyResponse } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -15,16 +15,23 @@ declare const chrome: {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const typedMessage = message as Partial<InjectCaptchaMessage>;
+  const typedMessage = message as Partial<InjectCaptchaMessage | SubmitVerifyMessage>;
 
-  if (typedMessage.type !== "ENTITYMANAGER_INJECT_CAPTCHA" || !typedMessage.payload) {
-    return false;
+  if (typedMessage.type === "ENTITYMANAGER_INJECT_CAPTCHA" && typedMessage.payload) {
+    const result = injectCaptchaToken(typedMessage.payload as CaptchaInjectionPayload);
+    sendResponse(result);
+    return true;
   }
 
-  const result = injectCaptchaToken(typedMessage.payload);
-  sendResponse(result);
+  if (typedMessage.type === "ENTITYMANAGER_SUBMIT_VERIFY" && typedMessage.payload) {
+    const result = submitOrVerifyAccount(typedMessage.payload as AccountSubmitVerifyPayload);
+    sendResponse(result);
+    return true;
+  }
 
-  return true;
+  {
+    return false;
+  }
 });
 
 function injectCaptchaToken(payload: CaptchaInjectionPayload): InjectionResponse {
@@ -74,6 +81,74 @@ function findTokenFields(tokenField: string): Array<HTMLInputElement | HTMLTextA
   const fields = selectors.flatMap((selector) => Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector)));
 
   return Array.from(new Set(fields));
+}
+
+function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerifyResponse {
+  const selectors = [...payload.verifySelectors, ...payload.submitSelectors];
+  const button = findClickableElement(selectors);
+
+  if (!button) {
+    return {
+      success: false,
+      evidenceUrl: window.location.href,
+      clickedSelector: "",
+      message: `No submit/verify element found for ${payload.platformName}.`
+    };
+  }
+
+  const selector = button.getAttribute("data-entitymanager-selector") || "";
+  button.scrollIntoView({ block: "center", inline: "center" });
+  button.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  button.click();
+
+  window.dispatchEvent(new CustomEvent("entitymanager:submit-verify-clicked", {
+    detail: {
+      queueId: payload.queueId,
+      accountId: payload.accountId,
+      platformName: payload.platformName,
+      selector
+    }
+  }));
+
+  return {
+    success: true,
+    evidenceUrl: window.location.href,
+    clickedSelector: selector,
+    message: `Clicked submit/verify element for ${payload.platformName}.`
+  };
+}
+
+function findClickableElement(selectors: string[]): HTMLElement | null {
+  for (const selector of selectors) {
+    const elements = Array.from(document.querySelectorAll<HTMLElement>(selector));
+    const element = elements.find((candidate) => isClickable(candidate));
+
+    if (element) {
+      element.setAttribute("data-entitymanager-selector", selector);
+      return element;
+    }
+  }
+
+  const textMatches = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='submit'], a[role='button']"));
+  const fallback = textMatches.find((candidate) => {
+    const text = `${candidate.innerText || ""} ${(candidate as HTMLInputElement).value || ""} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+    return isClickable(candidate) && ["submit", "sign up", "continue", "verify", "confirm", "create account"].some((label) => text.includes(label));
+  });
+
+  if (fallback) {
+    fallback.setAttribute("data-entitymanager-selector", "text-fallback");
+  }
+
+  return fallback || null;
+}
+
+function isClickable(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  const disabled = element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true";
+  const style = window.getComputedStyle(element);
+
+  return !disabled && rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
 }
 
 function cssEscape(value: string): string {
