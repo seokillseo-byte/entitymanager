@@ -23,7 +23,7 @@ export function normalizeDryRunHistoryRecord(record, index = 0) {
     plannedSelector: stringValue(source.plannedSelector),
     missingChecks: stringArray(source.missingChecks),
     currentUrl: stringValue(source.currentUrl),
-    createdAt: typeof source.createdAt === "string" || typeof source.createdAt === "number" ? source.createdAt : ""
+    createdAt: typeof source.createdAt === "string" || typeof source.createdAt === "number" ? String(source.createdAt) : ""
   };
 }
 
