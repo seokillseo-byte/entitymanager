@@ -84,6 +84,20 @@ function findTokenFields(tokenField: string): Array<HTMLInputElement | HTMLTextA
 }
 
 function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerifyResponse {
+  const filledFields = fillFormValues(payload);
+  const missingFields = findMissingRequiredFields(payload);
+
+  if (missingFields.length > 0) {
+    return {
+      success: false,
+      evidenceUrl: window.location.href,
+      clickedSelector: "",
+      filledFields,
+      missingFields,
+      message: `Pre-submit safety check blocked ${payload.platformName}. Missing: ${missingFields.join(", ")}.`
+    };
+  }
+
   const selectors = [...payload.verifySelectors, ...payload.submitSelectors];
   const button = findClickableElement(selectors);
 
@@ -92,6 +106,8 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerif
       success: false,
       evidenceUrl: window.location.href,
       clickedSelector: "",
+      filledFields,
+      missingFields: ["submitButton"],
       message: `No submit/verify element found for ${payload.platformName}.`
     };
   }
@@ -115,8 +131,91 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerif
     success: true,
     evidenceUrl: window.location.href,
     clickedSelector: selector,
+    filledFields,
+    missingFields: [],
     message: `Clicked submit/verify element for ${payload.platformName}.`
   };
+}
+
+function fillFormValues(payload: AccountSubmitVerifyPayload): string[] {
+  const filledFields: string[] = [];
+  const entries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
+    ["username", payload.fieldSelectors.username, payload.formValues.username],
+    ["email", payload.fieldSelectors.email, payload.formValues.email],
+    ["displayName", payload.fieldSelectors.displayName, payload.formValues.displayName],
+    ["bio", payload.fieldSelectors.bio, payload.formValues.bio],
+    ["websiteUrl", payload.fieldSelectors.websiteUrl, payload.formValues.websiteUrl]
+  ];
+
+  for (const [fieldName, selectors, value] of entries) {
+    if (!value.trim()) {
+      continue;
+    }
+
+    const field = findFillableField(selectors);
+
+    if (!field) {
+      continue;
+    }
+
+    field.focus();
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    filledFields.push(fieldName);
+  }
+
+  return filledFields;
+}
+
+function findMissingRequiredFields(payload: AccountSubmitVerifyPayload): string[] {
+  const missing: string[] = [];
+
+  for (const fieldName of payload.requiredFields) {
+    const value = payload.formValues[fieldName];
+    const selectors = payload.fieldSelectors[fieldName];
+
+    if (!value?.trim()) {
+      missing.push(`${fieldName}:value`);
+      continue;
+    }
+
+    const field = findFillableField(selectors);
+
+    if (!field) {
+      missing.push(`${fieldName}:selector`);
+      continue;
+    }
+
+    if (!field.value.trim()) {
+      missing.push(`${fieldName}:field`);
+    }
+  }
+
+  if (payload.requiresCaptchaToken && findTokenFields("g-recaptcha-response").length === 0) {
+    missing.push("captchaToken");
+  }
+
+  return missing;
+}
+
+function findFillableField(selectors: string[]): HTMLInputElement | HTMLTextAreaElement | null {
+  for (const selector of selectors) {
+    const fields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector));
+    const field = fields.find((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      const disabled = candidate.hasAttribute("disabled") || candidate.getAttribute("aria-disabled") === "true" || candidate.readOnly;
+      const style = window.getComputedStyle(candidate);
+
+      return !disabled && rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    });
+
+    if (field) {
+      return field;
+    }
+  }
+
+  return null;
 }
 
 function findClickableElement(selectors: string[]): HTMLElement | null {
