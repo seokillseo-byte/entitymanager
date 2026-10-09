@@ -10,15 +10,35 @@ export interface CaptchaInjectionPayload {
   nextStep: "submit_or_verify_account";
 }
 
+export interface AccountSubmitVerifyPayload {
+  queueId: string;
+  accountId: string;
+  platformId: string;
+  platformName: string;
+  action: "submit_or_verify_account";
+  submitSelectors: string[];
+  verifySelectors: string[];
+  evidenceCapture: "current_url";
+  notes: string;
+}
+
 export interface BridgeStorage {
   captchaPayload?: CaptchaInjectionPayload;
+  submitVerifyPayload?: AccountSubmitVerifyPayload;
   fetchUrl?: string;
   callbackUrl?: string;
+  submitFetchUrl?: string;
+  submitCallbackUrl?: string;
 }
 
 export interface InjectCaptchaMessage {
   type: "ENTITYMANAGER_INJECT_CAPTCHA";
   payload: CaptchaInjectionPayload;
+}
+
+export interface SubmitVerifyMessage {
+  type: "ENTITYMANAGER_SUBMIT_VERIFY";
+  payload: AccountSubmitVerifyPayload;
 }
 
 export interface InjectionReport {
@@ -34,4 +54,19 @@ export interface InjectionResponse {
   success: boolean;
   message: string;
   evidenceUrl: string;
+}
+
+export interface SubmitVerifyReport {
+  queueId: string;
+  accountId: string;
+  success: boolean;
+  evidenceUrl: string;
+  message: string;
+}
+
+export interface SubmitVerifyResponse {
+  success: boolean;
+  message: string;
+  evidenceUrl: string;
+  clickedSelector: string;
 }
