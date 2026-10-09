@@ -224,8 +224,18 @@ Phase 1.14 validation and next build task:
 - Confirm the extension `Submit/Verify Tab` action clicks a visible submit/verify control when one matches platform or generic selectors.
 - Confirm `POST /account/submit-verify/complete` resolves the queue, saves current URL as evidence, marks account verified, and writes workflow history.
 - Confirm failed selector matching reports a failed submit/verify callback and moves the account to manual review.
-- Add platform-specific field-fill recipes for account forms before clicking submit.
-- Add pre-submit safety checks so the extension can explain missing fields, CAPTCHA not injected, or unsupported platform state.
+- Add platform-specific field-fill recipes for account forms before clicking submit. Done.
+- Add pre-submit safety checks so the extension can explain missing fields, CAPTCHA not injected, or unsupported platform state. Done.
+
+Phase 1.15 validation and next build task:
+
+- Confirm submit/verify payload includes username, email, display name, bio, website URL, field selectors, required fields, and CAPTCHA safety flag.
+- Confirm Desktop derives payload values from Account, Entity Profile, and Money Site records.
+- Confirm extension fills matching fields before attempting submit.
+- Confirm extension blocks submit and reports missing `value`, `selector`, `field`, or `captchaToken` checks.
+- Confirm successful submit/verify callback saves evidence URL, resolves queue, and marks the account verified.
+- Add a Desktop editor for per-platform selector/value override recipes.
+- Add browser-side dry-run mode so users can preview what would be filled/clicked before real submit.
 
 ## First Data Models To Design
 
