@@ -7,6 +7,7 @@ import { calculateEntityReadiness } from "@entitymanager/shared";
 import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
+import { calculateSelectorHealthTrends } from "./selectorHealth.mjs";
 import "./styles.css";
 
 const modules: EntityModule[] = [
@@ -182,36 +183,10 @@ function App() {
       .sort((a, b) => b.failures - a.failures || b.runs - a.runs);
   }, [dryRunHistory]);
 
-  const selectorHealthTrends = useMemo(() => {
-    const byPlatform = new Map<string, { platformId: string; platformName: string; total: number; successes: number; failures: number; recent: number; recentSuccesses: number }>();
-    const isSuccess = (run: DryRunHistoryRecord) => run.missingChecks.length === 0 && Boolean(run.plannedSelector) && run.plannedFields.length > 0;
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    for (const run of dryRunHistory) {
-      const item = byPlatform.get(run.platformId) ?? { platformId: run.platformId, platformName: run.platformName, total: 0, successes: 0, failures: 0, recent: 0, recentSuccesses: 0 };
-      const success = isSuccess(run);
-      item.total += 1;
-      if (success) item.successes += 1; else item.failures += 1;
-      const timestamp = Date.parse(run.createdAt);
-      if (Number.isFinite(timestamp) && timestamp >= cutoff) {
-        item.recent += 1;
-        if (success) item.recentSuccesses += 1;
-      }
-      byPlatform.set(run.platformId, item);
-    }
-    const recipes = selectorRecipes.map((recipe) => {
-      const updatedAt = Date.parse(recipe.updatedAt);
-      const runs = dryRunHistory.filter((run) => run.platformId === recipe.platformId && Number.isFinite(Date.parse(run.createdAt)));
-      const before = Number.isFinite(updatedAt) ? runs.filter((run) => Date.parse(run.createdAt) <= updatedAt) : runs;
-      const after = Number.isFinite(updatedAt) ? runs.filter((run) => Date.parse(run.createdAt) > updatedAt) : [];
-      const failed = (items: DryRunHistoryRecord[]) => items.filter((run) => !isSuccess(run)).length;
-      const confirmed = after.some(isSuccess);
-      return { ...recipe, beforeRuns: before.length, beforeFailures: failed(before), afterRuns: after.length, afterFailures: failed(after), confirmed };
-    });
-    return {
-      platforms: Array.from(byPlatform.values()).map((item) => ({ ...item, successRate: item.total ? Math.round(item.successes / item.total * 100) : 0, recentRate: item.recent ? Math.round(item.recentSuccesses / item.recent * 100) : 0 })).sort((a, b) => a.successRate - b.successRate || b.total - a.total),
-      recipes
-    };
-  }, [dryRunHistory, selectorRecipes]);
+  const selectorHealthTrends = useMemo(
+    () => calculateSelectorHealthTrends(dryRunHistory, selectorRecipes),
+    [dryRunHistory, selectorRecipes]
+  );
 
   const accountCreationPlan = useMemo<AccountCreationPlanItem[]>(() => {
     const cleanBrand = entityProfile.brandName
