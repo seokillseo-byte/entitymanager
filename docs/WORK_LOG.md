@@ -172,3 +172,11 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Extension Dry-run Preview reports planned fields, selector, missing checks, account/platform, URL and timestamp to Desktop.
 - Selector Recipes screen supports JSON export/import and recent dry-run history.
 - Verify Windows Rust/Tauri compilation and packaged installer via GitHub Actions before distributing.
+
+## 2026-10-09 — Phase 1.18 Selector Failure Analytics & Recipe Suggestions
+
+- Added per-platform dry-run analytics with failure counts and repeated missing-check detection.
+- Added recipe suggestion drafts based on recurring field-selector and submit-button failures.
+- Suggestions update the editable recipe form only; they are not written to SQLite until the user reviews the proposed selectors and clicks Save Recipe.
+- Windows TypeScript/Rust build and installer still require GitHub Actions verification before release distribution.
+
