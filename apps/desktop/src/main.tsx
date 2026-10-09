@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import "./styles.css";
@@ -453,12 +453,37 @@ function App() {
         }
       });
       setAutomationQueue((current) => upsertById(current, result.queueItem));
+      if (result.submitVerifyQueueItem) {
+        setAutomationQueue((current) => upsertById(current, result.submitVerifyQueueItem!));
+      }
       setAccounts((current) => upsertById(current, result.account));
       setWorkflowRuns((current) => [result.workflowRun, ...current].slice(0, 100));
       setCaptchaBridgePayload(null);
       setStatusMessage(success ? "CAPTCHA bridge completed. Workflow is ready for submit/verify." : "CAPTCHA bridge failed and needs review.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "CAPTCHA injection completion failed");
+    }
+  }
+
+  async function completeSubmitVerify(item: AutomationQueueItem, success: boolean) {
+    try {
+      const result = await invoke<AccountSubmitVerifyResult>("complete_account_submit_verify", {
+        request: {
+          queueId: item.id,
+          accountId: item.accountId,
+          success,
+          evidenceUrl: "",
+          message: success
+            ? "Submit/verify step completed from Desktop workflow control."
+            : "Submit/verify step failed from Desktop workflow control."
+        }
+      });
+      setAutomationQueue((current) => upsertById(current, result.queueItem));
+      setAccounts((current) => upsertById(current, result.account));
+      setWorkflowRuns((current) => [result.workflowRun, ...current].slice(0, 100));
+      setStatusMessage(success ? "Account submit/verify completed." : "Account submit/verify failed and needs review.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Submit/verify completion failed");
     }
   }
 
@@ -1025,6 +1050,12 @@ function App() {
                         {item.gateType === "captcha" && (
                           <button className="secondary-action" type="button" onClick={() => prepareCaptchaInjection(item)}>Bridge Payload</button>
                         )}
+                        {item.gateType === "submit_verify" && (
+                          <button className="secondary-action" type="button" onClick={() => completeSubmitVerify(item, true)}>Mark Verified</button>
+                        )}
+                        {item.gateType === "submit_verify" && (
+                          <button className="secondary-action danger-action" type="button" onClick={() => completeSubmitVerify(item, false)}>Mark Submit Failed</button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1038,6 +1069,7 @@ function App() {
                       <span>{captchaBridgePayload.action} → {captchaBridgePayload.nextStep}</span>
                     </div>
                     <code>{captchaBridgePayload.tokenField}: {maskToken(captchaBridgePayload.solutionToken)}</code>
+                    <p className="muted-text">Extension can now auto-fetch this from http://127.0.0.1:17321/captcha/injection/next. Manual JSON remains available for fallback testing.</p>
                     <textarea readOnly rows={7} value={JSON.stringify(captchaBridgePayload, null, 2)} />
                     <div className="queue-actions">
                       <button className="secondary-action" type="button" onClick={() => completeCaptchaInjection(true)}>Mark Injected</button>
