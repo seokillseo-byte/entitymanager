@@ -305,6 +305,16 @@ function App() {
     }
   }
 
+  async function refreshDryRunHistory() {
+    try {
+      const records = await invoke<DryRunHistoryRecord[]>("get_dry_run_history");
+      setDryRunHistory(records);
+      setStatusMessage(`Loaded ${records.length} dry-run history records`);
+    } catch {
+      setStatusMessage("Could not refresh dry-run history outside the Desktop app.");
+    }
+  }
+
   function draftRecipeSuggestions(platformId: string) {
     const recipe = selectorRecipes.find((item) => item.platformId === platformId);
     const failedRuns = dryRunHistory.filter((item) => item.platformId === platformId && (item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0));
@@ -966,7 +976,7 @@ function App() {
                 ))}
                 {!selectorFailureAnalytics.length && <p className="muted-text">Analytics sẽ xuất hiện sau khi extension gửi dry-run history.</p>}
               </div>
-              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><span className="badge">{dryRunHistory.length} records</span></div>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} records</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh history</button></div></div>
               <div className="queue-list">
                 {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
                   <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
