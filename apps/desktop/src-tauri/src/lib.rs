@@ -185,6 +185,25 @@ struct CaptchaInjectionResult {
     queue_item: AutomationQueueItem,
     account: AccountRecord,
     workflow_run: WorkflowRunRecord,
+    submit_verify_queue_item: Option<AutomationQueueItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountSubmitVerifyRequest {
+    queue_id: String,
+    account_id: String,
+    success: bool,
+    evidence_url: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountSubmitVerifyResult {
+    queue_item: AutomationQueueItem,
+    account: AccountRecord,
+    workflow_run: WorkflowRunRecord,
 }
 
 #[tauri::command]
@@ -884,6 +903,68 @@ fn get_captcha_injection_payload(
     })
 }
 
+fn get_next_captcha_injection_payload_record(
+    app_handle: &tauri::AppHandle,
+) -> Result<CaptchaInjectionPayload, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, account_id, platform_name, gate_type, status, payload, created_at, updated_at
+             FROM automation_queue
+             WHERE gate_type = 'captcha'
+               AND status = 'resolved'
+             ORDER BY updated_at ASC",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let items = statement
+        .query_map([], |row| {
+            Ok(AutomationQueueItem {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                platform_name: row.get(2)?,
+                gate_type: row.get(3)?,
+                status: row.get(4)?,
+                payload: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    for item_result in items {
+        let item = item_result.map_err(|error| error.to_string())?;
+        let payload = parse_captcha_payload(&item.payload)?;
+        let solution_token = payload["solutionToken"].as_str().unwrap_or("").trim();
+        let injection_status = payload["injection"]["status"].as_str().unwrap_or("");
+
+        if solution_token.is_empty() || injection_status == "injected" {
+            continue;
+        }
+
+        let token_field = payload["automationHook"]["tokenField"]
+            .as_str()
+            .unwrap_or("g-recaptcha-response")
+            .to_string();
+
+        return Ok(CaptchaInjectionPayload {
+            queue_id: item.id,
+            account_id: item.account_id,
+            platform_name: item.platform_name,
+            website_url: payload["websiteUrl"].as_str().unwrap_or("").to_string(),
+            website_key: payload["websiteKey"].as_str().unwrap_or("").to_string(),
+            solution_token: solution_token.to_string(),
+            token_field,
+            action: "inject_recaptcha_token".to_string(),
+            next_step: "submit_or_verify_account".to_string(),
+        });
+    }
+
+    Err("No resolved CAPTCHA payload is ready for extension injection.".to_string())
+}
+
 #[tauri::command]
 fn complete_captcha_injection(
     app_handle: tauri::AppHandle,
@@ -925,8 +1006,8 @@ fn complete_captcha_injection_record(
         "injector": request.injector,
         "status": if request.success { "injected" } else { "failed" },
         "message": message,
-        "evidenceUrl": request.evidence_url,
-        "completedAt": timestamp
+        "evidenceUrl": request.evidence_url.clone(),
+        "completedAt": timestamp.clone()
     });
     payload["nextStep"] = json!("submit_or_verify_account");
 
@@ -935,12 +1016,40 @@ fn complete_captcha_injection_record(
     item.updated_at = timestamp.clone();
     save_automation_queue_item_record(&connection, &item)?;
 
-    account.status = "needs_manual_review".to_string();
+    if request.success && account.status == "planned" {
+        account.status = "created".to_string();
+    } else if !request.success {
+        account.status = "needs_manual_review".to_string();
+    }
     account.notes = format!("{} CAPTCHA bridge: {}", account.notes, message)
         .trim()
         .to_string();
     account.updated_at = timestamp.clone();
     save_account_record(&connection, &account)?;
+
+    let submit_verify_queue_item = if request.success {
+        let submit_item = AutomationQueueItem {
+            id: format!("queue-{}-submit-verify", account.id),
+            account_id: account.id.clone(),
+            platform_name: account.platform_name.clone(),
+            gate_type: "submit_verify".to_string(),
+            status: "waiting".to_string(),
+            payload: json!({
+                "action": "submit_or_verify_account",
+                "sourceQueueId": item.id,
+                "captchaInjectedAt": timestamp.clone(),
+                "injectionEvidenceUrl": request.evidence_url.clone(),
+                "message": "CAPTCHA injected. Submit/verify account is ready for browser automation or manual confirmation."
+            })
+            .to_string(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp.clone(),
+        };
+        save_automation_queue_item_record(&connection, &submit_item)?;
+        Some(submit_item)
+    } else {
+        None
+    };
 
     let workflow_run = WorkflowRunRecord {
         id: format!("run-{}-captcha-injection-{}", account.id, timestamp),
@@ -954,6 +1063,89 @@ fn complete_captcha_injection_record(
     save_workflow_run_record(&connection, &workflow_run)?;
 
     Ok(CaptchaInjectionResult {
+        queue_item: item,
+        account,
+        workflow_run,
+        submit_verify_queue_item,
+    })
+}
+
+#[tauri::command]
+fn complete_account_submit_verify(
+    app_handle: tauri::AppHandle,
+    request: AccountSubmitVerifyRequest,
+) -> Result<AccountSubmitVerifyResult, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut item = get_automation_queue_item_record(&connection, &request.queue_id)?;
+
+    if item.account_id != request.account_id {
+        return Err("Queue item does not belong to the requested account.".to_string());
+    }
+
+    if item.gate_type != "submit_verify" {
+        return Err("Only submit/verify queue items can be completed by this action.".to_string());
+    }
+
+    let mut account = get_account_record(&connection, &request.account_id)?;
+    let timestamp = now_string();
+    let status = if request.success { "resolved" } else { "failed" };
+    let workflow_status = if request.success { "completed" } else { "failed" };
+    let default_message = if request.success {
+        "Account submit/verify step completed."
+    } else {
+        "Account submit/verify step failed and needs manual review."
+    };
+    let message = if request.message.trim().is_empty() {
+        default_message.to_string()
+    } else {
+        request.message.trim().to_string()
+    };
+
+    let mut payload = serde_json::from_str::<serde_json::Value>(&item.payload).unwrap_or_else(|_| {
+        json!({
+            "previousPayload": item.payload
+        })
+    });
+    payload["completion"] = json!({
+        "status": if request.success { "verified" } else { "failed" },
+        "message": message,
+        "evidenceUrl": request.evidence_url.clone(),
+        "completedAt": timestamp.clone()
+    });
+
+    item.status = status.to_string();
+    item.payload = payload.to_string();
+    item.updated_at = timestamp.clone();
+    save_automation_queue_item_record(&connection, &item)?;
+
+    account.status = if request.success {
+        "verified".to_string()
+    } else {
+        "needs_manual_review".to_string()
+    };
+    if !request.evidence_url.trim().is_empty() {
+        account.evidence_url = request.evidence_url.trim().to_string();
+    }
+    account.notes = format!("{} Submit/verify: {}", account.notes, message)
+        .trim()
+        .to_string();
+    account.updated_at = timestamp.clone();
+    save_account_record(&connection, &account)?;
+
+    let workflow_run = WorkflowRunRecord {
+        id: format!("run-{}-submit-verify-{}", account.id, timestamp),
+        account_id: account.id.clone(),
+        platform_name: account.platform_name.clone(),
+        action: "submit_verify_account".to_string(),
+        status: workflow_status.to_string(),
+        message,
+        created_at: timestamp,
+    };
+    save_workflow_run_record(&connection, &workflow_run)?;
+
+    Ok(AccountSubmitVerifyResult {
         queue_item: item,
         account,
         workflow_run,
@@ -1241,6 +1433,19 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
         return;
     }
 
+    if request.starts_with("GET /captcha/injection/next ") {
+        let response = match get_next_captcha_injection_payload_record(&app_handle) {
+            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
+
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
     if !request.starts_with("POST /captcha/injection/complete ") {
         let _ = write_http_response(&mut stream, 404, "{\"error\":\"not found\"}");
         return;
@@ -1277,7 +1482,7 @@ fn write_http_response(stream: &mut TcpStream, status: u16, body: &str) -> std::
         _ => "OK",
     };
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     );
@@ -2000,7 +2205,8 @@ pub fn run() {
             execute_captcha_queue_item,
             poll_captcha_queue_item,
             get_captcha_injection_payload,
-            complete_captcha_injection
+            complete_captcha_injection,
+            complete_account_submit_verify
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
