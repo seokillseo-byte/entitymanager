@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Bot, Brain, Database, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, Bot, Brain, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
@@ -795,6 +795,31 @@ function App() {
                     </div>
                   ))}
                 </div>
+              </article>
+              
+              <article className="panel extension-download-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Chrome Extension</p>
+                    <h2>EntityManager Bridge</h2>
+                  </div>
+                  <Puzzle size={22} />
+                </div>
+                <p className="panel-description">
+                  Tải tiện ích Chrome tại đây bất cứ lúc nào. Dùng tiện ích để kết nối Chrome với ứng dụng EntityManager đang mở.
+                </p>
+                <a
+                  className="primary-action extension-download-action"
+                  href="https://github.com/seokillseo-byte/entitymanager/releases/latest/download/EntityManager-Chrome-Extension.zip"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Download size={18} />
+                  Tải Chrome Extension (.zip)
+                </a>
+                <p className="panel-hint">
+                  Sau khi tải: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
+                </p>
               </article>
 
               <article className="panel">
