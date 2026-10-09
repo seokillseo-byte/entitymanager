@@ -21,6 +21,7 @@ export type SelectorRecipeTrend = SelectorRecipeRecord & {
 };
 
 export function parseTimestamp(value: string | number | null | undefined): number;
+export function normalizeDryRunHistoryRecord(record: unknown, index?: number): DryRunHistoryRecord;
 export function isSuccessfulDryRun(run: DryRunHistoryRecord): boolean;
 export function calculateSelectorHealthTrends(
   dryRunHistory: DryRunHistoryRecord[],
