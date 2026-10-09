@@ -234,8 +234,19 @@ Phase 1.15 validation and next build task:
 - Confirm extension fills matching fields before attempting submit.
 - Confirm extension blocks submit and reports missing `value`, `selector`, `field`, or `captchaToken` checks.
 - Confirm successful submit/verify callback saves evidence URL, resolves queue, and marks the account verified.
-- Add a Desktop editor for per-platform selector/value override recipes.
-- Add browser-side dry-run mode so users can preview what would be filled/clicked before real submit.
+- Add a Desktop editor for per-platform selector/value override recipes. Done.
+- Add browser-side dry-run mode so users can preview what would be filled/clicked before real submit. Done.
+
+Phase 1.16 validation and next build task:
+
+- Confirm Desktop shows the `Selector Recipes` module in navigation.
+- Confirm recipes are seeded from Platform Library into SQLite.
+- Confirm saving a recipe persists field selector JSON, submit selectors, verify selectors, required fields, and CAPTCHA requirement.
+- Confirm submit/verify payloads prioritize saved selector recipes.
+- Confirm extension Dry-run Preview shows planned fields, planned click selector, and missing checks without filling or clicking.
+- Confirm Submit/Verify Tab still performs real fill/click only after safety checks pass.
+- Add recipe import/export for moving tuned selectors between machines.
+- Add dry-run history so failed selector checks can be reviewed and converted into recipe edits.
 
 ## First Data Models To Design
 
