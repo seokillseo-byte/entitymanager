@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (typedMessage.type === "ENTITYMANAGER_SUBMIT_VERIFY" && typedMessage.payload) {
-    const result = submitOrVerifyAccount(typedMessage.payload as AccountSubmitVerifyPayload);
+    const result = submitOrVerifyAccount(typedMessage.payload as AccountSubmitVerifyPayload, Boolean(typedMessage.dryRun));
     sendResponse(result);
     return true;
   }
@@ -83,9 +83,25 @@ function findTokenFields(tokenField: string): Array<HTMLInputElement | HTMLTextA
   return Array.from(new Set(fields));
 }
 
-function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerifyResponse {
-  const filledFields = fillFormValues(payload);
-  const missingFields = findMissingRequiredFields(payload);
+function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload, dryRun: boolean): SubmitVerifyResponse {
+  const plannedFields = previewFillableFields(payload);
+  const plannedButton = findClickableElement([...payload.verifySelectors, ...payload.submitSelectors]);
+  const plannedSelector = plannedButton?.getAttribute("data-entitymanager-selector") || "";
+  const filledFields = dryRun ? [] : fillFormValues(payload);
+  const missingFields = findMissingRequiredFields(payload, dryRun);
+
+  if (dryRun) {
+    return {
+      success: missingFields.length === 0 && Boolean(plannedSelector),
+      evidenceUrl: window.location.href,
+      clickedSelector: "",
+      filledFields,
+      missingFields: plannedSelector ? missingFields : [...missingFields, "submitButton"],
+      plannedFields,
+      plannedSelector,
+      message: `Dry-run preview for ${payload.platformName}: would fill ${plannedFields.join(", ") || "no fields"}; would click ${plannedSelector || "nothing"}.`
+    };
+  }
 
   if (missingFields.length > 0) {
     return {
@@ -94,6 +110,8 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerif
       clickedSelector: "",
       filledFields,
       missingFields,
+      plannedFields,
+      plannedSelector,
       message: `Pre-submit safety check blocked ${payload.platformName}. Missing: ${missingFields.join(", ")}.`
     };
   }
@@ -108,6 +126,8 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerif
       clickedSelector: "",
       filledFields,
       missingFields: ["submitButton"],
+      plannedFields,
+      plannedSelector,
       message: `No submit/verify element found for ${payload.platformName}.`
     };
   }
@@ -133,8 +153,24 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload): SubmitVerif
     clickedSelector: selector,
     filledFields,
     missingFields: [],
+    plannedFields,
+    plannedSelector: selector,
     message: `Clicked submit/verify element for ${payload.platformName}.`
   };
+}
+
+function previewFillableFields(payload: AccountSubmitVerifyPayload): string[] {
+  const entries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
+    ["username", payload.fieldSelectors.username, payload.formValues.username],
+    ["email", payload.fieldSelectors.email, payload.formValues.email],
+    ["displayName", payload.fieldSelectors.displayName, payload.formValues.displayName],
+    ["bio", payload.fieldSelectors.bio, payload.formValues.bio],
+    ["websiteUrl", payload.fieldSelectors.websiteUrl, payload.formValues.websiteUrl]
+  ];
+
+  return entries
+    .filter(([, selectors, value]) => value.trim() && findFillableField(selectors))
+    .map(([fieldName]) => fieldName);
 }
 
 function fillFormValues(payload: AccountSubmitVerifyPayload): string[] {
@@ -168,7 +204,7 @@ function fillFormValues(payload: AccountSubmitVerifyPayload): string[] {
   return filledFields;
 }
 
-function findMissingRequiredFields(payload: AccountSubmitVerifyPayload): string[] {
+function findMissingRequiredFields(payload: AccountSubmitVerifyPayload, assumeFill: boolean): string[] {
   const missing: string[] = [];
 
   for (const fieldName of payload.requiredFields) {
@@ -187,7 +223,7 @@ function findMissingRequiredFields(payload: AccountSubmitVerifyPayload): string[
       continue;
     }
 
-    if (!field.value.trim()) {
+    if (!assumeFill && !field.value.trim()) {
       missing.push(`${fieldName}:field`);
     }
   }
