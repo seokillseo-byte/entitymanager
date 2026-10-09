@@ -10,12 +10,28 @@ export function parseTimestamp(value) {
   return Date.parse(value);
 }
 
+export function normalizeDryRunHistoryRecord(record, index = 0) {
+  const source = record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const stringValue = (value) => typeof value === "string" ? value : "";
+  const stringArray = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+  return {
+    id: stringValue(source.id) || `legacy-dry-run-${index}`,
+    platformId: stringValue(source.platformId) || "unknown-platform",
+    platformName: stringValue(source.platformName) || "Legacy platform",
+    accountId: stringValue(source.accountId),
+    plannedFields: stringArray(source.plannedFields),
+    plannedSelector: stringValue(source.plannedSelector),
+    missingChecks: stringArray(source.missingChecks),
+    currentUrl: stringValue(source.currentUrl),
+    createdAt: typeof source.createdAt === "string" || typeof source.createdAt === "number" ? source.createdAt : ""
+  };
+}
+
 export function isSuccessfulDryRun(run) {
-  return Array.isArray(run.missingChecks)
-    && run.missingChecks.length === 0
-    && Boolean(run.plannedSelector)
-    && Array.isArray(run.plannedFields)
-    && run.plannedFields.length > 0;
+  const normalized = normalizeDryRunHistoryRecord(run);
+  return normalized.missingChecks.length === 0
+    && Boolean(normalized.plannedSelector)
+    && normalized.plannedFields.length > 0;
 }
 
 export function calculateSelectorHealthTrends(dryRunHistory, selectorRecipes, now = Date.now()) {
