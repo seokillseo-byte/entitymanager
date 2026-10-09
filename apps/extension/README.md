@@ -16,6 +16,8 @@ This is the Phase 1.13 MVP bridge between the EntityManager desktop app and brow
 
 Manual JSON paste is still supported as a fallback for debugging.
 
+Use `Dry-run Preview` before `Submit/Verify Tab` to inspect which fields would be filled, which selector would be clicked, and which safety checks are missing. Dry-run does not fill fields and does not click submit.
+
 ## Form fill and safety checks
 
 Before clicking submit/verify, the extension attempts to fill:
@@ -42,4 +44,4 @@ apps/extension/dist
 
 ## Notes
 
-This MVP intentionally keeps the browser side small. Submit/verify selectors and field selectors are platform-aware where known and fall back to common visible controls. The next pass should add a Desktop editor for per-platform selector/value overrides and a browser-side dry-run preview.
+This MVP intentionally keeps the browser side small. Submit/verify selectors and field selectors are platform-aware where known and fall back to common visible controls. Desktop Selector Recipes can override selectors per platform. The next pass should add recipe import/export and dry-run history.
