@@ -16,6 +16,18 @@ This is the Phase 1.13 MVP bridge between the EntityManager desktop app and brow
 
 Manual JSON paste is still supported as a fallback for debugging.
 
+## Form fill and safety checks
+
+Before clicking submit/verify, the extension attempts to fill:
+
+- username
+- email
+- display name
+- bio
+- website URL
+
+The payload comes from Desktop SQLite data: account record, entity profile, and money site. The extension blocks submit when a required value is empty, a required selector cannot be found, a required field remains empty after fill, or the CAPTCHA token field is missing.
+
 ## Build
 
 ```bash
@@ -30,4 +42,4 @@ apps/extension/dist
 
 ## Notes
 
-This MVP intentionally keeps the browser side small. Submit/verify selectors are platform-aware where known and fall back to common visible submit, continue, verify, and confirm controls. The next pass should add platform-specific form fill recipes and pre-submit safety checks.
+This MVP intentionally keeps the browser side small. Submit/verify selectors and field selectors are platform-aware where known and fall back to common visible controls. The next pass should add a Desktop editor for per-platform selector/value overrides and a browser-side dry-run preview.
