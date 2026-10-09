@@ -8,6 +8,7 @@ export type EntityModule =
   | "Entity Graph"
   | "Evidence Bank"
   | "Platform Library"
+  | "Selector Recipes"
   | "API Integrations"
   | "Reports"
   | "Settings";
@@ -219,6 +220,17 @@ export interface AccountSubmitVerifyPayload {
   verifySelectors: string[];
   evidenceCapture: "current_url";
   notes: string;
+}
+
+export interface SelectorRecipeRecord {
+  platformId: string;
+  platformName: string;
+  fieldSelectorsJson: string;
+  submitSelectors: string;
+  verifySelectors: string;
+  requiredFields: string;
+  requiresCaptchaToken: boolean;
+  updatedAt: string;
 }
 
 export interface LocalIntegrationSetting {
