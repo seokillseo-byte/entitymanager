@@ -291,3 +291,12 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Validate analytics against repeated dry-run reports, verify suggestions do not auto-submit forms, and check the Windows installer build in GitHub Actions.
 - Next: add selector health trend and per-platform success-rate reporting after the Phase 1.18 build is verified.
 
+
+
+## Phase 1.19 — Selector Health Trends & Success Rate Dashboard
+
+- Show overall and rolling 30-day dry-run success rates per platform.
+- Compare failed previews before and after a recipe's saved update timestamp.
+- Do not mark a recipe as improved merely because it was saved. Require at least one successful dry-run newer than that update.
+- Validation: confirm rates from mixed successful/failed history, confirm post-update successful dry-run is required for improvement status, and verify Windows build through GitHub Actions.
+- Next: add automated tests for trend aggregation and verify the dashboard against real extension callbacks in the packaged Windows app.
