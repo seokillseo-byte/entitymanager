@@ -7,7 +7,7 @@ import { calculateEntityReadiness } from "@entitymanager/shared";
 import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
-import { calculateSelectorHealthTrends } from "./selectorHealth.mjs";
+import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
 import "./styles.css";
 
 const modules: EntityModule[] = [
@@ -245,7 +245,7 @@ function App() {
       setAccounts(storedAccounts);
       setWorkflowRuns(storedRuns);
       setAutomationQueue(storedQueue);
-      setDryRunHistory(storedDryRunHistory);
+      setDryRunHistory(storedDryRunHistory.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -314,7 +314,7 @@ function App() {
   async function refreshDryRunHistory() {
     try {
       const records = await invoke<DryRunHistoryRecord[]>("get_dry_run_history");
-      setDryRunHistory(records);
+      setDryRunHistory(records.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
       setStatusMessage(`Loaded ${records.length} dry-run history records`);
     } catch {
       setStatusMessage("Could not refresh dry-run history outside the Desktop app.");
