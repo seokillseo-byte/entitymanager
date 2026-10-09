@@ -154,7 +154,7 @@ async function submitVerifyActiveTab(): Promise<void> {
       accountId: payload.accountId,
       success: response.success,
       evidenceUrl: response.evidenceUrl,
-      message: `${response.message}${response.clickedSelector ? ` Selector: ${response.clickedSelector}.` : ""}`
+      message: `${response.message}${response.filledFields.length ? ` Filled: ${response.filledFields.join(", ")}.` : ""}${response.missingFields.length ? ` Missing: ${response.missingFields.join(", ")}.` : ""}${response.clickedSelector ? ` Selector: ${response.clickedSelector}.` : ""}`
     };
     const callbackUrl = submitCallbackUrlInput?.value.trim() || defaultSubmitCallbackUrl;
     const callbackResponse = await sendRuntimeMessage<{ success: boolean; message: string }>({
@@ -228,6 +228,22 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
 
   return {
     ...parsed,
+    formValues: parsed.formValues || {
+      username: "",
+      email: "",
+      displayName: "",
+      bio: "",
+      websiteUrl: ""
+    },
+    fieldSelectors: parsed.fieldSelectors || {
+      username: [],
+      email: [],
+      displayName: [],
+      bio: [],
+      websiteUrl: []
+    },
+    requiredFields: parsed.requiredFields || ["username", "email", "displayName", "bio", "websiteUrl"],
+    requiresCaptchaToken: parsed.requiresCaptchaToken ?? true,
     submitSelectors: parsed.submitSelectors || [],
     verifySelectors: parsed.verifySelectors || [],
     evidenceCapture: parsed.evidenceCapture || "current_url",
