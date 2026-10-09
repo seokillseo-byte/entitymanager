@@ -17,14 +17,21 @@ declare const chrome: {
   };
 };
 const payloadInput = document.querySelector<HTMLTextAreaElement>("#payloadInput");
+const fetchUrlInput = document.querySelector<HTMLInputElement>("#fetchUrlInput");
 const callbackUrlInput = document.querySelector<HTMLInputElement>("#callbackUrlInput");
+const fetchPayloadButton = document.querySelector<HTMLButtonElement>("#fetchPayloadButton");
 const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloadButton");
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
+const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
 
 void loadState();
+
+fetchPayloadButton?.addEventListener("click", () => {
+  void fetchNextPayload();
+});
 
 savePayloadButton?.addEventListener("click", () => {
   void savePayload();
@@ -35,11 +42,15 @@ injectButton?.addEventListener("click", () => {
 });
 
 async function loadState(): Promise<void> {
-  const state = await storageGet(["captchaPayload", "callbackUrl"]);
+  const state = await storageGet(["captchaPayload", "fetchUrl", "callbackUrl"]);
   const bridgeState = state as BridgeStorage;
 
   if (payloadInput && bridgeState.captchaPayload) {
     payloadInput.value = JSON.stringify(bridgeState.captchaPayload, null, 2);
+  }
+
+  if (fetchUrlInput) {
+    fetchUrlInput.value = bridgeState.fetchUrl || defaultFetchUrl;
   }
 
   if (callbackUrlInput) {
@@ -47,11 +58,36 @@ async function loadState(): Promise<void> {
   }
 }
 
+async function fetchNextPayload(): Promise<void> {
+  try {
+    const fetchUrl = fetchUrlInput?.value.trim() || defaultFetchUrl;
+    const response = await fetch(fetchUrl, { method: "GET" });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Desktop did not return a ready CAPTCHA payload.");
+    }
+
+    const payload = validatePayload(data as Partial<CaptchaInjectionPayload>);
+    const callbackUrl = callbackUrlInput?.value.trim() || defaultCallbackUrl;
+
+    if (payloadInput) {
+      payloadInput.value = JSON.stringify(payload, null, 2);
+    }
+
+    await storageSet({ captchaPayload: payload, fetchUrl, callbackUrl });
+    setStatus(`Fetched next payload for ${payload.platformName}.`);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Could not fetch payload from Desktop.");
+  }
+}
+
 async function savePayload(): Promise<void> {
   try {
     const payload = parsePayload();
     const callbackUrl = callbackUrlInput?.value.trim() || defaultCallbackUrl;
-    await storageSet({ captchaPayload: payload, callbackUrl });
+    const fetchUrl = fetchUrlInput?.value.trim() || defaultFetchUrl;
+    await storageSet({ captchaPayload: payload, fetchUrl, callbackUrl });
     setStatus(`Saved bridge payload for ${payload.platformName}.`);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Payload could not be saved.");
@@ -94,6 +130,10 @@ function parsePayload(): CaptchaInjectionPayload {
   }
 
   const parsed = JSON.parse(payloadInput.value) as Partial<CaptchaInjectionPayload>;
+  return validatePayload(parsed);
+}
+
+function validatePayload(parsed: Partial<CaptchaInjectionPayload>): CaptchaInjectionPayload {
   const requiredFields: Array<keyof CaptchaInjectionPayload> = ["queueId", "accountId", "solutionToken", "tokenField", "action"];
 
   for (const field of requiredFields) {
