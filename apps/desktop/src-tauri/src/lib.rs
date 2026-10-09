@@ -214,10 +214,34 @@ struct AccountSubmitVerifyPayload {
     platform_id: String,
     platform_name: String,
     action: String,
+    form_values: SubmitVerifyFormValues,
+    field_selectors: SubmitVerifyFieldSelectors,
+    required_fields: Vec<String>,
+    requires_captcha_token: bool,
     submit_selectors: Vec<String>,
     verify_selectors: Vec<String>,
     evidence_capture: String,
     notes: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitVerifyFormValues {
+    username: String,
+    email: String,
+    display_name: String,
+    bio: String,
+    website_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitVerifyFieldSelectors {
+    username: Vec<String>,
+    email: Vec<String>,
+    display_name: Vec<String>,
+    bio: Vec<String>,
+    website_url: Vec<String>,
 }
 
 #[tauri::command]
@@ -1043,6 +1067,7 @@ fn complete_captcha_injection_record(
 
     let submit_verify_queue_item = if request.success {
         let selectors = submit_verify_selectors(&account.platform_id, &account.platform_name);
+        let field_selectors = submit_verify_field_selectors(&account.platform_id, &account.platform_name);
         let submit_item = AutomationQueueItem {
             id: format!("queue-{}-submit-verify", account.id),
             account_id: account.id.clone(),
@@ -1054,6 +1079,15 @@ fn complete_captcha_injection_record(
                 "sourceQueueId": item.id,
                 "captchaInjectedAt": timestamp.clone(),
                 "injectionEvidenceUrl": request.evidence_url.clone(),
+                "fieldSelectors": {
+                    "username": field_selectors.username,
+                    "email": field_selectors.email,
+                    "displayName": field_selectors.display_name,
+                    "bio": field_selectors.bio,
+                    "websiteUrl": field_selectors.website_url
+                },
+                "requiredFields": ["username", "email", "displayName", "bio", "websiteUrl"],
+                "requiresCaptchaToken": true,
                 "submitSelectors": selectors.0,
                 "verifySelectors": selectors.1,
                 "evidenceCapture": "current_url",
@@ -1132,10 +1166,14 @@ fn get_next_submit_verify_payload_record(
         None => return Err("No submit/verify queue item is ready.".to_string()),
     };
     let account = get_account_record(&connection, &item.account_id)?;
+    let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
+    let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
     let payload = serde_json::from_str::<serde_json::Value>(&item.payload).unwrap_or_else(|_| json!({}));
     let fallback_selectors = submit_verify_selectors(&account.platform_id, &account.platform_name);
+    let fallback_field_selectors = submit_verify_field_selectors(&account.platform_id, &account.platform_name);
     let submit_selectors = json_array_to_strings(&payload["submitSelectors"]);
     let verify_selectors = json_array_to_strings(&payload["verifySelectors"]);
+    let required_fields = json_array_to_strings(&payload["requiredFields"]);
 
     Ok(AccountSubmitVerifyPayload {
         queue_id: item.id,
@@ -1143,6 +1181,32 @@ fn get_next_submit_verify_payload_record(
         platform_id: account.platform_id,
         platform_name: item.platform_name,
         action: "submit_or_verify_account".to_string(),
+        form_values: SubmitVerifyFormValues {
+            username: account.recommended_username,
+            email: profile.email,
+            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name } else { profile.brand_name },
+            bio: if profile.short_description.trim().is_empty() { account.notes.clone() } else { profile.short_description },
+            website_url: money_site.homepage_url,
+        },
+        field_selectors: SubmitVerifyFieldSelectors {
+            username: json_array_to_strings(&payload["fieldSelectors"]["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
+            email: json_array_to_strings(&payload["fieldSelectors"]["email"]).into_iter().chain(fallback_field_selectors.email).collect(),
+            display_name: json_array_to_strings(&payload["fieldSelectors"]["displayName"]).into_iter().chain(fallback_field_selectors.display_name).collect(),
+            bio: json_array_to_strings(&payload["fieldSelectors"]["bio"]).into_iter().chain(fallback_field_selectors.bio).collect(),
+            website_url: json_array_to_strings(&payload["fieldSelectors"]["websiteUrl"]).into_iter().chain(fallback_field_selectors.website_url).collect(),
+        },
+        required_fields: if required_fields.is_empty() {
+            vec![
+                "username".to_string(),
+                "email".to_string(),
+                "displayName".to_string(),
+                "bio".to_string(),
+                "websiteUrl".to_string(),
+            ]
+        } else {
+            required_fields
+        },
+        requires_captcha_token: payload["requiresCaptchaToken"].as_bool().unwrap_or(true),
         submit_selectors: if submit_selectors.is_empty() { fallback_selectors.0 } else { submit_selectors },
         verify_selectors: if verify_selectors.is_empty() { fallback_selectors.1 } else { verify_selectors },
         evidence_capture: payload["evidenceCapture"].as_str().unwrap_or("current_url").to_string(),
@@ -1511,6 +1575,119 @@ fn json_array_to_strings(value: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn get_money_site_record(connection: &Connection) -> Result<MoneySiteRecord, String> {
+    connection
+        .query_row(
+            "SELECT domain, homepage_url, sitemap_url, language, target_country, industry
+             FROM money_sites
+             WHERE id = 1",
+            [],
+            |row| {
+                Ok(MoneySiteRecord {
+                    domain: row.get(0)?,
+                    homepage_url: row.get(1)?,
+                    sitemap_url: row.get(2)?,
+                    language: row.get(3)?,
+                    target_country: row.get(4)?,
+                    industry: row.get(5)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn get_entity_profile_record(connection: &Connection) -> Result<EntityProfileRecord, String> {
+    connection
+        .query_row(
+            "SELECT id, profile_type, brand_name, legal_name, short_description, full_description,
+                    founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
+                    topical_niche, expertise_proof, trust_signals
+             FROM entity_profiles
+             WHERE id = 'primary'",
+            [],
+            |row| {
+                Ok(EntityProfileRecord {
+                    id: row.get(0)?,
+                    profile_type: row.get(1)?,
+                    brand_name: row.get(2)?,
+                    legal_name: row.get(3)?,
+                    short_description: row.get(4)?,
+                    full_description: row.get(5)?,
+                    founder_name: row.get(6)?,
+                    author_name: row.get(7)?,
+                    email: row.get(8)?,
+                    phone: row.get(9)?,
+                    address: row.get(10)?,
+                    same_as_urls: row.get(11)?,
+                    target_keywords: row.get(12)?,
+                    topical_niche: row.get(13)?,
+                    expertise_proof: row.get(14)?,
+                    trust_signals: row.get(15)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> SubmitVerifyFieldSelectors {
+    let mut selectors = SubmitVerifyFieldSelectors {
+        username: vec![
+            "input[name='username']".to_string(),
+            "input[id*='username' i]".to_string(),
+            "input[autocomplete='username']".to_string(),
+            "input[name*='user' i]".to_string(),
+        ],
+        email: vec![
+            "input[type='email']".to_string(),
+            "input[name='email']".to_string(),
+            "input[id*='email' i]".to_string(),
+            "input[autocomplete='email']".to_string(),
+        ],
+        display_name: vec![
+            "input[name='name']".to_string(),
+            "input[name*='display' i]".to_string(),
+            "input[id*='display' i]".to_string(),
+            "input[autocomplete='name']".to_string(),
+        ],
+        bio: vec![
+            "textarea[name='bio']".to_string(),
+            "textarea[id*='bio' i]".to_string(),
+            "textarea[name*='description' i]".to_string(),
+            "textarea[id*='description' i]".to_string(),
+        ],
+        website_url: vec![
+            "input[type='url']".to_string(),
+            "input[name='website']".to_string(),
+            "input[id*='website' i]".to_string(),
+            "input[name*='url' i]".to_string(),
+        ],
+    };
+    let key = platform_id.to_lowercase();
+    let name = platform_name.to_lowercase();
+
+    if key == "github" || name.contains("github") {
+        selectors.username.insert(0, "input[name='user[login]']".to_string());
+        selectors.email.insert(0, "input[name='user[email]']".to_string());
+    }
+
+    if key == "medium" || name.contains("medium") {
+        selectors.email.insert(0, "input[name='email']".to_string());
+        selectors.display_name.insert(0, "input[name='name']".to_string());
+    }
+
+    if key == "tumblr" || name.contains("tumblr") {
+        selectors.email.insert(0, "input[name='email']".to_string());
+        selectors.username.insert(0, "input[name='tumblelog[name]']".to_string());
+    }
+
+    if key == "pinterest" || name.contains("pinterest") {
+        selectors.email.insert(0, "input[name='id']".to_string());
+        selectors.display_name.insert(0, "input[name='full_name']".to_string());
+    }
+
+    selectors
 }
 
 fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<String>, Vec<String>) {
