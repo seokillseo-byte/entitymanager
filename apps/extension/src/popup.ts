@@ -24,6 +24,7 @@ const submitCallbackUrlInput = document.querySelector<HTMLInputElement>("#submit
 const fetchPayloadButton = document.querySelector<HTMLButtonElement>("#fetchPayloadButton");
 const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloadButton");
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
+const dryRunButton = document.querySelector<HTMLButtonElement>("#dryRunButton");
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
@@ -44,6 +45,10 @@ savePayloadButton?.addEventListener("click", () => {
 
 injectButton?.addEventListener("click", () => {
   void injectActiveTab();
+});
+
+dryRunButton?.addEventListener("click", () => {
+  void previewSubmitVerifyActiveTab();
 });
 
 submitVerifyButton?.addEventListener("click", () => {
@@ -166,6 +171,27 @@ async function submitVerifyActiveTab(): Promise<void> {
     setStatus(`${response.message}\n${callbackResponse.message}`);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Submit/verify automation failed.");
+  }
+}
+
+async function previewSubmitVerifyActiveTab(): Promise<void> {
+  try {
+    const payload = await fetchSubmitVerifyPayload();
+    const tabId = await getActiveTabId();
+    const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
+      type: "ENTITYMANAGER_SUBMIT_VERIFY",
+      payload,
+      dryRun: true
+    } satisfies SubmitVerifyMessage);
+
+    setStatus([
+      response.message,
+      `Planned fill: ${response.plannedFields.join(", ") || "none"}`,
+      `Planned click: ${response.plannedSelector || "none"}`,
+      `Missing: ${response.missingFields.join(", ") || "none"}`
+    ].join("\n"));
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Dry-run preview failed.");
   }
 }
 
