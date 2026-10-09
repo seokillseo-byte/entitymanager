@@ -257,6 +257,20 @@ struct SelectorRecipeRecord {
     updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DryRunHistoryRecord {
+    id: String,
+    platform_id: String,
+    platform_name: String,
+    account_id: String,
+    planned_fields: Vec<String>,
+    planned_selector: String,
+    missing_checks: Vec<String>,
+    current_url: String,
+    created_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -582,6 +596,35 @@ fn save_selector_recipe(
     save_selector_recipe_record(&connection, &recipe)?;
 
     Ok(recipe)
+}
+
+#[tauri::command]
+fn get_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistoryRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT id, platform_id, platform_name, account_id, planned_fields, planned_selector, missing_checks, current_url, created_at FROM dry_run_history ORDER BY created_at DESC LIMIT 100"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        let planned_fields: String = row.get(4)?;
+        let missing_checks: String = row.get(6)?;
+        Ok(DryRunHistoryRecord {
+            id: row.get(0)?, platform_id: row.get(1)?, platform_name: row.get(2)?, account_id: row.get(3)?,
+            planned_fields: serde_json::from_str(&planned_fields).unwrap_or_default(),
+            planned_selector: row.get(5)?,
+            missing_checks: serde_json::from_str(&missing_checks).unwrap_or_default(),
+            current_url: row.get(7)?, created_at: row.get(8)?,
+        })
+    }).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_dry_run_history(app_handle: tauri::AppHandle, record: DryRunHistoryRecord) -> Result<DryRunHistoryRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_dry_run_history_record(&connection, &record)?;
+    Ok(record)
 }
 
 #[tauri::command]
@@ -1490,6 +1533,18 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 requires_captcha_token INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS dry_run_history (
+                id TEXT PRIMARY KEY,
+                platform_id TEXT NOT NULL,
+                platform_name TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                planned_fields TEXT NOT NULL,
+                planned_selector TEXT NOT NULL,
+                missing_checks TEXT NOT NULL,
+                current_url TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             ",
         )
         .map_err(|error| error.to_string())?;
@@ -1809,6 +1864,20 @@ fn get_platform_records(connection: &Connection) -> Result<Vec<PlatformRecord>, 
         .map_err(|error| error.to_string())
 }
 
+fn save_dry_run_history_record(connection: &Connection, record: &DryRunHistoryRecord) -> Result<(), String> {
+    connection.execute(
+        "INSERT OR REPLACE INTO dry_run_history (id, platform_id, platform_name, account_id, planned_fields, planned_selector, missing_checks, current_url, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            record.id, record.platform_id, record.platform_name, record.account_id,
+            serde_json::to_string(&record.planned_fields).unwrap_or_else(|_| "[]".to_string()),
+            record.planned_selector,
+            serde_json::to_string(&record.missing_checks).unwrap_or_else(|_| "[]".to_string()),
+            record.current_url, record.created_at
+        ],
+    ).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn save_selector_recipe_record(connection: &Connection, recipe: &SelectorRecipeRecord) -> Result<(), String> {
     connection
         .execute(
@@ -2053,6 +2122,30 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
             }
         };
 
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("POST /account/submit-verify/dry-run-history ") {
+        let Some(body) = request.split("\r\n\r\n").nth(1) else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"missing body\"}");
+            return;
+        };
+        let response = match serde_json::from_str::<DryRunHistoryRecord>(body) {
+            Ok(mut record) => {
+                if record.id.trim().is_empty() { record.id = format!("dryrun-{}-{}", record.account_id, now_string()); }
+                if record.created_at.trim().is_empty() { record.created_at = now_string(); }
+                match open_database(&app_handle).and_then(|connection| {
+                    ensure_schema(&connection)?;
+                    save_dry_run_history_record(&connection, &record)?;
+                    serde_json::to_string(&record).map_err(|error| error.to_string())
+                }) {
+                    Ok(value) => value,
+                    Err(error) => { let _ = write_http_response(&mut stream, 400, &json!({ "error": error }).to_string()); return; }
+                }
+            },
+            Err(error) => { let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string()); return; }
+        };
         let _ = write_http_response(&mut stream, 200, &response);
         return;
     }
@@ -2807,6 +2900,8 @@ pub fn run() {
             save_platform,
             get_selector_recipes,
             save_selector_recipe,
+            get_dry_run_history,
+            save_dry_run_history,
             get_entity_profile,
             save_entity_profile,
             get_accounts,
