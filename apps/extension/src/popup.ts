@@ -1,4 +1,4 @@
-import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, InjectCaptchaMessage, InjectionReport, InjectionResponse, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
+import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -32,6 +32,7 @@ const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
 const defaultSubmitFetchUrl = "http://127.0.0.1:17321/account/submit-verify/next";
 const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
+const defaultDryRunHistoryCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/dry-run-history";
 
 void loadState();
 
@@ -184,11 +185,29 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
       dryRun: true
     } satisfies SubmitVerifyMessage);
 
+    const currentUrl = await getActiveTabUrl();
+    const report: DryRunHistoryReport = {
+      id: `dryrun-${payload.accountId}-${Date.now()}`,
+      platformId: payload.platformId,
+      platformName: payload.platformName,
+      accountId: payload.accountId,
+      plannedFields: response.plannedFields,
+      plannedSelector: response.plannedSelector,
+      missingChecks: response.missingFields,
+      currentUrl: currentUrl || response.evidenceUrl,
+      createdAt: new Date().toISOString()
+    };
+    const callback = await sendRuntimeMessage<{ success: boolean; message: string }>({
+      type: "ENTITYMANAGER_REPORT_DRY_RUN",
+      dryRunReport: report,
+      callbackUrl: defaultDryRunHistoryCallbackUrl
+    });
     setStatus([
       response.message,
       `Planned fill: ${response.plannedFields.join(", ") || "none"}`,
       `Planned click: ${response.plannedSelector || "none"}`,
-      `Missing: ${response.missingFields.join(", ") || "none"}`
+      `Missing: ${response.missingFields.join(", ") || "none"}`,
+      callback.message
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Dry-run preview failed.");
@@ -275,6 +294,10 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
     evidenceCapture: parsed.evidenceCapture || "current_url",
     notes: parsed.notes || ""
   } as AccountSubmitVerifyPayload;
+}
+
+function getActiveTabUrl(): Promise<string> {
+  return new Promise((resolve) => chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs[0]?.url || "")));
 }
 
 function getActiveTabId(): Promise<number> {
