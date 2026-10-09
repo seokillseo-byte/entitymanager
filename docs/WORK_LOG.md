@@ -144,6 +144,13 @@
 - Updated the extension to fill available form fields before submit/verify.
 - Extension now blocks submit when required values, matching fields, or CAPTCHA token are missing and reports the exact missing checks back to Desktop.
 - Extension submit/verify callback now includes filled fields, missing checks, clicked selector, and evidence URL.
+- Started Phase 1.16 Selector Recipe Editor and Dry-run Preview.
+- Added shared `SelectorRecipeRecord` type and a new Desktop `Selector Recipes` module.
+- Added local SQLite `selector_recipes` table with default recipes seeded from Platform Library records.
+- Added Tauri commands `get_selector_recipes` and `save_selector_recipe`.
+- Submit/verify payload generation now prioritizes saved selector recipes over generated defaults.
+- Desktop recipe editor can update field selector JSON, submit selectors, verify selectors, required fields, and CAPTCHA requirement per platform.
+- Added extension Dry-run Preview action that fetches the next submit/verify payload and reports planned fields, planned click selector, and missing safety checks without filling or clicking.
 
 ## Current Decision
 
@@ -155,4 +162,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.15 in the packaged `.exe`: confirm submit/verify payload contains form values from Entity Profile and Money Site, confirm extension fills username/email/display name/bio/website URL where matching fields exist, confirm missing field/CAPTCHA checks block unsafe submit, and confirm successful submit/verify stores evidence URL. Then expand platform-specific recipes and add manual override controls for selector/value mappings.
+Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, fetch submit/verify payload from the extension, run Dry-run Preview to confirm planned fills/clicks and missing checks, then run Submit/Verify Tab only after preview is clean. Next, add recipe import/export and per-platform form-fill dry-run history.
