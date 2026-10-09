@@ -55,6 +55,7 @@ export interface InjectCaptchaMessage {
 export interface SubmitVerifyMessage {
   type: "ENTITYMANAGER_SUBMIT_VERIFY";
   payload: AccountSubmitVerifyPayload;
+  dryRun?: boolean;
 }
 
 export interface InjectionReport {
@@ -87,4 +88,6 @@ export interface SubmitVerifyResponse {
   clickedSelector: string;
   filledFields: string[];
   missingFields: string[];
+  plannedFields: string[];
+  plannedSelector: string;
 }
