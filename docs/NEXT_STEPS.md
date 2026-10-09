@@ -273,3 +273,12 @@ Phase 1.16 validation and next build task:
 ## Important Reminder
 
 At the end of every coding session, update this file and `docs/WORK_LOG.md`.
+
+
+## Phase 1.17 — Recipe Import/Export + Dry-run History
+
+- Export saved selector recipes to a portable JSON file.
+- Paste/import recipe JSON and persist valid recipes in SQLite.
+- Save extension dry-run previews to local SQLite through the desktop bridge.
+- Review recent previews, planned selectors, missing checks, platform/account and URL in Selector Recipes.
+- Next: verify import/export round-trip and selector-failure scenarios in the Windows .exe; distribute only after GitHub Actions succeeds.
