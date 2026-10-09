@@ -1,4 +1,4 @@
-import type { BridgeStorage, CaptchaInjectionPayload, InjectCaptchaMessage, InjectionReport, InjectionResponse } from "./types";
+import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, InjectCaptchaMessage, InjectionReport, InjectionResponse, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -19,13 +19,18 @@ declare const chrome: {
 const payloadInput = document.querySelector<HTMLTextAreaElement>("#payloadInput");
 const fetchUrlInput = document.querySelector<HTMLInputElement>("#fetchUrlInput");
 const callbackUrlInput = document.querySelector<HTMLInputElement>("#callbackUrlInput");
+const submitFetchUrlInput = document.querySelector<HTMLInputElement>("#submitFetchUrlInput");
+const submitCallbackUrlInput = document.querySelector<HTMLInputElement>("#submitCallbackUrlInput");
 const fetchPayloadButton = document.querySelector<HTMLButtonElement>("#fetchPayloadButton");
 const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloadButton");
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
+const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
 const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
+const defaultSubmitFetchUrl = "http://127.0.0.1:17321/account/submit-verify/next";
+const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
 
 void loadState();
 
@@ -41,8 +46,12 @@ injectButton?.addEventListener("click", () => {
   void injectActiveTab();
 });
 
+submitVerifyButton?.addEventListener("click", () => {
+  void submitVerifyActiveTab();
+});
+
 async function loadState(): Promise<void> {
-  const state = await storageGet(["captchaPayload", "fetchUrl", "callbackUrl"]);
+  const state = await storageGet(["captchaPayload", "submitVerifyPayload", "fetchUrl", "callbackUrl", "submitFetchUrl", "submitCallbackUrl"]);
   const bridgeState = state as BridgeStorage;
 
   if (payloadInput && bridgeState.captchaPayload) {
@@ -55,6 +64,14 @@ async function loadState(): Promise<void> {
 
   if (callbackUrlInput) {
     callbackUrlInput.value = bridgeState.callbackUrl || defaultCallbackUrl;
+  }
+
+  if (submitFetchUrlInput) {
+    submitFetchUrlInput.value = bridgeState.submitFetchUrl || defaultSubmitFetchUrl;
+  }
+
+  if (submitCallbackUrlInput) {
+    submitCallbackUrlInput.value = bridgeState.submitCallbackUrl || defaultSubmitCallbackUrl;
   }
 }
 
@@ -124,6 +141,53 @@ async function injectActiveTab(): Promise<void> {
   }
 }
 
+async function submitVerifyActiveTab(): Promise<void> {
+  try {
+    const payload = await fetchSubmitVerifyPayload();
+    const tabId = await getActiveTabId();
+    const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
+      type: "ENTITYMANAGER_SUBMIT_VERIFY",
+      payload
+    } satisfies SubmitVerifyMessage);
+    const report: SubmitVerifyReport = {
+      queueId: payload.queueId,
+      accountId: payload.accountId,
+      success: response.success,
+      evidenceUrl: response.evidenceUrl,
+      message: `${response.message}${response.clickedSelector ? ` Selector: ${response.clickedSelector}.` : ""}`
+    };
+    const callbackUrl = submitCallbackUrlInput?.value.trim() || defaultSubmitCallbackUrl;
+    const callbackResponse = await sendRuntimeMessage<{ success: boolean; message: string }>({
+      type: "ENTITYMANAGER_REPORT_SUBMIT_VERIFY",
+      report,
+      callbackUrl
+    });
+
+    setStatus(`${response.message}\n${callbackResponse.message}`);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Submit/verify automation failed.");
+  }
+}
+
+async function fetchSubmitVerifyPayload(): Promise<AccountSubmitVerifyPayload> {
+  const submitFetchUrl = submitFetchUrlInput?.value.trim() || defaultSubmitFetchUrl;
+  const response = await fetch(submitFetchUrl, { method: "GET" });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Desktop did not return a submit/verify payload.");
+  }
+
+  const payload = validateSubmitVerifyPayload(data as Partial<AccountSubmitVerifyPayload>);
+  await storageSet({
+    submitVerifyPayload: payload,
+    submitFetchUrl,
+    submitCallbackUrl: submitCallbackUrlInput?.value.trim() || defaultSubmitCallbackUrl
+  });
+
+  return payload;
+}
+
 function parsePayload(): CaptchaInjectionPayload {
   if (!payloadInput?.value.trim()) {
     throw new Error("Paste a Bridge Payload JSON first.");
@@ -147,6 +211,28 @@ function validatePayload(parsed: Partial<CaptchaInjectionPayload>): CaptchaInjec
   }
 
   return parsed as CaptchaInjectionPayload;
+}
+
+function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>): AccountSubmitVerifyPayload {
+  const requiredFields: Array<keyof AccountSubmitVerifyPayload> = ["queueId", "accountId", "platformName", "action"];
+
+  for (const field of requiredFields) {
+    if (!parsed[field]) {
+      throw new Error(`Submit/verify payload is missing ${String(field)}.`);
+    }
+  }
+
+  if (parsed.action !== "submit_or_verify_account") {
+    throw new Error("Submit/verify payload action must be submit_or_verify_account.");
+  }
+
+  return {
+    ...parsed,
+    submitSelectors: parsed.submitSelectors || [],
+    verifySelectors: parsed.verifySelectors || [],
+    evidenceCapture: parsed.evidenceCapture || "current_url",
+    notes: parsed.notes || ""
+  } as AccountSubmitVerifyPayload;
 }
 
 function getActiveTabId(): Promise<number> {
