@@ -103,8 +103,8 @@ test("legacy dry-run records with missing fields normalize safely and count as f
 
 test("malformed legacy entries and missing fields never crash aggregation", () => {
   const records = [
-    normalizeDryRunHistoryRecord(null),
-    normalizeDryRunHistoryRecord({ platformId: "p2", plannedFields: "not-an-array", missingChecks: null, plannedSelector: 12, createdAt: {} })
+    null,
+    { platformId: "p2", plannedFields: "not-an-array", missingChecks: null, plannedSelector: 12, createdAt: {} }
   ];
   const result = calculateSelectorHealthTrends(records, [], NOW);
   assert.equal(result.platforms.length, 2);
