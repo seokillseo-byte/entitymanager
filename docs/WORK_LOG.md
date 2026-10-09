@@ -128,6 +128,14 @@
 - Added shared submit/verify request/result types and a Desktop command to complete the submit/verify queue step.
 - Added Desktop queue actions for Mark Verified and Mark Submit Failed on `submit_verify` items.
 - Updated the extension README with the new auto-fetch workflow.
+- Started Phase 1.14 Platform-Specific Submit Automation and Evidence Capture.
+- Added shared submit/verify payload types with platform id, selector lists, evidence capture mode, and notes.
+- Added Desktop local bridge endpoints `GET /account/submit-verify/next` and `POST /account/submit-verify/complete`.
+- Added platform-aware submit/verify selector templates for GitHub, Medium, Tumblr, Pinterest, and generic fallback flows.
+- Submit/verify queue payloads now include submit selectors, verify selectors, evidence capture mode, source CAPTCHA queue id, and injection evidence.
+- Updated the Chrome extension content script so it can click visible submit/verify elements and capture the current URL as evidence.
+- Updated the extension popup with a Submit/Verify Tab action and submit/verify bridge URLs.
+- Updated the extension background callback handling to report both CAPTCHA injection and submit/verify completion back to Desktop.
 
 ## Current Decision
 
@@ -139,4 +147,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.13 in the packaged `.exe`: resolve a CAPTCHA queue item, load `apps/extension/dist`, click Fetch Next Payload, inject into a test page with `g-recaptcha-response`, confirm Desktop receives the callback, and confirm a new `submit_verify` queue item appears. Then move to browser automation for the real submit click, account verification evidence capture, and platform-specific submit selectors.
+Validate Phase 1.14 in the packaged `.exe`: resolve and inject a CAPTCHA, confirm `submit_verify` appears, open the target account page, click Submit/Verify Tab in the extension, and confirm Desktop marks the queue resolved, account verified, and evidence URL saved. Then add per-platform field-fill recipes and safer pre-submit checks before broad automation.
