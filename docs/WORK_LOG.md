@@ -163,3 +163,12 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 ## Next Recommended Action
 
 Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, fetch submit/verify payload from the extension, run Dry-run Preview to confirm planned fills/clicks and missing checks, then run Submit/Verify Tab only after preview is clean. Next, add recipe import/export and per-platform form-fill dry-run history.
+
+
+## 2026-10-09 — Phase 1.17 Recipe Import/Export + Dry-run History
+
+- Added shared DryRunHistoryRecord model and SQLite dry_run_history table.
+- Added Tauri commands to read and save dry-run history, plus local extension bridge callback.
+- Extension Dry-run Preview reports planned fields, selector, missing checks, account/platform, URL and timestamp to Desktop.
+- Selector Recipes screen supports JSON export/import and recent dry-run history.
+- Verify Windows Rust/Tauri compilation and packaged installer via GitHub Actions before distributing.
