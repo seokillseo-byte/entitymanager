@@ -91,3 +91,15 @@ export interface SubmitVerifyResponse {
   plannedFields: string[];
   plannedSelector: string;
 }
+
+export interface DryRunHistoryReport {
+  id: string;
+  platformId: string;
+  platformName: string;
+  accountId: string;
+  plannedFields: string[];
+  plannedSelector: string;
+  missingChecks: string[];
+  currentUrl: string;
+  createdAt: string;
+}
