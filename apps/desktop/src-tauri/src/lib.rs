@@ -206,6 +206,20 @@ struct AccountSubmitVerifyResult {
     workflow_run: WorkflowRunRecord,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountSubmitVerifyPayload {
+    queue_id: String,
+    account_id: String,
+    platform_id: String,
+    platform_name: String,
+    action: String,
+    submit_selectors: Vec<String>,
+    verify_selectors: Vec<String>,
+    evidence_capture: String,
+    notes: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -1028,6 +1042,7 @@ fn complete_captcha_injection_record(
     save_account_record(&connection, &account)?;
 
     let submit_verify_queue_item = if request.success {
+        let selectors = submit_verify_selectors(&account.platform_id, &account.platform_name);
         let submit_item = AutomationQueueItem {
             id: format!("queue-{}-submit-verify", account.id),
             account_id: account.id.clone(),
@@ -1039,6 +1054,9 @@ fn complete_captcha_injection_record(
                 "sourceQueueId": item.id,
                 "captchaInjectedAt": timestamp.clone(),
                 "injectionEvidenceUrl": request.evidence_url.clone(),
+                "submitSelectors": selectors.0,
+                "verifySelectors": selectors.1,
+                "evidenceCapture": "current_url",
                 "message": "CAPTCHA injected. Submit/verify account is ready for browser automation or manual confirmation."
             })
             .to_string(),
@@ -1075,7 +1093,68 @@ fn complete_account_submit_verify(
     app_handle: tauri::AppHandle,
     request: AccountSubmitVerifyRequest,
 ) -> Result<AccountSubmitVerifyResult, String> {
-    let connection = open_database(&app_handle)?;
+    complete_account_submit_verify_record(&app_handle, request)
+}
+
+fn get_next_submit_verify_payload_record(
+    app_handle: &tauri::AppHandle,
+) -> Result<AccountSubmitVerifyPayload, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, account_id, platform_name, gate_type, status, payload, created_at, updated_at
+             FROM automation_queue
+             WHERE gate_type = 'submit_verify'
+               AND status = 'waiting'
+             ORDER BY updated_at ASC",
+        )
+        .map_err(|error| error.to_string())?;
+
+    let mut items = statement
+        .query_map([], |row| {
+            Ok(AutomationQueueItem {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                platform_name: row.get(2)?,
+                gate_type: row.get(3)?,
+                status: row.get(4)?,
+                payload: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    let item = match items.next() {
+        Some(result) => result.map_err(|error| error.to_string())?,
+        None => return Err("No submit/verify queue item is ready.".to_string()),
+    };
+    let account = get_account_record(&connection, &item.account_id)?;
+    let payload = serde_json::from_str::<serde_json::Value>(&item.payload).unwrap_or_else(|_| json!({}));
+    let fallback_selectors = submit_verify_selectors(&account.platform_id, &account.platform_name);
+    let submit_selectors = json_array_to_strings(&payload["submitSelectors"]);
+    let verify_selectors = json_array_to_strings(&payload["verifySelectors"]);
+
+    Ok(AccountSubmitVerifyPayload {
+        queue_id: item.id,
+        account_id: item.account_id,
+        platform_id: account.platform_id,
+        platform_name: item.platform_name,
+        action: "submit_or_verify_account".to_string(),
+        submit_selectors: if submit_selectors.is_empty() { fallback_selectors.0 } else { submit_selectors },
+        verify_selectors: if verify_selectors.is_empty() { fallback_selectors.1 } else { verify_selectors },
+        evidence_capture: payload["evidenceCapture"].as_str().unwrap_or("current_url").to_string(),
+        notes: payload["message"].as_str().unwrap_or("Submit or verify the account, then capture current URL as evidence.").to_string(),
+    })
+}
+
+fn complete_account_submit_verify_record(
+    app_handle: &tauri::AppHandle,
+    request: AccountSubmitVerifyRequest,
+) -> Result<AccountSubmitVerifyResult, String> {
+    let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
 
     let mut item = get_automation_queue_item_record(&connection, &request.queue_id)?;
@@ -1420,6 +1499,90 @@ fn parse_captcha_payload(payload: &str) -> Result<serde_json::Value, String> {
     Ok(parsed)
 }
 
+fn json_array_to_strings(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::trim))
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<String>, Vec<String>) {
+    let generic_submit = vec![
+        "button[type='submit']".to_string(),
+        "input[type='submit']".to_string(),
+        "button[data-testid*='submit' i]".to_string(),
+        "button[data-testid*='signup' i]".to_string(),
+        "button[data-testid*='continue' i]".to_string(),
+        "button[data-test*='submit' i]".to_string(),
+        "button[data-test*='continue' i]".to_string(),
+        "button[aria-label*='submit' i]".to_string(),
+        "button[aria-label*='sign up' i]".to_string(),
+        "button[aria-label*='continue' i]".to_string(),
+    ];
+    let generic_verify = vec![
+        "a[href*='verify' i]".to_string(),
+        "button[data-testid*='verify' i]".to_string(),
+        "button[data-test*='verify' i]".to_string(),
+        "button[aria-label*='verify' i]".to_string(),
+        "button[aria-label*='confirm' i]".to_string(),
+    ];
+    let key = platform_id.to_lowercase();
+    let name = platform_name.to_lowercase();
+
+    if key == "github" || name.contains("github") {
+        return (
+            vec![
+                "button[type='submit']".to_string(),
+                "input[type='submit']".to_string(),
+                "button.js-octocaptcha-form-submit".to_string(),
+            ],
+            generic_verify,
+        );
+    }
+
+    if key == "medium" || name.contains("medium") {
+        return (
+            vec![
+                "button[data-testid='headerSignUpButton']".to_string(),
+                "button[data-testid*='submit' i]".to_string(),
+                "button[type='submit']".to_string(),
+            ],
+            generic_verify,
+        );
+    }
+
+    if key == "tumblr" || name.contains("tumblr") {
+        return (
+            vec![
+                "button[aria-label*='sign up' i]".to_string(),
+                "button[data-testid*='signup' i]".to_string(),
+                "button[type='submit']".to_string(),
+            ],
+            generic_verify,
+        );
+    }
+
+    if key == "pinterest" || name.contains("pinterest") {
+        return (
+            vec![
+                "button[data-test-id*='register' i]".to_string(),
+                "button[data-test-id*='signup' i]".to_string(),
+                "button[type='submit']".to_string(),
+            ],
+            generic_verify,
+        );
+    }
+
+    (generic_submit, generic_verify)
+}
+
 fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppHandle) {
     let mut buffer = vec![0; 32 * 1024];
     let bytes_read = match stream.read(&mut buffer) {
@@ -1438,6 +1601,43 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
+
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("GET /account/submit-verify/next ") {
+        let response = match get_next_submit_verify_payload_record(&app_handle) {
+            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
+
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("POST /account/submit-verify/complete ") {
+        let Some(body) = request.split("\r\n\r\n").nth(1) else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"missing body\"}");
+            return;
+        };
+
+        let response = match serde_json::from_str::<AccountSubmitVerifyRequest>(body) {
+            Ok(payload) => match complete_account_submit_verify_record(&app_handle, payload) {
+                Ok(result) => serde_json::to_string(&result).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+                Err(error) => {
+                    let _ = write_http_response(&mut stream, 400, &json!({ "error": error }).to_string());
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string());
                 return;
             }
         };
