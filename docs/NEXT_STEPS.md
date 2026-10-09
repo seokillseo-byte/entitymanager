@@ -215,7 +215,17 @@ Phase 1.13 validation and next build task:
 - Confirm successful injection creates a `submit_verify` queue item.
 - Confirm Mark Verified resolves `submit_verify`, marks the account `verified`, and writes workflow history.
 - Confirm Mark Submit Failed marks the queue failed and moves the account to manual review.
-- Build platform-specific submit/verify browser automation with evidence URL capture.
+- Build platform-specific submit/verify browser automation with evidence URL capture. Done as an extension MVP.
+
+Phase 1.14 validation and next build task:
+
+- Confirm CAPTCHA injection success creates a `submit_verify` queue payload with selector lists.
+- Confirm `GET /account/submit-verify/next` returns a ready submit/verify payload.
+- Confirm the extension `Submit/Verify Tab` action clicks a visible submit/verify control when one matches platform or generic selectors.
+- Confirm `POST /account/submit-verify/complete` resolves the queue, saves current URL as evidence, marks account verified, and writes workflow history.
+- Confirm failed selector matching reports a failed submit/verify callback and moves the account to manual review.
+- Add platform-specific field-fill recipes for account forms before clicking submit.
+- Add pre-submit safety checks so the extension can explain missing fields, CAPTCHA not injected, or unsupported platform state.
 
 ## First Data Models To Design
 
