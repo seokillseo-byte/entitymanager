@@ -16,6 +16,22 @@ export interface AccountSubmitVerifyPayload {
   platformId: string;
   platformName: string;
   action: "submit_or_verify_account";
+  formValues: {
+    username: string;
+    email: string;
+    displayName: string;
+    bio: string;
+    websiteUrl: string;
+  };
+  fieldSelectors: {
+    username: string[];
+    email: string[];
+    displayName: string[];
+    bio: string[];
+    websiteUrl: string[];
+  };
+  requiredFields: Array<keyof AccountSubmitVerifyPayload["formValues"]>;
+  requiresCaptchaToken: boolean;
   submitSelectors: string[];
   verifySelectors: string[];
   evidenceCapture: "current_url";
@@ -69,4 +85,6 @@ export interface SubmitVerifyResponse {
   message: string;
   evidenceUrl: string;
   clickedSelector: string;
+  filledFields: string[];
+  missingFields: string[];
 }
