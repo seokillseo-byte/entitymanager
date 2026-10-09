@@ -121,6 +121,13 @@
 - Added a read-only Bridge Payload JSON box in the Desktop UI so the MVP extension can be tested without native messaging yet.
 - Added `extension:build` and extension package build scripts.
 - Re-verified direct TypeScript checks for the extension, desktop, and shared package plus the direct extension static build after Phase 1.12 changes.
+- Started Phase 1.13 Account Submit/Verify Step and Extension Auto Payload Fetch.
+- Added a Desktop bridge endpoint `GET /captcha/injection/next` so the Chrome extension can fetch the next resolved CAPTCHA payload without manual JSON copy/paste.
+- Updated the extension popup with a Fetch Next Payload action and persisted fetch/callback URLs.
+- CAPTCHA injection success now creates a dedicated `submit_verify` automation queue item.
+- Added shared submit/verify request/result types and a Desktop command to complete the submit/verify queue step.
+- Added Desktop queue actions for Mark Verified and Mark Submit Failed on `submit_verify` items.
+- Updated the extension README with the new auto-fetch workflow.
 
 ## Current Decision
 
@@ -132,4 +139,4 @@ Normal users should not need Docker, PostgreSQL, Redis, or terminal commands to 
 
 ## Next Recommended Action
 
-Validate Phase 1.12 in the packaged `.exe`: build the extension, load `apps/extension/dist` as an unpacked Chrome extension, paste the Desktop Bridge Payload JSON, inject into a test page with `g-recaptcha-response`, and confirm Desktop receives the callback plus workflow history update. Then move to Phase 1.13: submit/verify account step and automatic payload fetching so the extension no longer needs manual JSON copy/paste.
+Validate Phase 1.13 in the packaged `.exe`: resolve a CAPTCHA queue item, load `apps/extension/dist`, click Fetch Next Payload, inject into a test page with `g-recaptcha-response`, confirm Desktop receives the callback, and confirm a new `submit_verify` queue item appears. Then move to browser automation for the real submit click, account verification evidence capture, and platform-specific submit selectors.
