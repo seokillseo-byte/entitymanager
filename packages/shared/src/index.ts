@@ -193,6 +193,18 @@ export interface AccountSubmitVerifyResult {
   workflowRun: WorkflowRunRecord;
 }
 
+export interface AccountSubmitVerifyPayload {
+  queueId: string;
+  accountId: string;
+  platformId: string;
+  platformName: string;
+  action: "submit_or_verify_account";
+  submitSelectors: string[];
+  verifySelectors: string[];
+  evidenceCapture: "current_url";
+  notes: string;
+}
+
 export interface LocalIntegrationSetting {
   type: IntegrationType;
   provider: string;
