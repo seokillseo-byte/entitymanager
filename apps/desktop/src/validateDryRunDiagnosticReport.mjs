@@ -46,6 +46,25 @@ export function validateDryRunDiagnosticReport(input) {
         errors.push(`sourceAudit.${key} must be a string or null.`);
       }
     }
+    const includedIds = new Set(input.records.map((record) => record && typeof record.id === "string" ? record.id : ""));
+    includedIds.delete("");
+    if (includedIds.size > audit.uniqueIds) {
+      errors.push("Included distinct record IDs exceed the SQLite distinct-ID count.");
+    }
+    if (audit.complete === true) {
+      if (includedIds.size !== audit.uniqueIds) {
+        errors.push("Complete report distinct IDs do not match sourceAudit.uniqueIds.");
+      }
+      const timestamps = input.records
+        .map((record) => record && typeof record.createdAt === "string" ? record.createdAt : "")
+        .filter((value) => value !== "");
+      const oldest = timestamps.length ? [...timestamps].sort()[0] : null;
+      const sortedTimestamps = [...timestamps].sort();
+      const newest = sortedTimestamps.length ? sortedTimestamps[sortedTimestamps.length - 1] : null;
+      if (oldest !== audit.oldestCreatedAt || newest !== audit.newestCreatedAt) {
+        errors.push("Complete report timestamp bounds do not match the SQLite source audit.");
+      }
+    }
   }
 
   const expected = buildDryRunDiagnosticReport(input.records, input.exportedAt, audit);
