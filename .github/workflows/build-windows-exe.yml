@@ -45,7 +45,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Selector health unit tests
-        run: pnpm test:selector-health
+        run: pnpm test:selector-health && pnpm test:dry-run-diagnostics
 
       - name: Build Chrome extension package
         run: pnpm extension:build

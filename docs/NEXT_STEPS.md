@@ -329,3 +329,13 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Install instructions are displayed in the dashboard: extract ZIP, open `chrome://extensions`, enable Developer mode, select Load unpacked, and choose the extracted folder.
 - Verify the next Actions run builds and uploads the ZIP, then confirm the latest release has the extension asset and that the dashboard link downloads it.
 - If a new installer is needed to show this dashboard panel, wait for the same workflow to finish green before installing it.
+
+
+## Phase 1.23 — Read-only Dry-run Diagnostics Export
+
+- Add an in-app export in Selector Recipes for a JSON diagnostic report built from the dry-run history already loaded from local SQLite.
+- Include overall and per-platform totals, success/failure rates, rolling 30-day counts, original history records, and a count of missing/invalid timestamps; never fabricate timestamps or write to SQLite during export.
+- Clearly warn that exported history can include local account IDs and page URLs; users should inspect the file before sharing it.
+- Add deterministic tests for summary totals, platform grouping, rolling-window counts, invalid timestamps, and empty history. Run these tests in the Windows release workflow.
+- Validation: run both selector-health and diagnostics tests, typecheck, and Windows release build; verify the latest release still includes both EXE and ZIP assets.
+- Next: use an exported report from the packaged app to reconcile dashboard totals with SQLite; then continue to Phase 1.24 based on the findings.
