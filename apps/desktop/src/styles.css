@@ -911,3 +911,93 @@ textarea {
 .graph-root span, .graph-root small { color: #475569; }
 .evidence-form { margin: 8px 0 18px; }
 @media (max-width: 900px) { .data-table { font-size: 12px; } .data-table th, .data-table td { padding: 9px; } }
+
+
+/* Overview layout: balanced columns, compact cards, no row-spanning whitespace. */
+.overview-grid {
+  grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
+  align-items: stretch;
+  gap: 14px;
+}
+.overview-grid > .panel {
+  min-width: 0;
+  padding: 18px;
+}
+.overview-project-panel,
+.overview-grid > .panel:not(.overview-platform-panel) {
+  grid-row: auto;
+}
+.overview-project-panel .readiness {
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 18px;
+}
+.overview-project-panel .score-ring {
+  width: 128px;
+  height: 128px;
+  font-size: 28px;
+}
+.overview-project-panel .readiness-list {
+  gap: 8px;
+  min-width: 0;
+}
+.overview-project-panel .readiness-list > div {
+  min-width: 0;
+  padding: 10px 12px;
+}
+.overview-project-panel .readiness-list span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.overview-grid .panel-header {
+  margin-bottom: 14px;
+}
+.overview-grid .panel-description {
+  margin-bottom: 10px;
+}
+.overview-grid .panel-hint {
+  margin-top: 10px;
+}
+.overview-grid .extension-download-panel {
+  align-self: stretch;
+}
+.overview-grid .extension-download-action {
+  white-space: nowrap;
+}
+.overview-platform-panel {
+  grid-column: 1;
+  grid-row: auto;
+}
+.overview-platform-panel .platform-table {
+  gap: 6px;
+}
+.overview-platform-panel .platform-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(85px, .7fr) minmax(80px, .7fr) minmax(90px, .8fr);
+  gap: 9px;
+  padding: 10px;
+  font-size: 12px;
+}
+.overview-platform-panel .platform-row span {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1180px) {
+  body { min-width: 0; }
+  .app-shell { grid-template-columns: 220px minmax(0, 1fr); }
+  .workspace { padding: 20px; }
+  .overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .overview-platform-panel { grid-column: auto; }
+  .overview-project-panel .readiness { grid-template-columns: 112px minmax(0, 1fr); }
+  .overview-project-panel .score-ring { width: 108px; height: 108px; font-size: 24px; }
+}
+@media (max-width: 720px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { padding: 14px; }
+  .nav-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace { padding: 14px; }
+  .topbar { align-items: flex-start; gap: 12px; }
+  .topbar h1 { font-size: 24px; }
+  .overview-project-panel .readiness { grid-template-columns: 1fr; justify-items: start; }
+  .overview-project-panel .readiness-list span { text-align: left; }
+  .overview-platform-panel .platform-row { grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); }
+  .overview-platform-panel .platform-row em { text-align: right; }
+}
