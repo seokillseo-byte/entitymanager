@@ -46,6 +46,7 @@ fn open_latest_release_download(asset_name: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
 fn open_extension_download() -> Result<(), String> {
     const EXTENSION_DOWNLOAD_URL: &str = "https://github.com/seokillseo-byte/entitymanager/releases/latest/download/EntityManager-Chrome-Extension.zip";
 
