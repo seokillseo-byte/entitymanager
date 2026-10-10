@@ -138,7 +138,19 @@ function App() {
     void startExtensionBridge();
   }, []);
 
-  const readiness = useMemo(() => {\n    const checks = [Boolean(moneySite.domain.trim()), Boolean(moneySite.homepageUrl.trim()), Boolean(entityProfile.brandName.trim()), Boolean(entityProfile.authorName.trim()), Boolean(entityProfile.expertiseProof.trim()), Boolean(entityProfile.trustSignals.trim()), evidenceRecords.length > 0, settings.some((item) => item.isEnabled)];\n    return Math.round((checks.filter(Boolean).length / checks.length) * 100);\n  }, [moneySite, entityProfile, evidenceRecords, settings]);
+  const readiness = useMemo(() => {
+    const checks = [
+      Boolean(moneySite.domain.trim()),
+      Boolean(moneySite.homepageUrl.trim()),
+      Boolean(entityProfile.brandName.trim()),
+      Boolean(entityProfile.authorName.trim()),
+      Boolean(entityProfile.expertiseProof.trim()),
+      Boolean(entityProfile.trustSignals.trim()),
+      evidenceRecords.length > 0,
+      settings.some((item) => item.isEnabled),
+    ];
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+  }, [moneySite, entityProfile, evidenceRecords, settings]);
   const filteredPlatforms = useMemo(() => {
     return platforms.filter((platform) => {
       const typeMatches = platformTypeFilter === "all" || platform.type === platformTypeFilter;
