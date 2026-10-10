@@ -51,7 +51,7 @@ export function buildDryRunDiagnosticReport(records, exportedAt = new Date().toI
   const uniqueIds = Number.isInteger(sourceAudit?.uniqueIds) && sourceAudit.uniqueIds >= 0
     ? sourceAudit.uniqueIds
     : new Set(history.map((record) => record.id)).size;
-  const createdAtValues = history.map((record) => record.createdAt).filter((value) => typeof value === "string" && value !== "");
+  const createdAtValues = history.map((record) => record.createdAt).filter((value) => typeof value === "string");
   const sortedCreatedAt = [...createdAtValues].sort();
   const inferredOldest = sortedCreatedAt.length ? sortedCreatedAt[0] : null;
   const inferredNewest = sortedCreatedAt.length ? sortedCreatedAt[sortedCreatedAt.length - 1] : null;
