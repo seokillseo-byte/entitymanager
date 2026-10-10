@@ -801,6 +801,75 @@ function App() {
               ))}
             </section>
 
+            <section className="download-center-grid" aria-label="Tải bản mới nhất">
+                <article className="panel extension-download-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">BẢN MỚI NHẤT · CHROME EXTENSION</p>
+                      <h2>EntityManager Bridge</h2>
+                    </div>
+                    <Puzzle size={22} />
+                  </div>
+                  <p className="panel-description">
+                    {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
+                  </p>
+                  <p className="panel-hint">
+                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Cập nhật: ${new Date(latestRelease.published_at).toLocaleDateString()}` : "Phiên bản và tệp tải sẽ lấy từ bản phát hành mới nhất."}
+                  </p>
+                  <button
+                    className="primary-action extension-download-action"
+                    type="button"
+                    onClick={() => {
+                      void invoke("open_latest_release_download", { assetName: "EntityManager-Chrome-Extension.zip" }).catch((error) => setStatusMessage(`Không mở được link tải Extension: ${String(error)}`));
+                    }}
+                  >
+                    <Download size={18} />
+                    Tải Extension (.zip)
+                  </button>
+                  <p className="panel-hint">
+                    Cài đặt: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
+                  </p>
+                </article>
+  
+                <article className="panel extension-download-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">BẢN MỚI NHẤT · WINDOWS</p>
+                      <h2>EntityManager Desktop</h2>
+                    </div>
+                    <Download size={22} />
+                  </div>
+                  <p className="panel-description">
+                    {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
+                  </p>
+                  <p className="panel-hint">
+                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Tệp: ${latestRelease.assets.find((item) => item.name.endsWith("-setup.exe"))?.name ?? "đang kiểm tra"}` : "Tải bộ cài Windows từ bản phát hành mới nhất."}
+                  </p>
+                  <button
+                    className="primary-action extension-download-action"
+                    type="button"
+                    onClick={() => {
+                      void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
+                        .then((response) => response.json() as Promise<LatestRelease>)
+                        .then((release) => {
+                          const asset = release.assets.find((item) => item.name.endsWith("-setup.exe"));
+                          if (!asset) throw new Error("Bản phát hành mới nhất chưa có file cài đặt .exe");
+                          return invoke("open_latest_release_download", { assetName: asset.name });
+                        })
+                        .catch((error) => setStatusMessage(`Không mở được link tải bộ cài Windows: ${String(error)}`));
+                    }}
+                  >
+                    <Download size={18} />
+                    Tải bộ cài Windows (.exe)
+                  </button>
+                  <p className="panel-hint">
+                    Chỉ hiển thị và tải bản phát hành mới nhất; các bản cũ không được liệt kê trong Overview.{" "}
+                    <a href={latestRelease?.html_url ?? "https://github.com/seokillseo-byte/entitymanager/releases/latest"} target="_blank" rel="noreferrer">Xem ghi chú phát hành</a>
+                  </p>
+                </article>
+  
+              </section>
+
             <section className="main-grid overview-grid">
               <article className="panel overview-project-panel">
                 <div className="panel-header">
@@ -838,72 +907,6 @@ function App() {
                 </div>
               </article>
               
-              <article className="panel extension-download-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="eyebrow">BẢN MỚI NHẤT · CHROME EXTENSION</p>
-                    <h2>EntityManager Bridge</h2>
-                  </div>
-                  <Puzzle size={22} />
-                </div>
-                <p className="panel-description">
-                  {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
-                </p>
-                <p className="panel-hint">
-                  {latestRelease ? `Tag: ${latestRelease.tag_name} · Cập nhật: ${new Date(latestRelease.published_at).toLocaleDateString()}` : "Phiên bản và tệp tải sẽ lấy từ bản phát hành mới nhất."}
-                </p>
-                <button
-                  className="primary-action extension-download-action"
-                  type="button"
-                  onClick={() => {
-                    void invoke("open_latest_release_download", { assetName: "EntityManager-Chrome-Extension.zip" }).catch((error) => setStatusMessage(`Không mở được link tải Extension: ${String(error)}`));
-                  }}
-                >
-                  <Download size={18} />
-                  Tải Extension (.zip)
-                </button>
-                <p className="panel-hint">
-                  Cài đặt: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
-                </p>
-              </article>
-
-              <article className="panel extension-download-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="eyebrow">BẢN MỚI NHẤT · WINDOWS</p>
-                    <h2>EntityManager Desktop</h2>
-                  </div>
-                  <Download size={22} />
-                </div>
-                <p className="panel-description">
-                  {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
-                </p>
-                <p className="panel-hint">
-                  {latestRelease ? `Tag: ${latestRelease.tag_name} · Tệp: ${latestRelease.assets.find((item) => item.name.endsWith("-setup.exe"))?.name ?? "đang kiểm tra"}` : "Tải bộ cài Windows từ bản phát hành mới nhất."}
-                </p>
-                <button
-                  className="primary-action extension-download-action"
-                  type="button"
-                  onClick={() => {
-                    void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
-                      .then((response) => response.json() as Promise<LatestRelease>)
-                      .then((release) => {
-                        const asset = release.assets.find((item) => item.name.endsWith("-setup.exe"));
-                        if (!asset) throw new Error("Bản phát hành mới nhất chưa có file cài đặt .exe");
-                        return invoke("open_latest_release_download", { assetName: asset.name });
-                      })
-                      .catch((error) => setStatusMessage(`Không mở được link tải bộ cài Windows: ${String(error)}`));
-                  }}
-                >
-                  <Download size={18} />
-                  Tải bộ cài Windows (.exe)
-                </button>
-                <p className="panel-hint">
-                  Chỉ hiển thị và tải bản phát hành mới nhất; các bản cũ không được liệt kê trong Overview.{" "}
-                  <a href={latestRelease?.html_url ?? "https://github.com/seokillseo-byte/entitymanager/releases/latest"} target="_blank" rel="noreferrer">Xem ghi chú phát hành</a>
-                </p>
-              </article>
-
               <article className="panel">
                 <div className="panel-header">
                   <div>
