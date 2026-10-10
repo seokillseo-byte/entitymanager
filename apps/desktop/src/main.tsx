@@ -1490,6 +1490,104 @@ function App() {
           </section>
         )}
 
+        {activeModule === "Entity Care" && (
+          <section className="single-panel">
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Entity Care</p>
+                  <h2>Entity health and maintenance checklist</h2>
+                  <p className="muted-text">A practical review of saved local records. Checks indicate completeness, not external rankings or verification.</p>
+                </div>
+                <span className="badge">{[
+                  entityProfile.brandName,
+                  entityProfile.shortDescription,
+                  entityProfile.fullDescription,
+                  entityProfile.authorName,
+                  entityProfile.expertiseProof,
+                  entityProfile.trustSignals
+                ].filter((v) => v.trim()).length}/6 profile signals</span>
+              </div>
+
+              <div className="metrics-grid">
+                <article className="metric-card good">
+                  <span>Profile signals present</span>
+                  <strong>{[entityProfile.brandName, entityProfile.shortDescription, entityProfile.fullDescription, entityProfile.authorName, entityProfile.expertiseProof, entityProfile.trustSignals].filter((v) => v.trim()).length}/6</strong>
+                </article>
+                <article className="metric-card neutral">
+                  <span>Platform targets</span>
+                  <strong>{platforms.length}</strong>
+                </article>
+                <article className="metric-card good">
+                  <span>Evidence verified by you</span>
+                  <strong>{evidenceRecords.filter((v) => v.status === "verified").length}</strong>
+                </article>
+                <article className="metric-card warning">
+                  <span>Items needing review</span>
+                  <strong>{evidenceRecords.filter((v) => v.status !== "verified").length + [entityProfile.brandName, entityProfile.shortDescription, entityProfile.fullDescription, entityProfile.authorName, entityProfile.expertiseProof, entityProfile.trustSignals].filter((v) => !v.trim()).length}</strong>
+                </article>
+              </div>
+
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Maintenance checks</p>
+                  <h2>Recommended next actions</h2>
+                </div>
+              </div>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>Check</th><th>Current state</th><th>Recommendation</th><th>Action</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>Brand identity</td>
+                      <td>{entityProfile.brandName.trim() && entityProfile.shortDescription.trim() ? "Basic details present" : "Missing basic details"}</td>
+                      <td>Keep the brand name and short description consistent across profiles.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Entity Profile")}>Review profile</button></td>
+                    </tr>
+                    <tr>
+                      <td>Full description</td>
+                      <td>{entityProfile.fullDescription.trim() ? "Present" : "Missing"}</td>
+                      <td>Add a clear, factual description of the organization, service, or project.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Entity Profile")}>Complete</button></td>
+                    </tr>
+                    <tr>
+                      <td>Expertise and author</td>
+                      <td>{entityProfile.authorName.trim() && entityProfile.expertiseProof.trim() ? "Author and proof present" : "Needs attention"}</td>
+                      <td>Add an accurate author identity and first-hand work, credentials, or case-study evidence.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Entity Profile")}>Review expertise</button></td>
+                    </tr>
+                    <tr>
+                      <td>Trust signals</td>
+                      <td>{entityProfile.trustSignals.trim() ? "Present in profile" : "Missing"}</td>
+                      <td>Document appropriate ownership, contact, and trust information.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Entity Profile")}>Review trust</button></td>
+                    </tr>
+                    <tr>
+                      <td>Supporting evidence</td>
+                      <td>{evidenceRecords.length} saved / {evidenceRecords.filter((v) => v.status === "verified").length} marked verified</td>
+                      <td>Save source URLs and only mark evidence verified after you personally review it.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Evidence Bank")}>Open Evidence Bank</button></td>
+                    </tr>
+                    <tr>
+                      <td>Platform coverage</td>
+                      <td>{platforms.length} platforms / {accounts.length} account records</td>
+                      <td>Prioritize relevant platforms and track only accounts you actually control.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Platform Library")}>Review platforms</button></td>
+                    </tr>
+                    <tr>
+                      <td>Money-site consistency</td>
+                      <td>{moneySite.domain ? moneySite.domain : "No domain recorded"}</td>
+                      <td>Check that public profiles link to the correct official website and consistent brand details.</td>
+                      <td><button className="secondary-action" type="button" onClick={() => setActiveModule("Money Sites")}>Review money site</button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted-text">Entity Care uses data already stored in this desktop app. It does not crawl the web, monitor external sites in the background, or independently confirm that profile details are true.</p>
+            </article>
+          </section>
+        )}
+
         {activeModule === "EEAT Planner" && (
           <section className="single-panel"><article className="panel">
             <div className="panel-header"><div><p className="eyebrow">EEAT Planner</p><h2>Readiness from saved local records</h2></div><span className="badge">Local data</span></div>
