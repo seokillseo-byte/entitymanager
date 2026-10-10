@@ -1001,3 +1001,43 @@ textarea {
   .overview-platform-panel .platform-row { grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); }
   .overview-platform-panel .platform-row em { text-align: right; }
 }
+
+
+/* Keep both current release downloads together, visible, and equally prominent. */
+.download-center-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 14px;
+  margin: 0 0 14px;
+}
+.download-center-grid > .extension-download-panel {
+  min-width: 0;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.download-center-grid .panel-header {
+  width: 100%;
+  margin-bottom: 4px;
+}
+.download-center-grid .panel-description,
+.download-center-grid .panel-hint {
+  overflow-wrap: anywhere;
+}
+.download-center-grid .panel-description {
+  margin: 0;
+}
+.download-center-grid .panel-hint {
+  margin: 0;
+}
+.download-center-grid .extension-download-action {
+  margin-top: 4px;
+}
+@media (max-width: 720px) {
+  .download-center-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
