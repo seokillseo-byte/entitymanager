@@ -278,6 +278,19 @@ struct SelectorRecipeRecord {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct EvidenceRecord {
+    id: String,
+    title: String,
+    evidence_type: String,
+    url: String,
+    related_platform_id: String,
+    notes: String,
+    status: String,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DryRunHistoryRecord {
     id: String,
     platform_id: String,
@@ -617,6 +630,32 @@ fn save_selector_recipe(
     Ok(recipe)
 }
 
+#[tauri::command]
+fn get_evidence_records(app_handle: tauri::AppHandle) -> Result<Vec<EvidenceRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare("SELECT id, title, evidence_type, url, related_platform_id, notes, status, created_at FROM evidence_records ORDER BY created_at DESC").map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok(EvidenceRecord {
+        id: row.get(0)?, title: row.get(1)?, evidence_type: row.get(2)?, url: row.get(3)?,
+        related_platform_id: row.get(4)?, notes: row.get(5)?, status: row.get(6)?, created_at: row.get(7)?,
+    })).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_evidence_record(app_handle: tauri::AppHandle, record: EvidenceRecord) -> Result<EvidenceRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    connection.execute(
+        "INSERT INTO evidence_records (id, title, evidence_type, url, related_platform_id, notes, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET title = excluded.title, evidence_type = excluded.evidence_type,
+             url = excluded.url, related_platform_id = excluded.related_platform_id, notes = excluded.notes,
+             status = excluded.status, created_at = excluded.created_at",
+        params![record.id, record.title, record.evidence_type, record.url, record.related_platform_id, record.notes, record.status, record.created_at],
+    ).map_err(|error| error.to_string())?;
+    Ok(record)
+}
 #[tauri::command]
 fn get_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistoryRecord>, String> {
     let connection = open_database(&app_handle)?;
@@ -1551,6 +1590,17 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 required_fields TEXT NOT NULL,
                 requires_captcha_token INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS evidence_records (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                evidence_type TEXT NOT NULL,
+                url TEXT NOT NULL,
+                related_platform_id TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'needs_review',
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS dry_run_history (
@@ -2922,6 +2972,8 @@ pub fn run() {
             save_selector_recipe,
             get_dry_run_history,
             save_dry_run_history,
+            get_evidence_records,
+            save_evidence_record,
             get_entity_profile,
             save_entity_profile,
             get_accounts,
