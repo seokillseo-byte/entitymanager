@@ -1633,7 +1633,7 @@ function App() {
                       <div className="queue-row" key={item.id}>
                         <div>
                           <strong>{item.platformName}</strong>
-                          <span>{{ captcha: "CAPTCHA", manual_review: "Kiểm tra thủ công", submit_verify: "Gửi và xác minh" }[item.gateType]} / {item.payload}</span>
+                          <span>{({ captcha: "CAPTCHA", email: "Xác minh email", manual_review: "Kiểm tra thủ công", evidence: "Bổ sung bằng chứng", submit_verify: "Gửi và xác minh" } as Record<AutomationGateType, string>)[item.gateType]} / {item.payload}</span>
                           {item.gateType === "captcha" && (
                             <textarea aria-label="Nội dung CAPTCHA" rows={4} value={item.payload} onChange={(event) => updateQueueItem(item.id, { payload: event.target.value })} />
                           )}
