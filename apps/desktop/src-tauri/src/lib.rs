@@ -17,6 +17,36 @@ fn app_health() -> &'static str {
 }
 
 #[tauri::command]
+fn open_latest_release_download(asset_name: String) -> Result<(), String> {
+    let valid_name = asset_name == "EntityManager-Chrome-Extension.zip"
+        || (asset_name.starts_with("EntityManager_")
+            && asset_name.ends_with("_x64-setup.exe")
+            && !asset_name.contains('/')
+            && !asset_name.contains('\\')
+            && !asset_name.contains(".."));
+    if !valid_name {
+        return Err("Tên tệp tải không được phép.".to_string());
+    }
+    let url = format!(
+        "https://github.com/seokillseo-byte/entitymanager/releases/latest/download/{asset_name}"
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Không mở được trình duyệt để tải tệp: {error}"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Tải tệp qua nút này hiện chỉ được hỗ trợ trên Windows.".to_string())
+    }
+}
+
+#[tauri::command]
 fn open_extension_download() -> Result<(), String> {
     const EXTENSION_DOWNLOAD_URL: &str = "https://github.com/seokillseo-byte/entitymanager/releases/latest/download/EntityManager-Chrome-Extension.zip";
 
@@ -2958,6 +2988,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_health,
             open_extension_download,
+            open_latest_release_download,
             start_extension_bridge_server,
             local_config_path,
             get_money_site,

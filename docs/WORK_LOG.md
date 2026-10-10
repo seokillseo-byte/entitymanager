@@ -215,3 +215,20 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Updated the Windows GitHub Actions workflow to build `apps/extension`, package `apps/extension/dist` as `EntityManager-Chrome-Extension.zip`, upload it as an Actions artifact, and attach it to each successful desktop release.
 - Added plain-language installation steps directly beside the dashboard download link.
 - Validation is pending the next Windows Actions run; the latest-release download link will only work after a release containing the ZIP is published.
+
+
+## 2026-10-10 — Overview Latest Downloads
+
+- Updated Overview to show only two current download options: latest Chrome Extension ZIP and latest Windows installer EXE.
+- Added latest GitHub Release metadata display (release name, tag, publish date, installer filename) so the visible version follows the latest published release instead of listing old builds.
+- Added a Tauri download command with an allowlist for the Extension ZIP and EntityManager Windows setup executables.
+- Validation pending: run TypeScript checks and Windows installer workflow; verify both Overview buttons download the assets from the latest published release.
+
+
+## 2026-10-10 — Overview Visual Layout Polish
+
+- Rebalanced Overview into a responsive two-column dashboard and removed the row-spanning layout that created large blank areas beside cards.
+- Reduced the project-readiness chart size and tightened panel spacing, metadata wrapping, and platform preview rows for easier scanning.
+- Added responsive breakpoints so Overview can collapse to one column on narrower windows and use a compact sidebar/navigation layout on small screens.
+- Kept the two latest-release download cards and their download behavior intact.
+- Validation pending for the newest commits: GitHub Actions TypeScript, tests, and Windows installer build must pass before merge/release.

@@ -110,6 +110,9 @@ const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
 const accountStatuses: AccountStatus[] = ["planned", "created", "needs_manual_review", "failed", "verified"];
 const queueStatuses: AutomationQueueStatus[] = ["queued", "waiting", "resolved", "failed"];
 
+type ReleaseAsset = { name: string; browser_download_url: string; size: number };
+type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
@@ -132,10 +135,29 @@ function App() {
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
   const [platformViewMode, setPlatformViewMode] = useState<PlatformViewMode>("compact");
   const [statusMessage, setStatusMessage] = useState("SQLite local data ready");
+  const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null);
 
   useEffect(() => {
     void loadLocalData();
     void startExtensionBridge();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+        return response.json() as Promise<LatestRelease>;
+      })
+      .then((release) => {
+        if (!cancelled) setLatestRelease(release);
+      })
+      .catch(() => {
+        if (!cancelled) setLatestRelease(null);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const readiness = useMemo(() => {
@@ -779,8 +801,77 @@ function App() {
               ))}
             </section>
 
-            <section className="main-grid">
-              <article className="panel wide">
+            <section className="download-center-grid" aria-label="Tải bản mới nhất">
+                <article className="panel extension-download-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">BẢN MỚI NHẤT · CHROME EXTENSION</p>
+                      <h2>EntityManager Bridge</h2>
+                    </div>
+                    <Puzzle size={22} />
+                  </div>
+                  <p className="panel-description">
+                    {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
+                  </p>
+                  <p className="panel-hint">
+                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Cập nhật: ${new Date(latestRelease.published_at).toLocaleDateString()}` : "Phiên bản và tệp tải sẽ lấy từ bản phát hành mới nhất."}
+                  </p>
+                  <button
+                    className="primary-action extension-download-action"
+                    type="button"
+                    onClick={() => {
+                      void invoke("open_latest_release_download", { assetName: "EntityManager-Chrome-Extension.zip" }).catch((error) => setStatusMessage(`Không mở được link tải Extension: ${String(error)}`));
+                    }}
+                  >
+                    <Download size={18} />
+                    Tải Extension (.zip)
+                  </button>
+                  <p className="panel-hint">
+                    Cài đặt: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
+                  </p>
+                </article>
+  
+                <article className="panel extension-download-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">BẢN MỚI NHẤT · WINDOWS</p>
+                      <h2>EntityManager Desktop</h2>
+                    </div>
+                    <Download size={22} />
+                  </div>
+                  <p className="panel-description">
+                    {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
+                  </p>
+                  <p className="panel-hint">
+                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Tệp: ${latestRelease.assets.find((item) => item.name.endsWith("-setup.exe"))?.name ?? "đang kiểm tra"}` : "Tải bộ cài Windows từ bản phát hành mới nhất."}
+                  </p>
+                  <button
+                    className="primary-action extension-download-action"
+                    type="button"
+                    onClick={() => {
+                      void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
+                        .then((response) => response.json() as Promise<LatestRelease>)
+                        .then((release) => {
+                          const asset = release.assets.find((item) => item.name.endsWith("-setup.exe"));
+                          if (!asset) throw new Error("Bản phát hành mới nhất chưa có file cài đặt .exe");
+                          return invoke("open_latest_release_download", { assetName: asset.name });
+                        })
+                        .catch((error) => setStatusMessage(`Không mở được link tải bộ cài Windows: ${String(error)}`));
+                    }}
+                  >
+                    <Download size={18} />
+                    Tải bộ cài Windows (.exe)
+                  </button>
+                  <p className="panel-hint">
+                    Chỉ hiển thị và tải bản phát hành mới nhất; các bản cũ không được liệt kê trong Overview.{" "}
+                    <a href={latestRelease?.html_url ?? "https://github.com/seokillseo-byte/entitymanager/releases/latest"} target="_blank" rel="noreferrer">Xem ghi chú phát hành</a>
+                  </p>
+                </article>
+  
+              </section>
+
+            <section className="main-grid overview-grid">
+              <article className="panel overview-project-panel">
                 <div className="panel-header">
                   <div>
                     <p className="eyebrow">{demoProjectSeed.projectName}</p>
@@ -816,34 +907,6 @@ function App() {
                 </div>
               </article>
               
-              <article className="panel extension-download-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="eyebrow">Chrome Extension</p>
-                    <h2>EntityManager Bridge</h2>
-                  </div>
-                  <Puzzle size={22} />
-                </div>
-                <p className="panel-description">
-                  Tải tiện ích Chrome tại đây bất cứ lúc nào. Dùng tiện ích để kết nối Chrome với ứng dụng EntityManager đang mở.
-                </p>
-                <button
-                  className="primary-action extension-download-action"
-                  type="button"
-                  onClick={() => {
-                    void invoke("open_extension_download").catch((error) => {
-                      setStatusMessage(`Không mở được link tải extension: ${String(error)}`);
-                    });
-                  }}
-                >
-                  <Download size={18} />
-                  Tải Chrome Extension (.zip)
-                </button>
-                <p className="panel-hint">
-                  Sau khi tải: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
-                </p>
-              </article>
-
               <article className="panel">
                 <div className="panel-header">
                   <div>
@@ -858,7 +921,7 @@ function App() {
                 </div>
               </article>
 
-              <article className="panel wide">
+              <article className="panel overview-platform-panel">
                 <div className="panel-header">
                   <div>
                     <p className="eyebrow">Platform Library Seed</p>
