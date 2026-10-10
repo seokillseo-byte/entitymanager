@@ -138,7 +138,7 @@ function App() {
     void startExtensionBridge();
   }, []);
 
-  const readiness = useMemo(() => calculateEntityReadiness(demoProjectSeed.readinessInput), []);
+  const readiness = useMemo(() => {\n    const checks = [Boolean(moneySite.domain.trim()), Boolean(moneySite.homepageUrl.trim()), Boolean(entityProfile.brandName.trim()), Boolean(entityProfile.authorName.trim()), Boolean(entityProfile.expertiseProof.trim()), Boolean(entityProfile.trustSignals.trim()), evidenceRecords.length > 0, settings.some((item) => item.isEnabled)];\n    return Math.round((checks.filter(Boolean).length / checks.length) * 100);\n  }, [moneySite, entityProfile, evidenceRecords, settings]);
   const filteredPlatforms = useMemo(() => {
     return platforms.filter((platform) => {
       const typeMatches = platformTypeFilter === "all" || platform.type === platformTypeFilter;
@@ -762,7 +762,7 @@ function App() {
               {metrics.map((metric) => (
                 <article className={`metric-card ${metric.tone}`} key={metric.label}>
                   <span>{metric.label}</span>
-                  <strong>{metric.label === "Entity Readiness" ? `${readiness}%` : metric.value}</strong>
+                  <strong>{metric.label === "Entity Readiness" ? `${readiness}%` : metric.label === "Live Profiles" ? accounts.filter((account) => account.status === "created" || account.status === "verified").length : metric.label === "Care Plans" ? workflowRuns.length : metric.label === "Waiting Manual" ? automationQueue.filter((item) => item.status === "waiting").length : metric.value}</strong>
                 </article>
               ))}
             </section>
