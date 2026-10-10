@@ -801,8 +801,8 @@ function App() {
               ))}
             </section>
 
-            <section className="main-grid">
-              <article className="panel wide">
+            <section className="main-grid overview-grid">
+              <article className="panel overview-project-panel">
                 <div className="panel-header">
                   <div>
                     <p className="eyebrow">{demoProjectSeed.projectName}</p>
@@ -918,7 +918,7 @@ function App() {
                 </div>
               </article>
 
-              <article className="panel wide">
+              <article className="panel overview-platform-panel">
                 <div className="panel-header">
                   <div>
                     <p className="eyebrow">Platform Library Seed</p>
