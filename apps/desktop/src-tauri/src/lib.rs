@@ -708,6 +708,26 @@ fn get_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistory
 }
 
 #[tauri::command]
+fn save_json_export(filename: String, contents: String) -> Result<String, String> {
+    if filename.is_empty()
+        || !filename.ends_with(".json")
+        || !filename.chars().all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_' || character == '.')
+        || filename.contains("..")
+    {
+        return Err("Invalid export filename".to_string());
+    }
+
+    let profile = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "Could not locate the user profile directory".to_string())?;
+    let downloads = std::path::PathBuf::from(profile).join("Downloads");
+    std::fs::create_dir_all(&downloads).map_err(|error| format!("Could not access Downloads folder: {error}"))?;
+    let destination = downloads.join(filename);
+    std::fs::write(&destination, contents.as_bytes()).map_err(|error| format!("Could not write export file: {error}"))?;
+    Ok(destination.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn get_all_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistoryRecord>, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -3049,6 +3069,7 @@ pub fn run() {
             save_selector_recipe,
             get_dry_run_history,
             get_all_dry_run_history,
+            save_json_export,
             get_dry_run_history_audit,
             save_dry_run_history,
             get_evidence_records,
