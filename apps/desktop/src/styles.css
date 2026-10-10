@@ -1149,3 +1149,83 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Vietnamese-first Entity Builder onboarding and saved-account overview */
+.entity-builder-vn {
+  gap: 16px;
+}
+.entity-builder-vn .builder-guide {
+  border-top: 4px solid #0f766e;
+}
+.entity-builder-vn .builder-guide-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 24px;
+  color: #334155;
+  line-height: 1.65;
+}
+.entity-builder-vn .builder-guide-steps li {
+  padding-left: 4px;
+}
+.entity-builder-vn .builder-guide .muted-text,
+.entity-builder-vn .saved-account-panel .muted-text {
+  line-height: 1.55;
+}
+.entity-builder-vn .empty-state {
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 18px;
+  background: #f8fafc;
+  color: #334155;
+}
+.entity-builder-vn .empty-state strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #0f172a;
+}
+.entity-builder-vn .empty-state p {
+  margin: 0;
+  line-height: 1.6;
+}
+.entity-builder-vn .saved-account-list {
+  display: grid;
+  gap: 10px;
+}
+.entity-builder-vn .saved-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.8fr);
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.entity-builder-vn .saved-account-row > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.entity-builder-vn .saved-account-row strong {
+  color: #0f172a;
+}
+.entity-builder-vn .saved-account-row span,
+.entity-builder-vn .saved-account-row a {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.entity-builder-vn .saved-account-row a {
+  color: #0f766e;
+  font-weight: 700;
+}
+.entity-builder-vn .account-plan-card .secondary-action {
+  width: 100%;
+  min-height: 42px;
+}
+@media (max-width: 900px) {
+  .entity-builder-vn .saved-account-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
