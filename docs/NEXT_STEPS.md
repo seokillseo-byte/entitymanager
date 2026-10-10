@@ -339,3 +339,13 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Add deterministic tests for summary totals, platform grouping, rolling-window counts, invalid timestamps, and empty history. Run these tests in the Windows release workflow.
 - Validation: run both selector-health and diagnostics tests, typecheck, and Windows release build; verify the latest release still includes both EXE and ZIP assets.
 - Next: use an exported report from the packaged app to reconcile dashboard totals with SQLite; then continue to Phase 1.24 based on the findings.
+
+
+## Phase 1.24 — Diagnostic Report Integrity & Reconciliation Aid
+
+- Add a read-only in-app verifier for exported dry-run diagnostic JSON.
+- Validate schema/version, export timestamp, record array, overall totals, success rate, 30-day counts, invalid timestamp count, and per-platform summaries against included raw records.
+- Keep verification separate from SQLite writes and explicitly explain that internal consistency does not prove the export includes every database row.
+- Add deterministic tests for valid reports, edited totals, edited platform summaries, malformed JSON/schema, empty history, and invalid record timestamps.
+- Require this test in Windows PR verification; publish only after all required checks pass and the release contains both EXE and Extension ZIP.
+- Next: export diagnostics from the packaged Windows app and compare the included record IDs/counts with the app's visible history; inspect any mismatch before changing analytics rules.

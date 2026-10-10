@@ -242,3 +242,12 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added deterministic tests for aggregate counts, platform summaries, recent-window handling, malformed timestamps, and empty history.
 - Added the diagnostics test command to the Windows release workflow so the new logic is checked before packaging and publishing.
 - Validation pending: run diagnostics and selector-health tests, typecheck, Windows installer workflow, and verify both release assets are present.
+
+
+## 2026-10-10 — Phase 1.24 Diagnostic Report Integrity Validation
+
+- Added a read-only verifier for exported diagnostic JSON in Selector Recipes.
+- It checks schema/version, export timestamp, required fields, overall and 30-day totals, success rate, invalid timestamp count, and per-platform totals against the report's included records.
+- Added explicit wording that an internally consistent report does not prove the export contains every row from local SQLite; verification never imports records or writes to the database.
+- Added deterministic tests for valid reports, tampered overall/platform totals, malformed schema, empty history, and invalid record timestamps; wired the test command into Windows CI.
+- Validation pending: wait for all Windows PR checks, inspect failures if any, then verify the official release contains both EXE and Extension ZIP.

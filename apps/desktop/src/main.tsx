@@ -9,6 +9,7 @@ import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@en
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
 import { buildDryRunDiagnosticReport } from "./dryRunDiagnostics.mjs";
+import { validateDryRunDiagnosticReport } from "./validateDryRunDiagnosticReport.mjs";
 import "./styles.css";
 
 const modules: EntityModule[] = [
@@ -125,6 +126,8 @@ function App() {
   const [evidenceDraft, setEvidenceDraft] = useState<Omit<EvidenceRecord, "id" | "createdAt">>({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" });
   const [recipeImportJson, setRecipeImportJson] = useState("");
   const [recipeImportMessage, setRecipeImportMessage] = useState("");
+  const [diagnosticImportJson, setDiagnosticImportJson] = useState("");
+  const [diagnosticValidation, setDiagnosticValidation] = useState<{ valid: boolean; errors: string[]; checkedRecords: number } | null>(null);
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
@@ -363,6 +366,21 @@ function App() {
     anchor.click();
     URL.revokeObjectURL(url);
     setStatusMessage(`Exported read-only diagnostics for ${dryRunHistory.length} dry-run records`);
+  }
+
+  function validateImportedDryRunDiagnostics() {
+    try {
+      const report: unknown = JSON.parse(diagnosticImportJson);
+      const result = validateDryRunDiagnosticReport(report);
+      setDiagnosticValidation(result);
+      setStatusMessage(result.valid
+        ? `Diagnostic report verified: ${result.checkedRecords} records, totals consistent.`
+        : `Diagnostic report needs review: ${result.errors.length} issue(s) found.`);
+    } catch {
+      const result = { valid: false, errors: ["The pasted content is not valid JSON."], checkedRecords: 0 };
+      setDiagnosticValidation(result);
+      setStatusMessage("Diagnostic report could not be parsed as JSON.");
+    }
   }
 
   async function refreshDryRunHistory() {
@@ -1151,6 +1169,18 @@ function App() {
                 <button className="primary-action" type="button" onClick={() => void importSelectorRecipes()}>Import JSON to SQLite</button>
                 {recipeImportMessage && <p className="muted-text">{recipeImportMessage}</p>}
               </div>
+              <div className="panel-header"><div><p className="eyebrow">Diagnostic Report Integrity</p><h2>Verify exported dry-run JSON</h2></div><span className="badge">Read-only</span></div>
+              <p className="muted-text">Dán nội dung tệp entitymanager-dry-run-diagnostics.json để kiểm tra cấu trúc và tính nhất quán của tổng số liệu với các bản ghi bên trong. Công cụ chỉ kiểm tra tệp được dán, không ghi vào SQLite và không thể xác minh tệp có chứa toàn bộ lịch sử trên máy hay không.</p>
+              <div className="form-grid">
+                <label className="full-span">Diagnostic JSON<textarea rows={6} value={diagnosticImportJson} onChange={(event) => { setDiagnosticImportJson(event.target.value); setDiagnosticValidation(null); }} placeholder="Paste diagnostic JSON export here..." /></label>
+                <button className="primary-action" type="button" disabled={!diagnosticImportJson.trim()} onClick={validateImportedDryRunDiagnostics}>Verify report integrity</button>
+              </div>
+              {diagnosticValidation && <div className={`status-message ${diagnosticValidation.valid ? "success" : "warning"}`} role="status">
+                <strong>{diagnosticValidation.valid ? "Report structure and totals are consistent" : "Report validation found issues"}</strong>
+                <span>{diagnosticValidation.checkedRecords} record(s) checked.</span>
+                {diagnosticValidation.errors.map((error, index) => <span key={index}>{error}</span>)}
+                {diagnosticValidation.valid && <span>This confirms internal consistency only; it does not prove the export includes every row in local SQLite.</span>}
+              </div>}
               <div className="panel-header"><div><p className="eyebrow">Selector Failure Analytics</p><h2>Failures by platform</h2></div><span className="badge">{dryRunHistory.filter((item) => item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0).length} failed previews</span></div>
               <div className="queue-list">
                 {selectorFailureAnalytics.map((item) => (

@@ -15,7 +15,8 @@
     "db:push": "pnpm --filter @entitymanager/database db:push",
     "db:seed": "pnpm --filter @entitymanager/database db:seed",
     "test:selector-health": "node --test apps/desktop/src/selectorHealth.test.mjs",
-    "test:dry-run-diagnostics": "node --test apps/desktop/src/dryRunDiagnostics.test.mjs"
+    "test:dry-run-diagnostics": "node --test apps/desktop/src/dryRunDiagnostics.test.mjs",
+    "test:diagnostic-report-validation": "node --test apps/desktop/src/validateDryRunDiagnosticReport.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
