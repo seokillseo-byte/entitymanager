@@ -57,7 +57,7 @@ export function validateDryRunDiagnosticReport(input) {
       }
       const timestamps = input.records
         .map((record) => record && typeof record.createdAt === "string" ? record.createdAt : "")
-        .filter((value) => value !== "");
+        .filter((value) => typeof value === "string");
       const oldest = timestamps.length ? [...timestamps].sort()[0] : null;
       const sortedTimestamps = [...timestamps].sort();
       const newest = sortedTimestamps.length ? sortedTimestamps[sortedTimestamps.length - 1] : null;
