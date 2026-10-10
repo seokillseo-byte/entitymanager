@@ -8,6 +8,8 @@ Important product target clarified: EntityManager must be a Windows PC desktop t
 
 ## Immediate Next Recommended Step
 
+Phase 1.26 is in progress: reconcile the complete dry-run history with local SQLite, ensure diagnostic export reads every row (not just the newest 100), and keep the operation read-only. After Windows checks and both official release assets are verified, continue to the next phase: review real dry-run outcomes and improve platform selector recipes only from observed evidence.
+
 Continue Phase 1: verify and harden the desktop application foundation.
 
 Recommended next work:
