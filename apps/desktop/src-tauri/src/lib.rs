@@ -708,6 +708,31 @@ fn get_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistory
 }
 
 #[tauri::command]
+fn get_dry_run_history_audit(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let total_records: i64 = connection
+        .query_row("SELECT COUNT(*) FROM dry_run_history", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    let unique_ids: i64 = connection
+        .query_row("SELECT COUNT(DISTINCT id) FROM dry_run_history", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    let oldest_created_at: Option<String> = connection
+        .query_row("SELECT MIN(created_at) FROM dry_run_history", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    let newest_created_at: Option<String> = connection
+        .query_row("SELECT MAX(created_at) FROM dry_run_history", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+
+    Ok(json!({
+        "totalRecords": total_records,
+        "uniqueIds": unique_ids,
+        "oldestCreatedAt": oldest_created_at,
+        "newestCreatedAt": newest_created_at
+    }))
+}
+
+#[tauri::command]
 fn save_dry_run_history(app_handle: tauri::AppHandle, record: DryRunHistoryRecord) -> Result<DryRunHistoryRecord, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -3002,6 +3027,7 @@ pub fn run() {
             get_selector_recipes,
             save_selector_recipe,
             get_dry_run_history,
+            get_dry_run_history_audit,
             save_dry_run_history,
             get_evidence_records,
             save_evidence_record,
