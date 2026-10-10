@@ -896,3 +896,18 @@ textarea {
 .platform-library-table .table-save-button {
   padding: 8px 10px;
 }
+
+
+/* Data-backed planner, graph, evidence and reporting modules. */
+.data-table-wrap { width: 100%; overflow-x: auto; border: 1px solid #dbe4ee; border-radius: 9px; background: #fff; margin-top: 14px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.data-table th { padding: 11px 12px; background: #f1f5f9; color: #334155; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+.data-table td { padding: 11px 12px; border-top: 1px solid #e2e8f0; vertical-align: top; min-width: 100px; }
+.data-table tbody tr:hover { background: #f8fafc; }
+.data-table td small { display: block; color: #64748b; margin-top: 4px; max-width: 340px; overflow-wrap: anywhere; }
+.data-table a { color: #2563eb; overflow-wrap: anywhere; }
+.graph-root { display: grid; gap: 5px; justify-items: center; max-width: 420px; margin: 10px auto 18px; padding: 18px; border: 1px solid #99f6e4; border-radius: 12px; background: #f0fdfa; text-align: center; }
+.graph-root strong { font-size: 18px; color: #115e59; }
+.graph-root span, .graph-root small { color: #475569; }
+.evidence-form { margin: 8px 0 18px; }
+@media (max-width: 900px) { .data-table { font-size: 12px; } .data-table th, .data-table td { padding: 9px; } }
