@@ -2,7 +2,7 @@ import { isSuccessfulDryRun, normalizeDryRunHistoryRecord, parseTimestamp } from
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function buildDryRunDiagnosticReport(records, exportedAt = new Date().toISOString()) {
+export function buildDryRunDiagnosticReport(records, exportedAt = new Date().toISOString(), sourceAudit = null) {
   const source = Array.isArray(records) ? records : [];
   const history = source.map((record, index) => normalizeDryRunHistoryRecord(record, index));
   const now = parseTimestamp(exportedAt);
@@ -45,12 +45,27 @@ export function buildDryRunDiagnosticReport(records, exportedAt = new Date().toI
     byPlatform.set(run.platformId, entry);
   }
 
+  const sourceTotal = Number.isInteger(sourceAudit?.totalRecords) && sourceAudit.totalRecords >= 0
+    ? sourceAudit.totalRecords
+    : history.length;
+  const uniqueIds = Number.isInteger(sourceAudit?.uniqueIds) && sourceAudit.uniqueIds >= 0
+    ? sourceAudit.uniqueIds
+    : new Set(history.map((record) => record.id)).size;
+
   return {
     schemaVersion: 1,
     reportType: "entitymanager-dry-run-diagnostics",
     exportedAt,
     readOnly: true,
     source: "local SQLite dry-run history loaded by Desktop",
+    sourceAudit: {
+      totalRecords: sourceTotal,
+      uniqueIds,
+      oldestCreatedAt: typeof sourceAudit?.oldestCreatedAt === "string" ? sourceAudit.oldestCreatedAt : null,
+      newestCreatedAt: typeof sourceAudit?.newestCreatedAt === "string" ? sourceAudit.newestCreatedAt : null,
+      includedRecords: history.length,
+      complete: sourceTotal === history.length
+    },
     summary: {
       totalRecords: history.length,
       successes,
