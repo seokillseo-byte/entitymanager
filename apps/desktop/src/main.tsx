@@ -369,7 +369,7 @@ function App() {
       const uniqueIds = new Set(records.map((record) => record.id)).size;
       const createdAtValues = records.map((record) => record.createdAt).filter((value) => typeof value === "string");
       const oldestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[0] : null;
-      const newestCreatedAt = createdAtValues.length ? [...createdAtValues].sort().at(-1) ?? null : null;
+      const newestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[createdAtValues.length - 1] ?? null : null;
       if (records.length !== audit.totalRecords || uniqueIds !== audit.uniqueIds || oldestCreatedAt !== audit.oldestCreatedAt || newestCreatedAt !== audit.newestCreatedAt) {
         setStatusMessage("Không xuất báo cáo: lịch sử tải về không khớp hoàn toàn với kiểm kê SQLite. Hãy thử Refresh & reconcile rồi xuất lại.");
         return;
