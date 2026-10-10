@@ -77,6 +77,7 @@ interface IntegrationSettingForm {
 type PlatformTypeFilter = "all" | PlatformType;
 type AutomationModeFilter = "all" | AutomationMode;
 type DifficultyFilter = "all" | PlatformDifficulty;
+type PlatformViewMode = "compact" | "table";
 
 const fallbackMoneySite: MoneySiteForm = {
   domain: demoProjectSeed.moneySite.domain,
@@ -126,6 +127,7 @@ function App() {
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
+  const [platformViewMode, setPlatformViewMode] = useState<PlatformViewMode>("compact");
   const [statusMessage, setStatusMessage] = useState("SQLite local data ready");
 
   useEffect(() => {
@@ -922,57 +924,119 @@ function App() {
                 </label>
               </div>
 
-              <div className="platform-library">
-                {filteredPlatforms.map((platform) => (
-                  <article className="platform-card" key={platform.id}>
-                    <div className="platform-card-header">
-                      <div>
-                        <p className="eyebrow">{platform.type} / {platform.entityValue}</p>
-                        <h2>{platform.name}</h2>
-                        <a href={platform.homepageUrl}>{platform.homepageUrl}</a>
-                      </div>
-                      <div className="authority-score">
-                        <span>Authority</span>
-                        <strong>{platform.authorityScore}</strong>
-                      </div>
-                    </div>
-
-                    <p className="platform-notes">{platform.notes}</p>
-
-                    <div className="platform-meta">
-                      <span>{platform.difficulty}</span>
-                      <span>{platform.automationMode.replace("_", " ")}</span>
-                      <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
-                      <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
-                    </div>
-
-                    <div className="platform-edit-grid">
-                      <label>
-                        Authority
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={platform.authorityScore}
-                          onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })}
-                        />
-                      </label>
-                      <label>
-                        Automation
-                        <select
-                          value={platform.automationMode}
-                          onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}
-                        >
-                          <option value="auto">auto</option>
-                          <option value="semi_auto">semi auto</option>
-                          <option value="manual_review">manual review</option>
-                        </select>
-                      </label>
-                      <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save Platform</button>
-                    </div>
-                  </article>
-                ))}
+              <div className="platform-view-toolbar">
+                <span className="muted-text">View mode</span>
+                <div className="view-mode-switch" role="group" aria-label="Platform view mode">
+                  <button
+                    className={platformViewMode === "compact" ? "secondary-action active-view" : "secondary-action"}
+                    type="button"
+                    aria-pressed={platformViewMode === "compact"}
+                    onClick={() => setPlatformViewMode("compact")}
+                  >Compact cards</button>
+                  <button
+                    className={platformViewMode === "table" ? "secondary-action active-view" : "secondary-action"}
+                    type="button"
+                    aria-pressed={platformViewMode === "table"}
+                    onClick={() => setPlatformViewMode("table")}
+                  >Table</button>
+                </div>
               </div>
+
+              {platformViewMode === "compact" ? (
+                <div className="platform-library platform-library-compact">
+                  {filteredPlatforms.map((platform) => (
+                    <article className="platform-card platform-card-compact" key={platform.id}>
+                      <div className="platform-card-header">
+                        <div className="platform-card-title">
+                          <p className="eyebrow">{platform.type} / {platform.entityValue}</p>
+                          <h2>{platform.name}</h2>
+                          <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
+                        </div>
+                        <div className="authority-score authority-score-compact">
+                          <span>Authority</span>
+                          <strong>{platform.authorityScore}</strong>
+                        </div>
+                      </div>
+                      <p className="platform-notes platform-notes-compact">{platform.notes}</p>
+                      <div className="platform-meta platform-meta-compact">
+                        <span>{platform.difficulty}</span>
+                        <span>{platform.automationMode.replace("_", " ")}</span>
+                        <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                        <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
+                      </div>
+                      <div className="platform-edit-grid platform-edit-grid-compact">
+                        <label>
+                          Authority
+                          <input type="number" min="0" max="100" value={platform.authorityScore}
+                            onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
+                        </label>
+                        <label>
+                          Automation
+                          <select value={platform.automationMode}
+                            onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
+                            <option value="auto">auto</option>
+                            <option value="semi_auto">semi auto</option>
+                            <option value="manual_review">manual review</option>
+                          </select>
+                        </label>
+                        <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save</button>
+                      </div>
+                    </article>
+                  ))}
+                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
+                </div>
+              ) : (
+                <div className="platform-table-wrap">
+                  <table className="platform-library-table">
+                    <thead>
+                      <tr>
+                        <th>Platform</th>
+                        <th>Type / value</th>
+                        <th>Authority</th>
+                        <th>Difficulty</th>
+                        <th>Automation</th>
+                        <th>Requirements</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPlatforms.map((platform) => (
+                        <tr key={platform.id}>
+                          <td className="platform-table-name">
+                            <strong>{platform.name}</strong>
+                            <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
+                            <span>{platform.notes}</span>
+                          </td>
+                          <td>{platform.type}<span className="table-subtext">{platform.entityValue}</span></td>
+                          <td>
+                            <label className="table-field-label" aria-label={platform.name + " authority score"}>
+                              <input type="number" min="0" max="100" value={platform.authorityScore}
+                                onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
+                            </label>
+                          </td>
+                          <td><span className={"difficulty-pill difficulty-" + platform.difficulty}>{platform.difficulty}</span></td>
+                          <td>
+                            <select aria-label={platform.name + " automation mode"} value={platform.automationMode}
+                              onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
+                              <option value="auto">auto</option>
+                              <option value="semi_auto">semi auto</option>
+                              <option value="manual_review">manual review</option>
+                            </select>
+                          </td>
+                          <td>
+                            <div className="table-requirements">
+                              <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                              <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
+                            </div>
+                          </td>
+                          <td><button className="secondary-action table-save-button" type="button" onClick={() => savePlatform(platform)}>Save</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
+                </div>
+              )}
             </article>
           </section>
         )}
