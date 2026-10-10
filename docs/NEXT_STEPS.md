@@ -349,3 +349,14 @@ At the end of every coding session, update this file and `docs/WORK_LOG.md`.
 - Add deterministic tests for valid reports, edited totals, edited platform summaries, malformed JSON/schema, empty history, and invalid record timestamps.
 - Require this test in Windows PR verification; publish only after all required checks pass and the release contains both EXE and Extension ZIP.
 - Next: export diagnostics from the packaged Windows app and compare the included record IDs/counts with the app's visible history; inspect any mismatch before changing analytics rules.
+
+
+## Phase 1.25 — SQLite-to-Diagnostics Reconciliation
+
+- Add a read-only Tauri command that queries the actual SQLite dry-run history row count, distinct IDs, oldest timestamp, and newest timestamp independently of the UI's recent-history query.
+- Display loaded-history count versus database count in Selector Recipes, and refresh both together.
+- Include source audit metadata in exported diagnostics so reports state how many SQLite rows existed and whether all rows were included.
+- Validate source counts, included-record count, distinct-ID bounds, timestamp metadata, and the complete/partial flag; keep report verification read-only.
+- Keep the recent-history UI limit explicit: the current view loads up to 100 newest records. If SQLite has more, export must say it is partial instead of implying it covers the entire database.
+- Run diagnostic export and validator tests, typecheck, and Windows installer build. Confirm both latest release assets remain present before distributing.
+- Next: inspect real exported diagnostics from the installed Windows app and compare the source counts with its visible history; only consider removing or paginating the 100-record cap after assessing actual local usage.

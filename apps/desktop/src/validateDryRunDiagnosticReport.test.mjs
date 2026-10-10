@@ -11,7 +11,7 @@ const history = [
 
 test("accepts a consistent diagnostic report", () => {
   const report = buildDryRunDiagnosticReport(history, "2026-10-10T12:00:00.000Z");
-  assert.deepEqual(validateDryRunDiagnosticReport(report), { valid: true, errors: [], checkedRecords: 3 });
+  assert.deepEqual(validateDryRunDiagnosticReport(report), { valid: true, errors: [], checkedRecords: 3, complete: true });
 });
 
 test("detects edited overall totals", () => {
@@ -45,4 +45,22 @@ test("validates reports with empty history and invalid record timestamps", () =>
   assert.equal(validateDryRunDiagnosticReport(report).valid, true);
   const empty = buildDryRunDiagnosticReport([], "2026-10-10T12:00:00.000Z");
   assert.equal(validateDryRunDiagnosticReport(empty).valid, true);
+});
+
+
+test("accepts a consistent but explicitly partial export and detects altered source counts", () => {
+  const report = buildDryRunDiagnosticReport(history, "2026-10-10T12:00:00.000Z", {
+    totalRecords: 125,
+    uniqueIds: 125,
+    oldestCreatedAt: "2026-01-01T00:00:00.000Z",
+    newestCreatedAt: "2026-10-10T11:00:00.000Z"
+  });
+  const result = validateDryRunDiagnosticReport(report);
+  assert.equal(result.valid, true);
+  assert.equal(result.complete, false);
+
+  report.sourceAudit.totalRecords = 2;
+  const tampered = validateDryRunDiagnosticReport(report);
+  assert.equal(tampered.valid, false);
+  assert.ok(tampered.errors.some((error) => error.includes("sourceAudit.totalRecords")));
 });

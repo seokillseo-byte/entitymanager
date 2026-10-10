@@ -1,9 +1,19 @@
+export interface DryRunDiagnosticSourceAudit {
+  totalRecords: number;
+  uniqueIds: number;
+  oldestCreatedAt: string | null;
+  newestCreatedAt: string | null;
+  includedRecords: number;
+  complete: boolean;
+}
+
 export interface DryRunDiagnosticReport {
   schemaVersion: 1;
   reportType: "entitymanager-dry-run-diagnostics";
   exportedAt: string;
   readOnly: true;
   source: string;
+  sourceAudit: DryRunDiagnosticSourceAudit;
   summary: {
     totalRecords: number;
     successes: number;
@@ -26,5 +36,11 @@ export interface DryRunDiagnosticReport {
 
 export function buildDryRunDiagnosticReport(
   records: unknown[],
-  exportedAt?: string
+  exportedAt?: string,
+  sourceAudit?: {
+    totalRecords: number;
+    uniqueIds: number;
+    oldestCreatedAt: string | null;
+    newestCreatedAt: string | null;
+  } | null
 ): DryRunDiagnosticReport;
