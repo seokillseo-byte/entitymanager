@@ -17,7 +17,6 @@ fn app_health() -> &'static str {
 }
 
 #[tauri::command]
-#[tauri::command]
 fn open_latest_release_download(asset_name: String) -> Result<(), String> {
     let valid_name = asset_name == "EntityManager-Chrome-Extension.zip"
         || (asset_name.starts_with("EntityManager_")
