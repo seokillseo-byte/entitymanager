@@ -16,7 +16,7 @@ This is the Phase 1.13 MVP bridge between the EntityManager desktop app and brow
 
 Manual JSON paste is still supported as a fallback for debugging.
 
-Use `Dry-run Preview` before `Submit/Verify Tab` to inspect which fields would be filled, which selector would be clicked, and which safety checks are missing. Dry-run does not fill fields and does not click submit.
+Use `Chạy thử Selector Recipe` trước khi thực hiện bất kỳ thao tác nào. Chức năng này lấy cấu hình chạy thử riêng từ Desktop, không phụ thuộc hàng đợi CAPTCHA/Submit-Verify. Nó chỉ đọc các trường trên tab đang mở, không điền dữ liệu và không nhấn nút gửi. Kết quả được ghi vào SQLite qua endpoint lịch sử chạy thử.
 
 ## Form fill and safety checks
 
