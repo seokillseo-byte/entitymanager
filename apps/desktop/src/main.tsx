@@ -114,6 +114,7 @@ const queueStatuses: AutomationQueueStatus[] = ["queued", "waiting", "resolved",
 
 type ReleaseAsset = { name: string; browser_download_url: string; size: number };
 type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
+type DryRunHistoryAudit = { totalRecords: number; uniqueIds: number; oldestCreatedAt: string | null; newestCreatedAt: string | null };
 
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
@@ -122,12 +123,13 @@ function App() {
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
   const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
+  const [dryRunSourceAudit, setDryRunSourceAudit] = useState<DryRunHistoryAudit | null>(null);
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
   const [evidenceDraft, setEvidenceDraft] = useState<Omit<EvidenceRecord, "id" | "createdAt">>({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" });
   const [recipeImportJson, setRecipeImportJson] = useState("");
   const [recipeImportMessage, setRecipeImportMessage] = useState("");
   const [diagnosticImportJson, setDiagnosticImportJson] = useState("");
-  const [diagnosticValidation, setDiagnosticValidation] = useState<{ valid: boolean; errors: string[]; checkedRecords: number } | null>(null);
+  const [diagnosticValidation, setDiagnosticValidation] = useState<{ valid: boolean; errors: string[]; checkedRecords: number; complete?: boolean } | null>(null);
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([]);
@@ -268,7 +270,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedEvidence] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -278,6 +280,7 @@ function App() {
         invoke<WorkflowRunRecord[]>("get_workflow_runs"),
         invoke<AutomationQueueItem[]>("get_automation_queue"),
         invoke<DryRunHistoryRecord[]>("get_dry_run_history"),
+        invoke<DryRunHistoryAudit>("get_dry_run_history_audit"),
         invoke<EvidenceRecord[]>("get_evidence_records")
       ]);
 
@@ -290,6 +293,7 @@ function App() {
       setWorkflowRuns(storedRuns);
       setAutomationQueue(storedQueue);
       setDryRunHistory(storedDryRunHistory.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
+      setDryRunSourceAudit(storedDryRunAudit);
       setEvidenceRecords(storedEvidence);
       setStatusMessage("Loaded from local SQLite");
     } catch {
@@ -356,16 +360,24 @@ function App() {
     }
   }
 
-  function exportDryRunDiagnostics() {
-    const report = buildDryRunDiagnosticReport(dryRunHistory, new Date().toISOString());
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "entitymanager-dry-run-diagnostics.json";
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setStatusMessage(`Exported read-only diagnostics for ${dryRunHistory.length} dry-run records`);
+  async function exportDryRunDiagnostics() {
+    try {
+      const audit = await invoke<DryRunHistoryAudit>("get_dry_run_history_audit");
+      setDryRunSourceAudit(audit);
+      const report = buildDryRunDiagnosticReport(dryRunHistory, new Date().toISOString(), audit);
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "entitymanager-dry-run-diagnostics.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatusMessage(report.sourceAudit.complete
+        ? `Exported complete SQLite diagnostics: ${report.sourceAudit.includedRecords} records`
+        : `Exported ${report.sourceAudit.includedRecords} of ${report.sourceAudit.totalRecords} SQLite records; report is partial`);
+    } catch {
+      setStatusMessage("Could not reconcile diagnostics with SQLite. Export was not created.");
+    }
   }
 
   function validateImportedDryRunDiagnostics() {
@@ -385,11 +397,15 @@ function App() {
 
   async function refreshDryRunHistory() {
     try {
-      const records = await invoke<DryRunHistoryRecord[]>("get_dry_run_history");
+      const [records, audit] = await Promise.all([
+        invoke<DryRunHistoryRecord[]>("get_dry_run_history"),
+        invoke<DryRunHistoryAudit>("get_dry_run_history_audit")
+      ]);
       setDryRunHistory(records.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
-      setStatusMessage(`Loaded ${records.length} dry-run history records`);
+      setDryRunSourceAudit(audit);
+      setStatusMessage(`Loaded ${records.length} recent records; SQLite contains ${audit.totalRecords}`);
     } catch {
-      setStatusMessage("Could not refresh dry-run history outside the Desktop app.");
+      setStatusMessage("Could not refresh dry-run history or reconcile its SQLite count.");
     }
   }
 
@@ -1176,10 +1192,10 @@ function App() {
                 <button className="primary-action" type="button" disabled={!diagnosticImportJson.trim()} onClick={validateImportedDryRunDiagnostics}>Verify report integrity</button>
               </div>
               {diagnosticValidation && <div className={`status-message ${diagnosticValidation.valid ? "success" : "warning"}`} role="status">
-                <strong>{diagnosticValidation.valid ? "Report structure and totals are consistent" : "Report validation found issues"}</strong>
+                <strong>{diagnosticValidation.valid ? (diagnosticValidation.complete ? "Report reconciles with the SQLite record count" : "Report is consistent but only includes part of SQLite history") : "Report validation found issues"}</strong>
                 <span>{diagnosticValidation.checkedRecords} record(s) checked.</span>
                 {diagnosticValidation.errors.map((error, index) => <span key={index}>{error}</span>)}
-                {diagnosticValidation.valid && <span>This confirms internal consistency only; it does not prove the export includes every row in local SQLite.</span>}
+                {diagnosticValidation.valid && <span>{diagnosticValidation.complete ? "Included record count matches the SQLite count recorded at export time." : "The export is internally consistent but does not include every row in SQLite. Refresh history/export again after reviewing the record limit."} Source counts are audit metadata, not a cryptographic proof.</span>}
               </div>}
               <div className="panel-header"><div><p className="eyebrow">Selector Failure Analytics</p><h2>Failures by platform</h2></div><span className="badge">{dryRunHistory.filter((item) => item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0).length} failed previews</span></div>
               <div className="queue-list">
@@ -1214,7 +1230,7 @@ function App() {
                   </div>
                 </div>)}
               </div>
-              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} records</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh history</button><button className="secondary-action" type="button" onClick={exportDryRunDiagnostics}>Export diagnostics JSON</button></div></div><p className="muted-text">Báo cáo chỉ đọc gồm số liệu tổng hợp và lịch sử dry-run hiện có; tệp có thể chứa URL và ID tài khoản đã lưu cục bộ. Kiểm tra trước khi chia sẻ.</p>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} loaded / {dryRunSourceAudit ? dryRunSourceAudit.totalRecords : "?"} in SQLite</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh & reconcile</button><button className="secondary-action" type="button" onClick={() => void exportDryRunDiagnostics()}>Export diagnostics JSON</button></div></div><p className="muted-text">Đối chiếu chỉ đọc giữa số bản ghi đang tải và tổng số hàng trong SQLite. Màn hình giữ tối đa 100 bản ghi gần nhất; nếu cơ sở dữ liệu có nhiều hơn, báo cáo sẽ đánh dấu là chưa đầy đủ. Tệp có thể chứa URL và ID tài khoản; kiểm tra trước khi chia sẻ.</p>
               <div className="queue-list">
                 {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
                   <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
