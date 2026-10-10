@@ -48,6 +48,9 @@ export function validateDryRunDiagnosticReport(input) {
     }
     const includedIds = new Set(input.records.map((record) => record && typeof record.id === "string" ? record.id : ""));
     includedIds.delete("");
+    if (includedIds.size !== input.records.filter((record) => record && typeof record.id === "string" && record.id !== "").length) {
+      errors.push("Included records contain duplicate IDs.");
+    }
     if (includedIds.size > audit.uniqueIds) {
       errors.push("Included distinct record IDs exceed the SQLite distinct-ID count.");
     }
