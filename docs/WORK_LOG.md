@@ -280,3 +280,13 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added filename validation and explicit success/failure feedback so export failures show the actual reason rather than failing silently.
 - Reorganized Selector Recipes into a clearer hierarchy with compact import/export tools, separated diagnostic sections, and better-spaced recipe editor cards with responsive behavior.
 - Validation pending: TypeScript checks, diagnostic/selector tests, extension build, and Windows installer workflow. Do not merge until required checks pass.
+
+
+## 2026-10-11 — Vietnamese Entity Builder onboarding
+
+- Rewrote the Entity Builder's first-use instructions and primary labels in Vietnamese to match the user's preferred language.
+- Added an explicit four-step guide explaining the Entity Profile prerequisite, the meaning of saving an account record, and how to find saved records.
+- Added a dedicated “Tài khoản đã lưu” section with a clear empty state and a compact list of saved records, evidence URLs, and Vietnamese status labels.
+- Clarified that saving a record only stores local tracking data in SQLite; it does not register an account on a third-party website.
+- Improved spacing, contrast, and responsive behavior for the guide and saved-account list.
+- Validation pending: TypeScript checks, relevant tests, extension build, and Windows installer workflow. Do not merge until required checks pass.
