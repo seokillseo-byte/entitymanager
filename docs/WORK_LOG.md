@@ -272,3 +272,11 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added regression coverage for 1,500 records, duplicate IDs, altered timestamp bounds, and missing audit extrema. Existing incomplete-report validation remains in place.
 - Safety invariant: these operations are read-only and do not modify or delete historical records.
 - Validation pending: run all Node diagnostic/selector-health tests, TypeScript checks, Chrome extension build, and Windows installer workflow. Do not merge or publish until required checks are green and both release assets are verified.
+
+
+## 2026-10-10 — Selector Recipes export reliability and layout
+
+- Replaced the WebView anchor/object-URL download path for recipe and complete dry-run JSON exports with a native Tauri file-write command targeting the user's Downloads folder; export filenames are timestamped to avoid overwriting prior reports.
+- Added filename validation and explicit success/failure feedback so export failures show the actual reason rather than failing silently.
+- Reorganized Selector Recipes into a clearer hierarchy with compact import/export tools, separated diagnostic sections, and better-spaced recipe editor cards with responsive behavior.
+- Validation pending: TypeScript checks, diagnostic/selector tests, extension build, and Windows installer workflow. Do not merge until required checks pass.
