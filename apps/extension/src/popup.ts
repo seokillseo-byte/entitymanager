@@ -31,6 +31,7 @@ const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
 const defaultSubmitFetchUrl = "http://127.0.0.1:17321/account/submit-verify/next";
+const defaultDryRunPreviewUrl = "http://127.0.0.1:17321/account/submit-verify/preview";
 const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
 const defaultDryRunHistoryCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/dry-run-history";
 
@@ -177,7 +178,7 @@ async function submitVerifyActiveTab(): Promise<void> {
 
 async function previewSubmitVerifyActiveTab(): Promise<void> {
   try {
-    const payload = await fetchSubmitVerifyPayload();
+    const payload = await fetchDryRunPreviewPayload();
     const tabId = await getActiveTabId();
     const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
       type: "ENTITYMANAGER_SUBMIT_VERIFY",
@@ -212,6 +213,16 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Dry-run preview failed.");
   }
+}
+
+async function fetchDryRunPreviewPayload(): Promise<AccountSubmitVerifyPayload> {
+  const response = await fetch(defaultDryRunPreviewUrl, { method: "GET" });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Không lấy được dữ liệu chạy thử từ EntityManager Desktop.");
+  }
+  const payload = validateSubmitVerifyPayload(data as Partial<AccountSubmitVerifyPayload>);
+  return { ...payload, requiresCaptchaToken: false };
 }
 
 async function fetchSubmitVerifyPayload(): Promise<AccountSubmitVerifyPayload> {

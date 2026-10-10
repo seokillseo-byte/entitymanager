@@ -10,43 +10,44 @@
     <main>
       <header>
         <strong>EntityManager Bridge</strong>
-        <span>CAPTCHA token injector MVP</span>
+        <span>Cầu nối EntityManager Desktop · Chế độ chạy thử an toàn</span>
       </header>
 
       <label>
-        Bridge payload JSON
-        <textarea id="payloadInput" rows="10" placeholder="Auto-fetch from EntityManager, or paste Bridge Payload JSON for fallback"></textarea>
+        Dữ liệu CAPTCHA (chỉ dùng khi cần tiêm mã xác thực)
+        <textarea id="payloadInput" rows="10" placeholder="Chỉ dùng cho luồng CAPTCHA; không cần điền khi chạy thử Selector Recipe"></textarea>
       </label>
 
       <label>
-        Desktop fetch URL
+        Địa chỉ lấy dữ liệu CAPTCHA từ Desktop
         <input id="fetchUrlInput" placeholder="http://127.0.0.1:17321/captcha/injection/next" />
       </label>
 
       <label>
-        Desktop callback URL
+        Địa chỉ phản hồi CAPTCHA về Desktop
         <input id="callbackUrlInput" placeholder="http://127.0.0.1:17321/captcha/injection/complete" />
       </label>
 
       <label>
-        Submit/verify fetch URL
+        Địa chỉ lấy hàng đợi gửi/xác minh tài khoản
         <input id="submitFetchUrlInput" placeholder="http://127.0.0.1:17321/account/submit-verify/next" />
       </label>
 
       <label>
-        Submit/verify callback URL
+        Địa chỉ phản hồi gửi/xác minh tài khoản
         <input id="submitCallbackUrlInput" placeholder="http://127.0.0.1:17321/account/submit-verify/complete" />
       </label>
 
       <div class="actions">
-        <button id="fetchPayloadButton" type="button">Fetch Next Payload</button>
-        <button id="savePayloadButton" type="button">Save Payload</button>
-        <button id="injectButton" type="button">Inject Active Tab</button>
-        <button id="dryRunButton" type="button">Dry-run Preview</button>
-        <button id="submitVerifyButton" type="button">Submit/Verify Tab</button>
+        <button id="fetchPayloadButton" type="button">Lấy dữ liệu CAPTCHA</button>
+        <button id="savePayloadButton" type="button">Lưu dữ liệu CAPTCHA</button>
+        <button id="injectButton" type="button">Tiêm CAPTCHA vào trang</button>
+        <button id="dryRunButton" type="button">Chạy thử Selector Recipe</button>
+        <button id="submitVerifyButton" type="button">Gửi / xác minh tài khoản</button>
       </div>
 
-      <pre id="statusOutput">Ready.</pre>
+      <p class="help">Chạy thử chỉ đọc các trường trên tab hiện tại. Không điền biểu mẫu, không nhấn nút gửi và không cần có mục chờ CAPTCHA.</p>
+      <pre id="statusOutput">Sẵn sàng. Mở EntityManager Desktop rồi mở trang thử nghiệm trong tab hiện tại.</pre>
     </main>
     <script src="popup.js" type="module"></script>
   </body>
