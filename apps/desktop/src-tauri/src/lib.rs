@@ -708,6 +708,27 @@ fn get_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistory
 }
 
 #[tauri::command]
+fn get_all_dry_run_history(app_handle: tauri::AppHandle) -> Result<Vec<DryRunHistoryRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT id, platform_id, platform_name, account_id, planned_fields, planned_selector, missing_checks, current_url, created_at FROM dry_run_history ORDER BY created_at DESC, id ASC"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        let planned_fields: String = row.get(4)?;
+        let missing_checks: String = row.get(6)?;
+        Ok(DryRunHistoryRecord {
+            id: row.get(0)?, platform_id: row.get(1)?, platform_name: row.get(2)?, account_id: row.get(3)?,
+            planned_fields: serde_json::from_str(&planned_fields).unwrap_or_default(),
+            planned_selector: row.get(5)?,
+            missing_checks: serde_json::from_str(&missing_checks).unwrap_or_default(),
+            current_url: row.get(7)?, created_at: row.get(8)?,
+        })
+    }).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_dry_run_history_audit(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -3027,6 +3048,7 @@ pub fn run() {
             get_selector_recipes,
             save_selector_recipe,
             get_dry_run_history,
+            get_all_dry_run_history,
             get_dry_run_history_audit,
             save_dry_run_history,
             get_evidence_records,

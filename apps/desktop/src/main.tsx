@@ -124,6 +124,7 @@ function App() {
   const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
   const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
   const [dryRunSourceAudit, setDryRunSourceAudit] = useState<DryRunHistoryAudit | null>(null);
+  const [dryRunHistoryAllLoaded, setDryRunHistoryAllLoaded] = useState(false);
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
   const [evidenceDraft, setEvidenceDraft] = useState<Omit<EvidenceRecord, "id" | "createdAt">>({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" });
   const [recipeImportJson, setRecipeImportJson] = useState("");
@@ -364,7 +365,16 @@ function App() {
     try {
       const audit = await invoke<DryRunHistoryAudit>("get_dry_run_history_audit");
       setDryRunSourceAudit(audit);
-      const report = buildDryRunDiagnosticReport(dryRunHistory, new Date().toISOString(), audit);
+      const records = await invoke<DryRunHistoryRecord[]>("get_all_dry_run_history");
+      const uniqueIds = new Set(records.map((record) => record.id)).size;
+      const createdAtValues = records.map((record) => record.createdAt).filter((value) => typeof value === "string");
+      const oldestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[0] : null;
+      const newestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[createdAtValues.length - 1] ?? null : null;
+      if (records.length !== audit.totalRecords || uniqueIds !== audit.uniqueIds || oldestCreatedAt !== audit.oldestCreatedAt || newestCreatedAt !== audit.newestCreatedAt) {
+        setStatusMessage("Không xuất báo cáo: lịch sử tải về không khớp hoàn toàn với kiểm kê SQLite. Hãy thử Refresh & reconcile rồi xuất lại.");
+        return;
+      }
+      const report = buildDryRunDiagnosticReport(records, new Date().toISOString(), audit);
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -403,9 +413,33 @@ function App() {
       ]);
       setDryRunHistory(records.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
       setDryRunSourceAudit(audit);
+      setDryRunHistoryAllLoaded(false);
       setStatusMessage(`Loaded ${records.length} recent records; SQLite contains ${audit.totalRecords}`);
     } catch {
       setStatusMessage("Could not refresh dry-run history or reconcile its SQLite count.");
+    }
+  }
+
+  async function loadAllDryRunHistory() {
+    try {
+      const [records, audit] = await Promise.all([
+        invoke<DryRunHistoryRecord[]>("get_all_dry_run_history"),
+        invoke<DryRunHistoryAudit>("get_dry_run_history_audit")
+      ]);
+      const uniqueIds = new Set(records.map((record) => record.id)).size;
+      const createdAtValues = records.map((record) => record.createdAt).filter((value) => typeof value === "string");
+      const oldestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[0] : null;
+      const newestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[createdAtValues.length - 1] ?? null : null;
+      if (records.length !== audit.totalRecords || uniqueIds !== audit.uniqueIds || oldestCreatedAt !== audit.oldestCreatedAt || newestCreatedAt !== audit.newestCreatedAt) {
+        setStatusMessage("Lịch sử tải về chưa khớp với SQLite; chưa thay danh sách đang xem.");
+        return;
+      }
+      setDryRunHistory(records.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
+      setDryRunSourceAudit(audit);
+      setDryRunHistoryAllLoaded(true);
+      setStatusMessage(`Loaded and reconciled all ${records.length} SQLite dry-run records.`);
+    } catch {
+      setStatusMessage("Could not load all dry-run records from SQLite.");
     }
   }
 
@@ -1230,7 +1264,7 @@ function App() {
                   </div>
                 </div>)}
               </div>
-              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} loaded / {dryRunSourceAudit ? dryRunSourceAudit.totalRecords : "?"} in SQLite</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh & reconcile</button><button className="secondary-action" type="button" onClick={() => void exportDryRunDiagnostics()}>Export diagnostics JSON</button></div></div><p className="muted-text">Đối chiếu chỉ đọc giữa số bản ghi đang tải và tổng số hàng trong SQLite. Màn hình giữ tối đa 100 bản ghi gần nhất; nếu cơ sở dữ liệu có nhiều hơn, báo cáo sẽ đánh dấu là chưa đầy đủ. Tệp có thể chứa URL và ID tài khoản; kiểm tra trước khi chia sẻ.</p>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} loaded / {dryRunSourceAudit ? dryRunSourceAudit.totalRecords : "?"} in SQLite</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh & reconcile</button><button className="secondary-action" type="button" onClick={() => void loadAllDryRunHistory()}>{dryRunHistoryAllLoaded ? "Reload all history" : "Load all history"}</button><button className="secondary-action" type="button" onClick={() => void exportDryRunDiagnostics()}>Export complete diagnostics JSON</button></div></div><p className="muted-text">Lịch sử mặc định hiển thị 100 bản ghi gần nhất để giao diện chạy nhanh. Chọn “Load all history” để xem toàn bộ; xuất báo cáo luôn đọc lại toàn bộ SQLite và chỉ tạo tệp khi số bản ghi, ID và mốc thời gian khớp kiểm kê. Chức năng chỉ đọc, không sửa hoặc xóa lịch sử. Tệp có thể chứa URL và ID tài khoản; kiểm tra trước khi chia sẻ.</p>
               <div className="queue-list">
                 {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
                   <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
