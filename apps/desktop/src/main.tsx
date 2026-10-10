@@ -1468,33 +1468,84 @@ function App() {
         )}
 
         {activeModule === "Entity Builder" && (
-          <section className="single-panel">
+          <section className="single-panel entity-builder-vn">
+            <article className="panel builder-guide">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">HƯỚNG DẪN BẮT ĐẦU</p>
+                  <h2>Cách kiểm tra Entity Builder lần đầu</h2>
+                </div>
+                <span className="badge">Dữ liệu lưu trên máy này</span>
+              </div>
+              <ol className="builder-guide-steps">
+                <li><strong>Kiểm tra hồ sơ thương hiệu:</strong> mở mục <b>Entity Profile</b> ở thanh bên và điền tên thương hiệu, tên người đại diện/chuyên gia cùng thông tin chứng minh uy tín; sau đó lưu hồ sơ.</li>
+                <li><strong>Chọn một nền tảng trong kế hoạch bên dưới:</strong> bắt đầu bằng nền tảng bạn sở hữu hoặc được phép sử dụng. Tên tài khoản hiển thị chỉ là gợi ý, chưa có tài khoản nào được tạo trên website.</li>
+                <li><strong>Nhấn “Lưu bản ghi tài khoản”:</strong> thao tác này chỉ lưu một bản ghi theo dõi vào SQLite trên máy, không đăng ký tài khoản thật và không gửi biểu mẫu lên website.</li>
+                <li><strong>Kiểm tra bản ghi đã lưu:</strong> xem khu vực “Tài khoản đã lưu” bên dưới. Khi có tài khoản thật, bạn có thể bổ sung URL bằng chứng và cập nhật trạng thái tại thẻ nền tảng tương ứng.</li>
+              </ol>
+              <p className="muted-text">Khuyến nghị: hãy thử với website do bạn quản lý hoặc môi trường thử nghiệm. Không nhập mật khẩu hay mã CAPTCHA vào ghi chú.</p>
+            </article>
+
             <section className="metrics-grid">
               <article className="metric-card good">
-                <span>Saved Accounts</span>
+                <span>Tài khoản đã lưu</span>
                 <strong>{accounts.length}</strong>
               </article>
               <article className="metric-card neutral">
-                <span>Verified</span>
+                <span>Đã xác minh</span>
                 <strong>{accounts.filter((account) => account.status === "verified").length}</strong>
               </article>
               <article className="metric-card warning">
-                <span>Manual Review</span>
+                <span>Cần kiểm tra thủ công</span>
                 <strong>{accounts.filter((account) => account.status === "needs_manual_review").length}</strong>
               </article>
               <article className="metric-card neutral">
-                <span>Queue Items</span>
+                <span>Việc cần xử lý</span>
                 <strong>{automationQueue.length}</strong>
               </article>
             </section>
 
+            <article className="panel saved-account-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">SỔ THEO DÕI</p>
+                  <h2>Tài khoản đã lưu</h2>
+                  <p className="muted-text">Đây là các bản ghi nội bộ trong ứng dụng, không phải danh sách tài khoản đã được tạo trên các nền tảng.</p>
+                </div>
+                <span className="badge">{accounts.length} bản ghi</span>
+              </div>
+              {accounts.length === 0 ? (
+                <div className="empty-state">
+                  <strong>Chưa có bản ghi tài khoản nào</strong>
+                  <p>Cuộn xuống phần “Kế hoạch nền tảng”, chọn một nền tảng phù hợp rồi nhấn “Lưu bản ghi tài khoản”. Sau khi lưu thành công, bản ghi sẽ xuất hiện tại đây.</p>
+                </div>
+              ) : (
+                <div className="saved-account-list">
+                  {accounts.map((account) => (
+                    <div className="saved-account-row" key={account.id}>
+                      <div>
+                        <strong>{account.platformName}</strong>
+                        <span>@{account.recommendedUsername}</span>
+                        <span>{({ planned: "Đã lên kế hoạch", created: "Đã tạo", needs_manual_review: "Cần kiểm tra thủ công", failed: "Thất bại", verified: "Đã xác minh" } as Record<AccountStatus, string>)[account.status]}</span>
+                      </div>
+                      <div>
+                        {account.evidenceUrl ? <a href={account.evidenceUrl} target="_blank" rel="noreferrer">Mở URL bằng chứng</a> : <span className="muted-text">Chưa có URL bằng chứng</span>}
+                        <span className="muted-text">Cập nhật: {new Date(account.updatedAt).toLocaleString("vi-VN")}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
             <article className="panel">
               <div className="panel-header">
                 <div>
-                  <p className="eyebrow">Account Creation Workflow</p>
-                  <h2>{entityProfile.brandName} platform rollout plan</h2>
+                  <p className="eyebrow">KẾ HOẠCH TẠO HỒ SƠ</p>
+                  <h2>Kế hoạch nền tảng cho {entityProfile.brandName}</h2>
+                  <p className="muted-text">Mỗi thẻ là một đề xuất để bạn xem xét. Ứng dụng không tự tạo tài khoản thật chỉ bằng việc lưu bản ghi.</p>
                 </div>
-                <span className="badge">SQLite account records</span>
+                <span className="badge">Kế hoạch đề xuất</span>
               </div>
 
               <div className="account-plan-list">
@@ -1507,27 +1558,27 @@ function App() {
                       <div>
                         <p className="eyebrow">{item.platformType} / {item.entityValue}</p>
                         <h2>{item.platformName}</h2>
-                        <span className="muted-text">@{item.recommendedUsername}</span>
+                        <span className="muted-text">Tên tài khoản gợi ý: @{item.recommendedUsername}</span>
                       </div>
                       <div className="authority-score">
-                        <span>{item.priority}</span>
+                        <span>{{ high: "Ưu tiên cao", medium: "Ưu tiên vừa", low: "Ưu tiên thấp" }[item.priority]}</span>
                         <strong>{item.authorityScore}</strong>
                       </div>
                     </div>
 
                     {account && (
                       <div className={`account-status status-${account.status}`}>
-                        <strong>{account.status.replace(/_/g, " ")}</strong>
-                        <span>Updated {new Date(account.updatedAt).toLocaleString()}</span>
+                        <strong>{({ planned: "Đã lên kế hoạch", created: "Đã tạo", needs_manual_review: "Cần kiểm tra thủ công", failed: "Thất bại", verified: "Đã xác minh" } as Record<AccountStatus, string>)[account.status]}</strong>
+                        <span>Cập nhật {new Date(account.updatedAt).toLocaleString("vi-VN")}</span>
                       </div>
                     )}
 
                     <p className="platform-notes">{item.profileAngle}</p>
 
                     <div className="platform-meta">
-                      <span>{item.automationMode.replace("_", " ")}</span>
-                      <span>{item.difficulty}</span>
-                      <span>{item.requiredAssets.join(" + ")}</span>
+                      <span>{{ auto: "Tự động", semi_auto: "Bán tự động", manual_review: "Kiểm tra thủ công" }[item.automationMode]}</span>
+                      <span>{{ easy: "Dễ", medium: "Trung bình", hard: "Khó" }[item.difficulty]}</span>
+                      <span>Tài liệu cần có: {item.requiredAssets.join(" + ")}</span>
                     </div>
 
                     <div className="workflow-step-list">
@@ -1539,24 +1590,24 @@ function App() {
                     {account ? (
                       <div className="account-edit-grid">
                         <label>
-                          Status
+                          Trạng thái
                           <select value={account.status} onChange={(event) => updateAccount(account.id, { status: event.target.value as AccountStatus })}>
                             {accountStatuses.map((status) => (
-                              <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
+                              <option key={status} value={status}>{({ planned: "Đã lên kế hoạch", created: "Đã tạo", needs_manual_review: "Cần kiểm tra thủ công", failed: "Thất bại", verified: "Đã xác minh" } as Record<AccountStatus, string>)[status]}</option>
                             ))}
                           </select>
                         </label>
                         <label>
-                          Evidence URL
-                          <input value={account.evidenceUrl} onChange={(event) => updateAccount(account.id, { evidenceUrl: event.target.value })} />
+                          URL bằng chứng
+                          <input placeholder="https://..." value={account.evidenceUrl} onChange={(event) => updateAccount(account.id, { evidenceUrl: event.target.value })} />
                         </label>
                         <label className="full-span">
-                          Notes
+                          Ghi chú (không nhập mật khẩu hoặc mã xác thực)
                           <textarea rows={2} value={account.notes} onChange={(event) => updateAccount(account.id, { notes: event.target.value })} />
                         </label>
                       </div>
                     ) : (
-                      <button className="secondary-action" type="button" onClick={() => saveAccountFromPlan(item)}>Save as Account Record</button>
+                      <button className="secondary-action" type="button" onClick={() => saveAccountFromPlan(item)}>Lưu bản ghi tài khoản</button>
                     )}
                   </article>
                   );
@@ -1568,65 +1619,55 @@ function App() {
               <article className="panel">
                 <div className="panel-header">
                   <div>
-                    <p className="eyebrow">Automation Queue</p>
-                    <h2>Prepared gates for API/manual handling</h2>
+                    <p className="eyebrow">HÀNG ĐỢI TỰ ĐỘNG HÓA</p>
+                    <h2>Các bước đang chờ xử lý</h2>
                   </div>
-                  <span className="badge">{automationQueue.filter((item) => item.status !== "resolved").length} open</span>
+                  <span className="badge">{automationQueue.filter((item) => item.status !== "resolved").length} mục đang mở</span>
                 </div>
 
-                <div className="queue-list">
-                  {automationQueue.map((item) => (
-                    <div className="queue-row" key={item.id}>
-                      <div>
-                        <strong>{item.platformName}</strong>
-                        <span>{item.gateType.replace("_", " ")} / {item.payload}</span>
-                        {item.gateType === "captcha" && (
-                          <textarea
-                            rows={4}
-                            value={item.payload}
-                            onChange={(event) => updateQueueItem(item.id, { payload: event.target.value })}
-                          />
-                        )}
+                {automationQueue.length === 0 ? (
+                  <div className="empty-state"><strong>Chưa có việc nào trong hàng đợi.</strong><p>Hàng đợi chỉ xuất hiện khi một bản ghi cần thao tác thủ công hoặc xử lý tích hợp.</p></div>
+                ) : (
+                  <div className="queue-list">
+                    {automationQueue.map((item) => (
+                      <div className="queue-row" key={item.id}>
+                        <div>
+                          <strong>{item.platformName}</strong>
+                          <span>{{ captcha: "CAPTCHA", manual_review: "Kiểm tra thủ công", submit_verify: "Gửi và xác minh" }[item.gateType]} / {item.payload}</span>
+                          {item.gateType === "captcha" && (
+                            <textarea aria-label="Nội dung CAPTCHA" rows={4} value={item.payload} onChange={(event) => updateQueueItem(item.id, { payload: event.target.value })} />
+                          )}
+                        </div>
+                        <div className="queue-actions">
+                          <select aria-label="Trạng thái hàng đợi" value={item.status} onChange={(event) => updateQueueItem(item.id, { status: event.target.value as AutomationQueueStatus })}>
+                            {queueStatuses.map((status) => (
+                              <option key={status} value={status}>{({ queued: "Trong hàng đợi", waiting: "Đang chờ", resolved: "Đã xử lý", failed: "Thất bại" } as Record<AutomationQueueStatus, string>)[status]}</option>
+                            ))}
+                          </select>
+                          {item.gateType === "captcha" && <button className="secondary-action" type="button" onClick={() => executeCaptchaQueueItem(item)}>Gửi yêu cầu CAPTCHA</button>}
+                          {item.gateType === "captcha" && <button className="secondary-action" type="button" onClick={() => pollCaptchaQueueItem(item)}>Kiểm tra kết quả</button>}
+                          {item.gateType === "captcha" && <button className="secondary-action" type="button" onClick={() => prepareCaptchaInjection(item)}>Chuẩn bị dữ liệu cầu nối</button>}
+                          {item.gateType === "submit_verify" && <button className="secondary-action" type="button" onClick={() => completeSubmitVerify(item, true)}>Đánh dấu đã xác minh</button>}
+                          {item.gateType === "submit_verify" && <button className="secondary-action danger-action" type="button" onClick={() => completeSubmitVerify(item, false)}>Đánh dấu gửi thất bại</button>}
+                        </div>
                       </div>
-                      <div className="queue-actions">
-                        <select value={item.status} onChange={(event) => updateQueueItem(item.id, { status: event.target.value as AutomationQueueStatus })}>
-                          {queueStatuses.map((status) => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                        {item.gateType === "captcha" && (
-                          <button className="secondary-action" type="button" onClick={() => executeCaptchaQueueItem(item)}>Send CAPTCHA</button>
-                        )}
-                        {item.gateType === "captcha" && (
-                          <button className="secondary-action" type="button" onClick={() => pollCaptchaQueueItem(item)}>Poll Result</button>
-                        )}
-                        {item.gateType === "captcha" && (
-                          <button className="secondary-action" type="button" onClick={() => prepareCaptchaInjection(item)}>Bridge Payload</button>
-                        )}
-                        {item.gateType === "submit_verify" && (
-                          <button className="secondary-action" type="button" onClick={() => completeSubmitVerify(item, true)}>Mark Verified</button>
-                        )}
-                        {item.gateType === "submit_verify" && (
-                          <button className="secondary-action danger-action" type="button" onClick={() => completeSubmitVerify(item, false)}>Mark Submit Failed</button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 {captchaBridgePayload && (
                   <div className="bridge-preview">
                     <div>
-                      <p className="eyebrow">Browser/Extension Bridge</p>
+                      <p className="eyebrow">CẦU NỐI TRÌNH DUYỆT / TIỆN ÍCH</p>
                       <strong>{captchaBridgePayload.platformName}</strong>
                       <span>{captchaBridgePayload.action} → {captchaBridgePayload.nextStep}</span>
                     </div>
                     <code>{captchaBridgePayload.tokenField}: {maskToken(captchaBridgePayload.solutionToken)}</code>
-                    <p className="muted-text">Extension can now auto-fetch this from http://127.0.0.1:17321/captcha/injection/next. Manual JSON remains available for fallback testing.</p>
-                    <textarea readOnly rows={7} value={JSON.stringify(captchaBridgePayload, null, 2)} />
+                    <p className="muted-text">Tiện ích trình duyệt có thể lấy dữ liệu tại http://127.0.0.1:17321/captcha/injection/next. Chỉ dùng JSON thủ công để kiểm thử dự phòng.</p>
+                    <textarea aria-label="Dữ liệu cầu nối CAPTCHA" readOnly rows={7} value={JSON.stringify(captchaBridgePayload, null, 2)} />
                     <div className="queue-actions">
-                      <button className="secondary-action" type="button" onClick={() => completeCaptchaInjection(true)}>Mark Injected</button>
-                      <button className="secondary-action danger-action" type="button" onClick={() => completeCaptchaInjection(false)}>Mark Failed</button>
+                      <button className="secondary-action" type="button" onClick={() => completeCaptchaInjection(true)}>Đánh dấu đã gửi</button>
+                      <button className="secondary-action danger-action" type="button" onClick={() => completeCaptchaInjection(false)}>Đánh dấu thất bại</button>
                     </div>
                   </div>
                 )}
@@ -1635,23 +1676,27 @@ function App() {
               <article className="panel">
                 <div className="panel-header">
                   <div>
-                    <p className="eyebrow">Workflow History</p>
-                    <h2>Latest account events</h2>
+                    <p className="eyebrow">LỊCH SỬ QUY TRÌNH</p>
+                    <h2>Hoạt động tài khoản gần đây</h2>
                   </div>
-                  <span className="badge">{workflowRuns.length} runs</span>
+                  <span className="badge">{workflowRuns.length} sự kiện</span>
                 </div>
 
-                <div className="workflow-history">
-                  {workflowRuns.slice(0, 12).map((run) => (
-                    <div className="history-row" key={run.id}>
-                      <div>
-                        <strong>{run.platformName}</strong>
-                        <span>{run.action} / {run.message}</span>
+                {workflowRuns.length === 0 ? (
+                  <div className="empty-state"><strong>Chưa có hoạt động nào.</strong><p>Hoạt động sẽ được ghi lại sau khi bạn lưu bản ghi hoặc cập nhật trạng thái.</p></div>
+                ) : (
+                  <div className="workflow-history">
+                    {workflowRuns.slice(0, 12).map((run) => (
+                      <div className="history-row" key={run.id}>
+                        <div>
+                          <strong>{run.platformName}</strong>
+                          <span>{run.action} / {run.message}</span>
+                        </div>
+                        <em>{run.status}</em>
                       </div>
-                      <em>{run.status}</em>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </article>
             </section>
           </section>
