@@ -25,7 +25,30 @@ export function validateDryRunDiagnosticReport(input) {
     return { valid: false, errors, checkedRecords: input.records.length };
   }
 
-  const expected = buildDryRunDiagnosticReport(input.records, input.exportedAt);
+  const audit = input.sourceAudit;
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) {
+    errors.push("sourceAudit is required to reconcile the export with SQLite.");
+  } else {
+    if (!Number.isInteger(audit.totalRecords) || audit.totalRecords < input.records.length) {
+      errors.push("sourceAudit.totalRecords must be an integer at least as large as the included record count.");
+    }
+    if (!Number.isInteger(audit.uniqueIds) || audit.uniqueIds < 0 || audit.uniqueIds > audit.totalRecords) {
+      errors.push("sourceAudit.uniqueIds must be a valid SQLite distinct-ID count.");
+    }
+    if (audit.includedRecords !== input.records.length) {
+      errors.push("sourceAudit.includedRecords does not match the report records array.");
+    }
+    if (audit.complete !== (audit.totalRecords === input.records.length)) {
+      errors.push("sourceAudit.complete does not match the SQLite and included record counts.");
+    }
+    for (const key of ["oldestCreatedAt", "newestCreatedAt"]) {
+      if (audit[key] !== null && typeof audit[key] !== "string") {
+        errors.push(`sourceAudit.${key} must be a string or null.`);
+      }
+    }
+  }
+
+  const expected = buildDryRunDiagnosticReport(input.records, input.exportedAt, audit);
   const summaryKeys = ["totalRecords", "successes", "failures", "successRatePercent", "last30Days", "recordsWithInvalidOrMissingTimestamp"];
   for (const key of summaryKeys) {
     if (!sameJson(input.summary[key], expected.summary[key])) {
@@ -44,5 +67,5 @@ export function validateDryRunDiagnosticReport(input) {
   if (!sameJson(platformProjection(input.platforms), platformProjection(expected.platforms))) {
     errors.push("Per-platform totals do not match the included history records.");
   }
-  return { valid: errors.length === 0, errors, checkedRecords: input.records.length };
+  return { valid: errors.length === 0, errors, checkedRecords: input.records.length, complete: audit?.complete === true };
 }
