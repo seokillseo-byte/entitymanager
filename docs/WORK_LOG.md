@@ -251,3 +251,13 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added explicit wording that an internally consistent report does not prove the export contains every row from local SQLite; verification never imports records or writes to the database.
 - Added deterministic tests for valid reports, tampered overall/platform totals, malformed schema, empty history, and invalid record timestamps; wired the test command into Windows CI.
 - Validation pending: wait for all Windows PR checks, inspect failures if any, then verify the official release contains both EXE and Extension ZIP.
+
+
+## 2026-10-10 — Phase 1.25 SQLite-to-Diagnostics Reconciliation
+
+- Added a read-only Tauri command that independently queries total dry-run history rows, distinct IDs, and oldest/newest timestamps from SQLite.
+- Selector Recipes now shows how many records are loaded versus how many exist in SQLite and refreshes both values together.
+- Diagnostic exports now include source audit metadata and explicitly flag reports that contain only the newest 100 loaded records.
+- The validator checks source count bounds, included-record count, timestamp metadata, and whether the completeness flag agrees with source and included counts.
+- Added tests for complete versus partial exports and tampered source counts.
+- Validation pending: run diagnostic tests, full TypeScript checks, and the Windows release workflow; verify both EXE and Extension ZIP assets before distributing.
