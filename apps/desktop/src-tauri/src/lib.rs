@@ -2316,7 +2316,7 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
 
     if request.starts_with("GET /account/submit-verify/preview ") {
         let response = match get_dry_run_preview_payload_record(&app_handle) {
-            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\\"ok\\":true}".to_string()),
+            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
                 return;
