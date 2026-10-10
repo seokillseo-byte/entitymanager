@@ -261,3 +261,14 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - The validator checks source count bounds, included-record count, timestamp metadata, and whether the completeness flag agrees with source and included counts.
 - Added tests for complete versus partial exports and tampered source counts.
 - Validation pending: run diagnostic tests, full TypeScript checks, and the Windows release workflow; verify both EXE and Extension ZIP assets before distributing.
+
+
+## 2026-10-10 — Phase 1.26 Complete Dry-run History Reconciliation
+
+- Kept the fast recent-history command for normal initial screen loading and added a separate read-only command to retrieve every dry-run row from local SQLite.
+- Added a “Load all history” action; it only replaces the visible list after row count, distinct IDs, and oldest/newest timestamp bounds match the SQLite audit.
+- Diagnostic export now re-reads the full SQLite history rather than exporting only the newest 100 loaded rows. Export is blocked if the complete row set cannot be reconciled against SQLite counts, distinct IDs, and timestamp bounds.
+- Strengthened report validation to compare included distinct IDs and complete-report timestamp bounds with source audit metadata.
+- Added regression coverage for 1,500 records, duplicate IDs, altered timestamp bounds, and missing audit extrema. Existing incomplete-report validation remains in place.
+- Safety invariant: these operations are read-only and do not modify or delete historical records.
+- Validation pending: run all Node diagnostic/selector-health tests, TypeScript checks, Chrome extension build, and Windows installer workflow. Do not merge or publish until required checks are green and both release assets are verified.
