@@ -8,6 +8,7 @@ import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, Accou
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
+import { buildDryRunDiagnosticReport } from "./dryRunDiagnostics.mjs";
 import "./styles.css";
 
 const modules: EntityModule[] = [
@@ -350,6 +351,18 @@ function App() {
       setSelectorRecipes((current) => current.map((item) => (item.platformId === recipe.platformId ? nextRecipe : item)));
       setStatusMessage("Preview mode: Selector recipe changes are local only");
     }
+  }
+
+  function exportDryRunDiagnostics() {
+    const report = buildDryRunDiagnosticReport(dryRunHistory, new Date().toISOString());
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "entitymanager-dry-run-diagnostics.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setStatusMessage(`Exported read-only diagnostics for ${dryRunHistory.length} dry-run records`);
   }
 
   async function refreshDryRunHistory() {
@@ -1171,7 +1184,7 @@ function App() {
                   </div>
                 </div>)}
               </div>
-              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} records</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh history</button></div></div>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} records</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh history</button><button className="secondary-action" type="button" onClick={exportDryRunDiagnostics}>Export diagnostics JSON</button></div></div><p className="muted-text">Báo cáo chỉ đọc gồm số liệu tổng hợp và lịch sử dry-run hiện có; tệp có thể chứa URL và ID tài khoản đã lưu cục bộ. Kiểm tra trước khi chia sẻ.</p>
               <div className="queue-list">
                 {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
                   <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
