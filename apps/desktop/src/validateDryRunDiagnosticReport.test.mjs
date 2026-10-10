@@ -88,7 +88,7 @@ test("reconciles a large complete history and rejects altered IDs or timestamp b
   report.records[1].id = report.records[0].id;
   const duplicateId = validateDryRunDiagnosticReport(report);
   assert.equal(duplicateId.valid, false);
-  assert.ok(duplicateId.errors.some((error) => error.includes("distinct record IDs")));
+  assert.ok(duplicateId.errors.some((error) => error.includes("duplicate IDs")));
 
   const restored = buildDryRunDiagnosticReport(many, "2026-10-10T12:00:00.000Z", {
     totalRecords: many.length,
