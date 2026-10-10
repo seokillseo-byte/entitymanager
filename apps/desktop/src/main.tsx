@@ -77,6 +77,7 @@ interface IntegrationSettingForm {
 type PlatformTypeFilter = "all" | PlatformType;
 type AutomationModeFilter = "all" | AutomationMode;
 type DifficultyFilter = "all" | PlatformDifficulty;
+interface EvidenceRecord { id: string; title: string; evidenceType: string; url: string; relatedPlatformId: string; notes: string; status: string; createdAt: string; }
 type PlatformViewMode = "compact" | "table";
 
 const fallbackMoneySite: MoneySiteForm = {
@@ -116,6 +117,8 @@ function App() {
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
   const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
+  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
+  const [evidenceDraft, setEvidenceDraft] = useState<Omit<EvidenceRecord, "id" | "createdAt">>({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" });
   const [recipeImportJson, setRecipeImportJson] = useState("");
   const [recipeImportMessage, setRecipeImportMessage] = useState("");
   const [entityProfile, setEntityProfile] = useState<EntityProfileRecord>(fallbackEntityProfile);
@@ -227,7 +230,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedEvidence] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -236,7 +239,8 @@ function App() {
         invoke<AccountRecord[]>("get_accounts"),
         invoke<WorkflowRunRecord[]>("get_workflow_runs"),
         invoke<AutomationQueueItem[]>("get_automation_queue"),
-        invoke<DryRunHistoryRecord[]>("get_dry_run_history")
+        invoke<DryRunHistoryRecord[]>("get_dry_run_history"),
+        invoke<EvidenceRecord[]>("get_evidence_records")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -248,6 +252,7 @@ function App() {
       setWorkflowRuns(storedRuns);
       setAutomationQueue(storedQueue);
       setDryRunHistory(storedDryRunHistory.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
+      setEvidenceRecords(storedEvidence);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -1473,6 +1478,65 @@ function App() {
           </section>
         )}
 
+        {activeModule === "EEAT Planner" && (
+          <section className="single-panel"><article className="panel">
+            <div className="panel-header"><div><p className="eyebrow">EEAT Planner</p><h2>Readiness from saved local records</h2></div><span className="badge">Local data</span></div>
+            <div className="metrics-grid">
+              <article className="metric-card good"><span>Profile fields present</span><strong>{[entityProfile.brandName, entityProfile.shortDescription, entityProfile.fullDescription, entityProfile.authorName, entityProfile.expertiseProof, entityProfile.trustSignals].filter((v) => v.trim()).length}/6</strong></article>
+              <article className="metric-card neutral"><span>Platforms</span><strong>{platforms.length}</strong></article>
+              <article className="metric-card neutral"><span>Evidence records</span><strong>{evidenceRecords.length}</strong></article>
+              <article className="metric-card warning"><span>Evidence needs review</span><strong>{evidenceRecords.filter((v) => v.status !== "verified").length}</strong></article>
+            </div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Signal</th><th>Saved source</th><th>Status</th><th>Next step</th></tr></thead><tbody>
+              <tr><td>Experience</td><td>Evidence Bank / Expertise proof</td><td>{entityProfile.expertiseProof.trim() ? "Profile data present" : "Missing"}</td><td>Add first-hand case studies or project evidence.</td></tr>
+              <tr><td>Expertise</td><td>{entityProfile.authorName || "Author not set"}</td><td>{entityProfile.authorName.trim() && entityProfile.topicalNiche.trim() ? "Profile data present" : "Needs profile data"}</td><td>Complete author and topical niche in Entity Profile.</td></tr>
+              <tr><td>Authoritativeness</td><td>{platforms.filter((v) => v.authorityScore >= 80).length} platforms with authority ≥ 80</td><td>{platforms.length ? "Catalog available" : "No platforms"}</td><td>Prioritize relevant platforms and add evidence URLs.</td></tr>
+              <tr><td>Trust</td><td>{entityProfile.trustSignals || "Trust signals not set"}</td><td>{entityProfile.trustSignals.trim() ? "Profile data present" : "Missing"}</td><td>Complete contact and ownership details.</td></tr>
+            </tbody></table></div><p className="muted-text">These are completeness indicators for local records, not a Google ranking or independent EEAT score.</p><button className="secondary-action" type="button" onClick={() => setActiveModule("Entity Profile")}>Complete Entity Profile</button>
+          </article></section>
+        )}
+
+        {activeModule === "Entity Graph" && (
+          <section className="single-panel"><article className="panel"><div className="panel-header"><div><p className="eyebrow">Entity Graph</p><h2>Relationships from saved records</h2></div><span className="badge">{1 + platforms.length + accounts.length + evidenceRecords.length} nodes</span></div>
+            <div className="graph-root"><strong>{entityProfile.brandName || "Unnamed entity"}</strong><span>Primary entity · {entityProfile.profileType}</span><small>{moneySite.domain}</small></div>
+            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>From</th><th>Relationship</th><th>To</th><th>Status</th></tr></thead><tbody>
+              <tr><td>{entityProfile.brandName}</td><td>owns / represents</td><td>{moneySite.domain}</td><td>Money-site record</td></tr>
+              {platforms.map((v) => <tr key={v.id}><td>{entityProfile.brandName}</td><td>has profile target</td><td>{v.name}</td><td>{accounts.some((a) => a.platformId === v.id) ? "Account record exists" : "Planning only"}</td></tr>)}
+              {accounts.map((v) => <tr key={v.id}><td>{v.platformName}</td><td>account on</td><td>{v.recommendedUsername}</td><td>{v.status}</td></tr>)}
+              {evidenceRecords.map((v) => <tr key={v.id}><td>{platforms.find((p) => p.id === v.relatedPlatformId)?.name || entityProfile.brandName}</td><td>supported by evidence</td><td><a href={v.url} target="_blank" rel="noreferrer">{v.title}</a></td><td>{v.status}</td></tr>)}
+            </tbody></table></div><p className="muted-text">Relationships are shown as a table in this version; no external identity graph has been queried.</p>
+          </article></section>
+        )}
+
+        {activeModule === "Evidence Bank" && (
+          <section className="single-panel"><article className="panel"><div className="panel-header"><div><p className="eyebrow">Evidence Bank</p><h2>Source records supporting entity claims</h2></div><span className="badge">{evidenceRecords.length} records</span></div>
+            <form className="form-grid evidence-form" onSubmit={async (event) => { event.preventDefault(); if (!evidenceDraft.title.trim() || !evidenceDraft.url.trim()) return; const record: EvidenceRecord = { ...evidenceDraft, id: "evidence-" + Date.now(), createdAt: new Date().toISOString() }; try { const saved = await invoke<EvidenceRecord>("save_evidence_record", { record }); setEvidenceRecords((current) => [saved, ...current.filter((v) => v.id !== saved.id)]); setEvidenceDraft({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" }); setStatusMessage("Evidence saved to local SQLite."); } catch (error) { setStatusMessage("Could not save evidence: " + String(error)); } }}>
+              <label>Evidence title<input required value={evidenceDraft.title} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, title: e.target.value })} placeholder="Official company profile" /></label>
+              <label>Evidence type<select value={evidenceDraft.evidenceType} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, evidenceType: e.target.value })}><option value="profile">Profile</option><option value="case_study">Case study</option><option value="press">Press / media</option><option value="credential">Credential</option><option value="contact">Contact / NAP</option><option value="other">Other</option></select></label>
+              <label>Source URL<input required type="url" value={evidenceDraft.url} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, url: e.target.value })} placeholder="https://..." /></label>
+              <label>Related platform<select value={evidenceDraft.relatedPlatformId} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, relatedPlatformId: e.target.value })}><option value="">Primary entity / general</option>{platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+              <label>Review status<select value={evidenceDraft.status} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, status: e.target.value })}><option value="needs_review">Needs review</option><option value="verified">Verified by me</option><option value="rejected">Rejected</option></select></label>
+              <label className="full-span">Notes<textarea rows={2} value={evidenceDraft.notes} onChange={(e) => setEvidenceDraft({ ...evidenceDraft, notes: e.target.value })} placeholder="What does this source support?" /></label><div><button className="primary-action" type="submit">Save Evidence</button></div>
+            </form><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Title</th><th>Type</th><th>Platform</th><th>Status</th><th>Added</th></tr></thead><tbody>
+              {evidenceRecords.map((v) => <tr key={v.id}><td><a href={v.url} target="_blank" rel="noreferrer">{v.title}</a><small>{v.notes}</small></td><td>{v.evidenceType.replace("_", " ")}</td><td>{platforms.find((p) => p.id === v.relatedPlatformId)?.name || "Primary entity"}</td><td>{v.status.replace("_", " ")}</td><td>{new Date(v.createdAt).toLocaleDateString()}</td></tr>)}
+              {!evidenceRecords.length && <tr><td colSpan={5}>No evidence records yet. Add a source above; records are saved locally.</td></tr>}
+            </tbody></table></div>
+          </article></section>
+        )}
+
+        {activeModule === "Reports" && (
+          <section className="single-panel"><article className="panel"><div className="panel-header"><div><p className="eyebrow">Reports</p><h2>Snapshot of local project data</h2></div><button className="primary-action" type="button" onClick={() => { const rows = [["Platform","Authority","Difficulty","Automation","Accounts","Evidence","Dry-run records"], ...platforms.map((p) => [p.name,String(p.authorityScore),p.difficulty,p.automationMode,String(accounts.filter((a) => a.platformId === p.id).length),String(evidenceRecords.filter((e) => e.relatedPlatformId === p.id).length),String(dryRunHistory.filter((d) => d.platformId === p.id).length)])]; const csv = rows.map((row) => row.map((cell) => String(cell).replace(/"/g, '""')).map((cell) => '"' + cell + '"').join(",")).join("\r\n"); const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "entitymanager-report.csv"; anchor.click(); URL.revokeObjectURL(url); }}>Export CSV</button></div>
+            <div className="metrics-grid"><article className="metric-card good"><span>Platforms</span><strong>{platforms.length}</strong></article><article className="metric-card neutral"><span>Accounts</span><strong>{accounts.length}</strong></article><article className="metric-card neutral"><span>Evidence</span><strong>{evidenceRecords.length}</strong></article><article className="metric-card warning"><span>Dry-run checks</span><strong>{dryRunHistory.length}</strong></article></div>
+            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Platform</th><th>Authority</th><th>Accounts</th><th>Evidence</th><th>Dry-run</th></tr></thead><tbody>{platforms.map((p) => <tr key={p.id}><td>{p.name}</td><td>{p.authorityScore}</td><td>{accounts.filter((a) => a.platformId === p.id).length}</td><td>{evidenceRecords.filter((e) => e.relatedPlatformId === p.id).length}</td><td>{dryRunHistory.filter((d) => d.platformId === p.id).length}</td></tr>)}</tbody></table></div>
+            <p className="muted-text">Counts reflect local records. CSV does not claim external ranking or performance.</p>
+          </article></section>
+        )}
+
+        {activeModule === "API Integrations" && (
+          <section className="single-panel"><article className="panel"><div className="panel-header"><div><p className="eyebrow">API Integrations</p><h2>Provider configuration and test status</h2></div><button className="secondary-action" type="button" onClick={() => setActiveModule("Settings")}>Open full settings</button></div>
+            <div className="settings-grid">{settings.map((v) => <div className="setting-card" key={v.settingType}><h3>{v.provider}</h3><div className="platform-meta"><span>{v.settingType}</span><span>{v.isEnabled ? "enabled" : "disabled"}</span><span>{v.keyStatus}</span></div><p className="platform-notes">{adapterResults[v.settingType]?.message || (v.lastTestAt ? "Last tested " + new Date(v.lastTestAt).toLocaleString() : "Not tested yet")}</p><div className="settings-actions"><button className="secondary-action" type="button" onClick={() => testSetting(v)}>Dry-run Test</button><button className="secondary-action" type="button" onClick={() => setActiveModule("Settings")}>Configure</button></div></div>)}</div>
+            <p className="muted-text">Provider status comes from local configuration; dry-run does not guarantee live API access.</p>
+          </article></section>
+        )}
         {activeModule === "Settings" && (
           <section className="single-panel">
             <article className="panel form-panel">
