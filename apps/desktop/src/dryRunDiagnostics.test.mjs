@@ -41,3 +41,21 @@ test("empty history produces safe zero totals", () => {
   assert.equal(report.summary.successRatePercent, 0);
   assert.deepEqual(report.platforms, []);
 });
+
+
+test("records whether the export contains the complete SQLite history", () => {
+  const records = [
+    { id: "recent", platformId: "p1", platformName: "Platform One", plannedFields: ["email"], plannedSelector: "button.submit", missingChecks: [], createdAt: "2026-10-10T11:00:00.000Z" }
+  ];
+  const partial = buildDryRunDiagnosticReport(records, "2026-10-10T12:00:00.000Z", {
+    totalRecords: 125, uniqueIds: 125, oldestCreatedAt: "2026-01-01T00:00:00.000Z", newestCreatedAt: "2026-10-10T11:00:00.000Z"
+  });
+  assert.equal(partial.sourceAudit.totalRecords, 125);
+  assert.equal(partial.sourceAudit.includedRecords, 1);
+  assert.equal(partial.sourceAudit.complete, false);
+
+  const complete = buildDryRunDiagnosticReport(records, "2026-10-10T12:00:00.000Z", {
+    totalRecords: 1, uniqueIds: 1, oldestCreatedAt: records[0].createdAt, newestCreatedAt: records[0].createdAt
+  });
+  assert.equal(complete.sourceAudit.complete, true);
+});
