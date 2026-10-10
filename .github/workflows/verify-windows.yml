@@ -1,0 +1,65 @@
+name: Verify Windows Desktop
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-package:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Selector health tests
+        run: pnpm test:selector-health
+
+      - name: Build Chrome extension
+        run: pnpm extension:build
+
+      - name: Build Windows installer
+        run: pnpm desktop:build
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: EntityManager-Windows-Installer-${{ github.run_number }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Chrome extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: EntityManager-Chrome-Extension-${{ github.run_number }}
+          path: apps/extension/dist/**
+          if-no-files-found: warn
+          retention-days: 30
