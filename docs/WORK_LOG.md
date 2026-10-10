@@ -232,3 +232,13 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added responsive breakpoints so Overview can collapse to one column on narrower windows and use a compact sidebar/navigation layout on small screens.
 - Kept the two latest-release download cards and their download behavior intact.
 - Validation pending for the newest commits: GitHub Actions TypeScript, tests, and Windows installer build must pass before merge/release.
+
+
+## 2026-10-10 — Phase 1.23 Read-only Dry-run Diagnostics Export
+
+- Added an Export diagnostics JSON action to Selector Recipes; it summarizes the local dry-run history currently loaded by Desktop without modifying SQLite.
+- The report includes overall totals, success/failure rate, rolling 30-day totals, per-platform counts, original records for reconciliation, and invalid/missing timestamp count. Dates are never invented.
+- Added an explicit UI warning that exports can include locally stored account IDs and page URLs.
+- Added deterministic tests for aggregate counts, platform summaries, recent-window handling, malformed timestamps, and empty history.
+- Added the diagnostics test command to the Windows release workflow so the new logic is checked before packaging and publishing.
+- Validation pending: run diagnostics and selector-health tests, typecheck, Windows installer workflow, and verify both release assets are present.
