@@ -703,3 +703,196 @@ textarea {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+
+/* Platform Library: dense cards and a scannable table for larger catalogs. */
+.platform-view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+.platform-view-toolbar .muted-text {
+  margin-top: 0;
+}
+.view-mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.view-mode-switch .secondary-action {
+  padding: 8px 12px;
+}
+.view-mode-switch .active-view {
+  background: #0f766e;
+  color: #ffffff;
+}
+.platform-library-compact {
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  align-items: start;
+  gap: 10px;
+}
+.platform-card-compact {
+  min-width: 0;
+  gap: 10px;
+  padding: 12px;
+}
+.platform-card-compact .platform-card-header {
+  gap: 8px;
+}
+.platform-card-title {
+  min-width: 0;
+}
+.platform-card-title h2 {
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+.platform-card-title a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.authority-score-compact {
+  min-width: 66px;
+  padding: 7px;
+}
+.authority-score-compact strong {
+  font-size: 22px;
+}
+.platform-notes-compact {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.platform-meta-compact {
+  gap: 5px;
+}
+.platform-meta-compact span {
+  padding: 5px 7px;
+  font-size: 10px;
+}
+.platform-edit-grid-compact {
+  grid-template-columns: minmax(65px, 0.65fr) minmax(0, 1.35fr) auto;
+  gap: 7px;
+}
+.platform-edit-grid-compact label {
+  min-width: 0;
+  font-size: 11px;
+}
+.platform-edit-grid-compact input,
+.platform-edit-grid-compact select {
+  min-width: 0;
+  padding: 8px 7px;
+  font-size: 12px;
+}
+.platform-edit-grid-compact .secondary-action {
+  padding: 8px 9px;
+}
+.platform-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  background: #ffffff;
+}
+.platform-library-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+.platform-library-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 11px 12px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.platform-library-table td {
+  min-width: 100px;
+  padding: 10px 12px;
+  border-top: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+.platform-library-table tbody tr:hover {
+  background: #f8fafc;
+}
+.platform-library-table .platform-table-name {
+  min-width: 220px;
+  max-width: 330px;
+}
+.platform-table-name strong,
+.platform-table-name a,
+.platform-table-name span,
+.table-subtext {
+  display: block;
+}
+.platform-table-name a {
+  margin-top: 3px;
+  color: #2563eb;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.platform-table-name span,
+.table-subtext {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.platform-table-name span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.platform-library-table td input,
+.platform-library-table td select {
+  min-width: 90px;
+  padding: 8px;
+  font-size: 12px;
+}
+.platform-library-table .table-field-label {
+  min-width: 72px;
+}
+.table-requirements {
+  display: grid;
+  gap: 5px;
+  min-width: 100px;
+}
+.table-requirements span,
+.difficulty-pill {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.difficulty-easy {
+  background: #dcfce7;
+  color: #166534;
+}
+.difficulty-medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+.difficulty-hard {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.platform-library-table .table-save-button {
+  padding: 8px 10px;
+}
