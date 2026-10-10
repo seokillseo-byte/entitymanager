@@ -1385,6 +1385,66 @@ fn complete_account_submit_verify(
     complete_account_submit_verify_record(&app_handle, request)
 }
 
+fn get_dry_run_preview_payload_record(
+    app_handle: &tauri::AppHandle,
+) -> Result<AccountSubmitVerifyPayload, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_platforms(&connection)?;
+    ensure_default_selector_recipes(&connection)?;
+
+    let platforms = get_platform_records(&connection)?;
+    let platform = platforms.first().ok_or_else(|| "Không có nền tảng nào để chạy thử. Hãy mở Platform Library trước.".to_string())?;
+    let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
+    let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
+    let recipe = get_selector_recipe_record(&connection, &platform.id).ok();
+    let fallback_selectors = submit_verify_selectors(&platform.id, &platform.name);
+    let fallback_field_selectors = submit_verify_field_selectors(&platform.id, &platform.name);
+    let recipe_field_selectors = recipe
+        .as_ref()
+        .and_then(|item| serde_json::from_str::<serde_json::Value>(&item.field_selectors_json).ok())
+        .unwrap_or_else(|| json!({}));
+    let clean_brand = profile.brand_name.to_lowercase().chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(22)
+        .collect::<String>();
+    let username = if clean_brand.is_empty() { "entitymanager-test".to_string() } else { format!("{clean_brand}test") };
+    let required_fields = recipe.as_ref()
+        .map(|item| lines_to_strings(&item.required_fields))
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec!["username".to_string(), "email".to_string(), "displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()]);
+    let submit_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.submit_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.0.clone());
+    let verify_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.verify_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.1.clone());
+
+    Ok(AccountSubmitVerifyPayload {
+        queue_id: format!("dry-run-preview-{}", platform.id),
+        account_id: format!("dry-run-preview-{}", platform.id),
+        platform_id: platform.id.clone(),
+        platform_name: platform.name.clone(),
+        action: "submit_or_verify_account".to_string(),
+        form_values: SubmitVerifyFormValues {
+            username,
+            email: profile.email,
+            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name } else { profile.brand_name },
+            bio: if profile.short_description.trim().is_empty() { platform.notes.clone() } else { profile.short_description },
+            website_url: money_site.homepage_url,
+        },
+        field_selectors: SubmitVerifyFieldSelectors {
+            username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
+            email: json_array_to_strings(&recipe_field_selectors["email"]).into_iter().chain(fallback_field_selectors.email).collect(),
+            display_name: json_array_to_strings(&recipe_field_selectors["displayName"]).into_iter().chain(fallback_field_selectors.display_name).collect(),
+            bio: json_array_to_strings(&recipe_field_selectors["bio"]).into_iter().chain(fallback_field_selectors.bio).collect(),
+            website_url: json_array_to_strings(&recipe_field_selectors["websiteUrl"]).into_iter().chain(fallback_field_selectors.website_url).collect(),
+        },
+        required_fields,
+        requires_captcha_token: recipe.as_ref().map(|item| item.requires_captcha_token).unwrap_or(false),
+        submit_selectors,
+        verify_selectors,
+        evidence_capture: "current_url".to_string(),
+        notes: "Chế độ chạy thử độc lập: không cần hàng đợi, không điền dữ liệu và không nhấn nút gửi.".to_string(),
+    })
+}
+
 fn get_next_submit_verify_payload_record(
     app_handle: &tauri::AppHandle,
 ) -> Result<AccountSubmitVerifyPayload, String> {
@@ -2250,6 +2310,18 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
             }
         };
 
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("GET /account/submit-verify/preview ") {
+        let response = match get_dry_run_preview_payload_record(&app_handle) {
+            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\\"ok\\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
         let _ = write_http_response(&mut stream, 200, &response);
         return;
     }
