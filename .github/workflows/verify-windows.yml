@@ -38,7 +38,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Selector health tests
-        run: pnpm test:selector-health
+        run: pnpm test:selector-health && pnpm test:dry-run-diagnostics
 
       - name: Build Chrome extension
         run: pnpm extension:build
