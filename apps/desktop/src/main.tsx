@@ -116,6 +116,11 @@ type ReleaseAsset = { name: string; browser_download_url: string; size: number }
 type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
 type DryRunHistoryAudit = { totalRecords: number; uniqueIds: number; oldestCreatedAt: string | null; newestCreatedAt: string | null };
 
+function buildExportFilename(prefix: string) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${prefix}-${stamp}.json`;
+}
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
@@ -125,6 +130,7 @@ function App() {
   const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
   const [dryRunSourceAudit, setDryRunSourceAudit] = useState<DryRunHistoryAudit | null>(null);
   const [dryRunHistoryAllLoaded, setDryRunHistoryAllLoaded] = useState(false);
+  const [diagnosticExportMessage, setDiagnosticExportMessage] = useState("");
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
   const [evidenceDraft, setEvidenceDraft] = useState<Omit<EvidenceRecord, "id" | "createdAt">>({ title: "", evidenceType: "profile", url: "", relatedPlatformId: "", notes: "", status: "needs_review" });
   const [recipeImportJson, setRecipeImportJson] = useState("");
@@ -340,12 +346,14 @@ function App() {
     } catch (error) { setRecipeImportMessage(error instanceof Error ? error.message : "Import JSON thất bại."); }
   }
 
-  function exportSelectorRecipes() {
-    const blob = new Blob([JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), recipes: selectorRecipes }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url; anchor.download = "entitymanager-selector-recipes.json"; anchor.click();
-    URL.revokeObjectURL(url);
+  async function exportSelectorRecipes() {
+    try {
+      const payload = JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), recipes: selectorRecipes }, null, 2);
+      const path = await invoke<string>("save_json_export", { filename: buildExportFilename("entitymanager-selector-recipes"), contents: payload });
+      setStatusMessage(`Selector recipes exported to ${path}`);
+    } catch (error) {
+      setStatusMessage(`Could not export selector recipes: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async function saveSelectorRecipe(recipe: SelectorRecipeRecord) {
@@ -371,22 +379,25 @@ function App() {
       const oldestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[0] : null;
       const newestCreatedAt = createdAtValues.length ? [...createdAtValues].sort()[createdAtValues.length - 1] ?? null : null;
       if (records.length !== audit.totalRecords || uniqueIds !== audit.uniqueIds || oldestCreatedAt !== audit.oldestCreatedAt || newestCreatedAt !== audit.newestCreatedAt) {
-        setStatusMessage("Không xuất báo cáo: lịch sử tải về không khớp hoàn toàn với kiểm kê SQLite. Hãy thử Refresh & reconcile rồi xuất lại.");
+        const message = "Không xuất báo cáo: lịch sử tải về không khớp hoàn toàn với kiểm kê SQLite. Hãy thử Refresh & reconcile rồi xuất lại.";
+        setDiagnosticExportMessage(message);
+        setStatusMessage(message);
         return;
       }
       const report = buildDryRunDiagnosticReport(records, new Date().toISOString(), audit);
-      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "entitymanager-dry-run-diagnostics.json";
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setStatusMessage(report.sourceAudit.complete
-        ? `Exported complete SQLite diagnostics: ${report.sourceAudit.includedRecords} records`
-        : `Exported ${report.sourceAudit.includedRecords} of ${report.sourceAudit.totalRecords} SQLite records; report is partial`);
-    } catch {
-      setStatusMessage("Could not reconcile diagnostics with SQLite. Export was not created.");
+      const path = await invoke<string>("save_json_export", {
+        filename: buildExportFilename("entitymanager-dry-run-diagnostics"),
+        contents: JSON.stringify(report, null, 2)
+      });
+      const message = report.sourceAudit.complete
+        ? `Đã xuất báo cáo SQLite đầy đủ: ${report.sourceAudit.includedRecords} bản ghi. Tệp: ${path}`
+        : `Đã xuất ${report.sourceAudit.includedRecords}/${report.sourceAudit.totalRecords} bản ghi; báo cáo chưa đầy đủ. Tệp: ${path}`;
+      setDiagnosticExportMessage(message);
+      setStatusMessage(message);
+    } catch (error) {
+      const message = `Không thể xuất báo cáo: ${error instanceof Error ? error.message : String(error)}`;
+      setDiagnosticExportMessage(message);
+      setStatusMessage(message);
     }
   }
 
@@ -1203,9 +1214,9 @@ function App() {
         )}
 
         {activeModule === "Selector Recipes" && (
-          <section className="single-panel">
-            <article className="panel">
-              <div className="panel-header">
+          <section className="single-panel selector-recipes-page">
+            <article className="panel selector-recipes-panel">
+              <div className="panel-header selector-recipes-title">
                 <div>
                   <p className="eyebrow">Selector Recipe Editor</p>
                   <h2>Platform field mapping and submit safety rules</h2>
@@ -1213,8 +1224,8 @@ function App() {
                 <span className="badge">{selectorRecipes.length} recipes</span>
               </div>
 
-              <div className="form-grid">
-                <button className="secondary-action" type="button" onClick={exportSelectorRecipes}>Export JSON</button>
+              <div className="form-grid selector-import-tools">
+                <button className="secondary-action" type="button" onClick={() => void exportSelectorRecipes()}>Export recipes JSON to Downloads</button>
                 <label className="full-span">Import recipes JSON<textarea rows={5} value={recipeImportJson} onChange={(event) => setRecipeImportJson(event.target.value)} placeholder="Paste JSON export..." /></label>
                 <button className="primary-action" type="button" onClick={() => void importSelectorRecipes()}>Import JSON to SQLite</button>
                 {recipeImportMessage && <p className="muted-text">{recipeImportMessage}</p>}
@@ -1264,7 +1275,7 @@ function App() {
                   </div>
                 </div>)}
               </div>
-              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} loaded / {dryRunSourceAudit ? dryRunSourceAudit.totalRecords : "?"} in SQLite</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh & reconcile</button><button className="secondary-action" type="button" onClick={() => void loadAllDryRunHistory()}>{dryRunHistoryAllLoaded ? "Reload all history" : "Load all history"}</button><button className="secondary-action" type="button" onClick={() => void exportDryRunDiagnostics()}>Export complete diagnostics JSON</button></div></div><p className="muted-text">Lịch sử mặc định hiển thị 100 bản ghi gần nhất để giao diện chạy nhanh. Chọn “Load all history” để xem toàn bộ; xuất báo cáo luôn đọc lại toàn bộ SQLite và chỉ tạo tệp khi số bản ghi, ID và mốc thời gian khớp kiểm kê. Chức năng chỉ đọc, không sửa hoặc xóa lịch sử. Tệp có thể chứa URL và ID tài khoản; kiểm tra trước khi chia sẻ.</p>
+              <div className="panel-header"><div><p className="eyebrow">Dry-run History</p><h2>Recent selector previews</h2></div><div className="queue-actions"><span className="badge">{dryRunHistory.length} loaded / {dryRunSourceAudit ? dryRunSourceAudit.totalRecords : "?"} in SQLite</span><button className="secondary-action" type="button" onClick={() => void refreshDryRunHistory()}>Refresh & reconcile</button><button className="secondary-action" type="button" onClick={() => void loadAllDryRunHistory()}>{dryRunHistoryAllLoaded ? "Reload all history" : "Load all history"}</button><button className="secondary-action" type="button" onClick={() => { setDiagnosticExportMessage(""); void exportDryRunDiagnostics(); }}>Export complete diagnostics JSON to Downloads</button></div></div>{diagnosticExportMessage && <div className={`status-message ${diagnosticExportMessage.startsWith("Không thể") || diagnosticExportMessage.startsWith("Không xuất") ? "warning" : "success"}`} role="status"><strong>{diagnosticExportMessage.startsWith("Không thể") || diagnosticExportMessage.startsWith("Không xuất") ? "Export needs attention" : "Export result"}</strong><span>{diagnosticExportMessage}</span></div>}<p className="muted-text">Lịch sử mặc định hiển thị 100 bản ghi gần nhất để giao diện chạy nhanh. Chọn “Load all history” để xem toàn bộ; xuất báo cáo luôn đọc lại toàn bộ SQLite và chỉ tạo tệp khi số bản ghi, ID và mốc thời gian khớp kiểm kê. Chức năng chỉ đọc, không sửa hoặc xóa lịch sử. Tệp có thể chứa URL và ID tài khoản; kiểm tra trước khi chia sẻ.</p>
               <div className="queue-list">
                 {dryRunHistory.map((item) => <div className="queue-row" key={item.id}><div>
                   <strong>{item.platformName} — {item.missingChecks.length ? "Needs selector review" : "Preview ready"}</strong>
@@ -1279,7 +1290,7 @@ function App() {
 
               <div className="queue-list">
                 {selectorRecipes.map((recipe) => (
-                  <div className="queue-row recipe-row" key={recipe.platformId}>
+                  <div className="queue-row recipe-row selector-recipe-card" key={recipe.platformId}>
                     <div>
                       <strong>{recipe.platformName}</strong>
                       <span>{recipe.platformId} / updated {recipe.updatedAt ? new Date(Number.isNaN(Number(recipe.updatedAt)) ? recipe.updatedAt : Number(recipe.updatedAt) * 1000).toLocaleString() : "never"}</span>
