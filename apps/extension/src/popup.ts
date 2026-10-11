@@ -186,13 +186,12 @@ async function submitVerifyActiveTab(): Promise<void> {
 
 async function previewSubmitVerifyActiveTab(): Promise<void> {
   try {
-    const payload = await fetchDryRunPreviewPayload();
+    const currentUrl = await getActiveTabUrl();
+    const payload = await fetchDryRunPreviewPayload(currentUrl);
     const tabId = await getActiveTabId();
     // Dry-run reads the page directly through Chrome's scripting API. This avoids
     // depending on a content-script message listener, which may be missing on older tabs.
     const response = await runDryRunInPage(tabId, payload);
-
-    const currentUrl = await getActiveTabUrl();
     const report: DryRunHistoryReport = {
       id: `dryrun-${payload.accountId}-${Date.now()}`,
       platformId: payload.platformId,
@@ -322,8 +321,40 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
   });
 }
 
-async function fetchDryRunPreviewPayload(): Promise<AccountSubmitVerifyPayload> {
-  const response = await fetch(defaultDryRunPreviewUrl, { method: "GET" });
+function platformIdForUrl(url: string): string | null {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase().replace(/^www\\./, "");
+  } catch {
+    return null;
+  }
+
+  const platformDomains: Array<[string, string[]]> = [
+    ["github", ["github.com"]],
+    ["medium", ["medium.com"]],
+    ["tumblr", ["tumblr.com"]],
+    ["aboutme", ["about.me"]],
+    ["pinterest", ["pinterest.com"]],
+    ["youtube", ["youtube.com", "youtu.be"]],
+    ["slideshare", ["slideshare.net"]],
+    ["soundcloud", ["soundcloud.com"]],
+    ["crunchbase", ["crunchbase.com"]],
+    ["behance", ["behance.net"]],
+    ["quora", ["quora.com"]],
+    ["google-business-profile", ["google.com", "business.google.com"]]
+  ];
+
+  return platformDomains.find(([, domains]) =>
+    domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
+  )?.[0] ?? null;
+}
+
+async function fetchDryRunPreviewPayload(currentUrl: string): Promise<AccountSubmitVerifyPayload> {
+  const platformId = platformIdForUrl(currentUrl);
+  if (!platformId) {
+    throw new Error("Chưa có công thức chạy thử cho tên miền này. Hãy mở trang thuộc một nền tảng đã có trong Platform Library.");
+  }
+  const response = await fetch(`${defaultDryRunPreviewUrl}?platformId=${encodeURIComponent(platformId)}`, { method: "GET" });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "Không lấy được dữ liệu chạy thử từ EntityManager Desktop.");
