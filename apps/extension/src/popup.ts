@@ -10,7 +10,12 @@ declare const chrome: {
     sendMessage(tabId: number, message: unknown, callback?: (response: unknown) => void): void;
   };
   scripting: {
-    executeScript(details: { target: { tabId: number }; files: string[] }, callback?: () => void): void;
+    executeScript<T = unknown>(details: {
+      target: { tabId: number };
+      files?: string[];
+      func?: (payload: AccountSubmitVerifyPayload) => T;
+      args?: unknown[];
+    }, callback?: (results?: Array<{ result?: T }>) => void): void;
   };
   storage: {
     local: {
@@ -183,11 +188,9 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
   try {
     const payload = await fetchDryRunPreviewPayload();
     const tabId = await getActiveTabId();
-    const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
-      type: "ENTITYMANAGER_SUBMIT_VERIFY",
-      payload,
-      dryRun: true
-    } satisfies SubmitVerifyMessage);
+    // Dry-run reads the page directly through Chrome's scripting API. This avoids
+    // depending on a content-script message listener, which may be missing on older tabs.
+    const response = await runDryRunInPage(tabId, payload);
 
     const currentUrl = await getActiveTabUrl();
     const report: DryRunHistoryReport = {
@@ -216,6 +219,107 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Dry-run preview failed.");
   }
+}
+
+async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayload): Promise<SubmitVerifyResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript<SubmitVerifyResponse>({
+      target: { tabId },
+      args: [payload],
+      func: (pagePayload) => {
+        const isVisible = (element: Element): boolean => {
+          const candidate = element as HTMLElement;
+          const rect = candidate.getBoundingClientRect();
+          const style = window.getComputedStyle(candidate);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        const findField = (selectors: string[]): HTMLInputElement | HTMLTextAreaElement | null => {
+          for (const selector of selectors) {
+            try {
+              const field = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector))
+                .find((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate));
+              if (field) return field;
+            } catch {
+              // Ignore malformed selectors and continue with the remaining candidates.
+            }
+          }
+          return null;
+        };
+        const fieldEntries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
+          ["username", pagePayload.fieldSelectors.username, pagePayload.formValues.username],
+          ["email", pagePayload.fieldSelectors.email, pagePayload.formValues.email],
+          ["displayName", pagePayload.fieldSelectors.displayName, pagePayload.formValues.displayName],
+          ["bio", pagePayload.fieldSelectors.bio, pagePayload.formValues.bio],
+          ["websiteUrl", pagePayload.fieldSelectors.websiteUrl, pagePayload.formValues.websiteUrl]
+        ];
+        const plannedFields = fieldEntries
+          .filter(([, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors)))
+          .map(([name]) => name);
+        const missingFields: string[] = [];
+        for (const fieldName of pagePayload.requiredFields) {
+          if (!pagePayload.formValues[fieldName]?.trim()) {
+            missingFields.push(`${fieldName}:value`);
+          } else if (!findField(pagePayload.fieldSelectors[fieldName])) {
+            missingFields.push(`${fieldName}:selector`);
+          }
+        }
+        const buttonSelectors = [...pagePayload.verifySelectors, ...pagePayload.submitSelectors];
+        let plannedSelector = "";
+        for (const selector of buttonSelectors) {
+          try {
+            const button = Array.from(document.querySelectorAll<HTMLElement>(selector))
+              .find((candidate) => {
+                const rect = candidate.getBoundingClientRect();
+                const style = window.getComputedStyle(candidate);
+                return !candidate.hasAttribute("disabled") &&
+                  candidate.getAttribute("aria-disabled") !== "true" &&
+                  rect.width > 0 && rect.height > 0 &&
+                  style.visibility !== "hidden" && style.display !== "none";
+              });
+            if (button) { plannedSelector = selector; break; }
+          } catch {
+            // Ignore malformed selectors.
+          }
+        }
+        if (!plannedSelector) {
+          const fallback = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='submit'], a[role='button']"))
+            .find((candidate) => {
+              const text = `${candidate.innerText || ""} ${(candidate as HTMLInputElement).value || ""} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+              const rect = candidate.getBoundingClientRect();
+              const style = window.getComputedStyle(candidate);
+              return !candidate.hasAttribute("disabled") &&
+                candidate.getAttribute("aria-disabled") !== "true" &&
+                rect.width > 0 && rect.height > 0 &&
+                style.visibility !== "hidden" && style.display !== "none" &&
+                ["submit", "sign up", "continue", "verify", "confirm", "create account"].some((label) => text.includes(label));
+            });
+          if (fallback) plannedSelector = "text-fallback";
+        }
+        if (!plannedSelector) missingFields.push("submitButton");
+        return {
+          success: missingFields.length === 0,
+          evidenceUrl: window.location.href,
+          clickedSelector: "",
+          filledFields: [],
+          missingFields,
+          plannedFields,
+          plannedSelector,
+          message: `Chạy thử an toàn: dự kiến nhận diện ${plannedFields.join(", ") || "0 trường"}; nút dự kiến: ${plannedSelector || "không tìm thấy"}. Không điền hoặc gửi biểu mẫu.`
+        };
+      }
+    }, (results) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(`Chrome không thể kiểm tra tab hiện tại. Hãy tải lại trang web rồi thử lại. Chi tiết: ${chrome.runtime.lastError.message || "không rõ nguyên nhân"}`));
+        return;
+      }
+      const result = results?.[0]?.result;
+      if (!result) {
+        reject(new Error("Chrome không trả kết quả chạy thử. Hãy tải lại trang web và thử lại."));
+        return;
+      }
+      resolve(result);
+    });
+  });
 }
 
 async function fetchDryRunPreviewPayload(): Promise<AccountSubmitVerifyPayload> {
