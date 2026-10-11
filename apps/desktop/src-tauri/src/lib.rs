@@ -1387,6 +1387,7 @@ fn complete_account_submit_verify(
 
 fn get_dry_run_preview_payload_record(
     app_handle: &tauri::AppHandle,
+    requested_platform_id: Option<&str>,
 ) -> Result<AccountSubmitVerifyPayload, String> {
     let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
@@ -1394,7 +1395,12 @@ fn get_dry_run_preview_payload_record(
     ensure_default_selector_recipes(&connection)?;
 
     let platforms = get_platform_records(&connection)?;
-    let platform = platforms.first().ok_or_else(|| "Không có nền tảng nào để chạy thử. Hãy mở Platform Library trước.".to_string())?;
+    let platform = if let Some(platform_id) = requested_platform_id {
+        platforms.iter().find(|item| item.id.eq_ignore_ascii_case(platform_id))
+            .ok_or_else(|| format!("Không tìm thấy nền tảng '{}' trong Platform Library.", platform_id))?
+    } else {
+        platforms.first().ok_or_else(|| "Không có nền tảng nào để chạy thử. Hãy mở Platform Library trước.".to_string())?
+    };
     let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
     let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
     let recipe = get_selector_recipe_record(&connection, &platform.id).ok();
@@ -2315,7 +2321,13 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
     }
 
     if request.starts_with("GET /account/submit-verify/preview ") {
-        let response = match get_dry_run_preview_payload_record(&app_handle) {
+        let request_target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
+        let requested_platform_id = request_target.split_once('?')
+            .and_then(|(_, query)| query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "platformId").then_some(value)
+            }));
+        let response = match get_dry_run_preview_payload_record(&app_handle, requested_platform_id) {
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
