@@ -328,7 +328,6 @@ function platformIdForUrl(url: string): string | null {
     const parsedUrl = new URL(url);
     hostname = parsedUrl.hostname.toLowerCase().replace(/^www\./, "");
     pathname = parsedUrl.pathname.toLowerCase();
-  }
   } catch {
     return null;
   }
