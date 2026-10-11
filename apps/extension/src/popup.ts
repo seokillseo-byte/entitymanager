@@ -9,6 +9,9 @@ declare const chrome: {
     query(queryInfo: { active: boolean; currentWindow: boolean }, callback: (tabs: Array<{ id?: number; url?: string }>) => void): void;
     sendMessage(tabId: number, message: unknown, callback?: (response: unknown) => void): void;
   };
+  scripting: {
+    executeScript(details: { target: { tabId: number }; files: string[] }, callback?: () => void): void;
+  };
   storage: {
     local: {
       get(keys: string[], callback: (items: Record<string, unknown>) => void): void;
@@ -327,14 +330,48 @@ function getActiveTabId(): Promise<number> {
 }
 
 function sendTabMessage<T>(tabId: number, message: unknown): Promise<T> {
+  return sendTabMessageOnce<T>(tabId, message).catch(async (error: unknown) => {
+    const messageText = error instanceof Error ? error.message : String(error);
+    if (!/receiving end does not exist|could not establish connection|message port closed/i.test(messageText)) {
+      throw error;
+    }
+
+    // The tab may have been opened before the extension was installed/reloaded, or
+    // Chrome may not have run the declarative content script yet. Inject it once and retry.
+    await injectContentScript(tabId);
+    return sendTabMessageOnce<T>(tabId, message);
+  });
+}
+
+function sendTabMessageOnce<T>(tabId: number, message: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message || "Tab message failed."));
+        reject(new Error(chrome.runtime.lastError.message || "Không kết nối được với nội dung trang."));
+        return;
+      }
+
+      if (response === undefined || response === null) {
+        reject(new Error("Tiện ích đã kết nối nhưng trang không trả về kết quả."));
         return;
       }
 
       resolve(response as T);
+    });
+  });
+}
+
+function injectContentScript(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }, () => {
+      if (chrome.runtime.lastError) {
+        const detail = chrome.runtime.lastError.message || "Chrome không cho phép chạy mã trên tab này.";
+        reject(new Error(
+          `Không thể kết nối với trang hiện tại. Hãy mở một trang web thông thường (không phải chrome://, trang tiện ích hoặc Chrome Web Store), tải lại trang rồi thử lại. Chi tiết: ${detail}`
+        ));
+        return;
+      }
+      resolve();
     });
   });
 }
