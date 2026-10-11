@@ -290,3 +290,13 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Clarified that saving a record only stores local tracking data in SQLite; it does not register an account on a third-party website.
 - Improved spacing, contrast, and responsive behavior for the guide and saved-account list.
 - Validation pending: TypeScript checks, relevant tests, extension build, and Windows installer workflow. Do not merge until required checks pass.
+
+
+## 2026-10-11 — Match Selector Recipe Dry-run to Active Tab
+
+- Fixed the standalone Selector Recipe dry-run choosing the first platform in alphabetical order regardless of the website open in Chrome.
+- The extension now identifies the active tab's hostname and requests a preview payload for the matching supported Platform Library ID.
+- The Desktop preview endpoint accepts an optional `platformId`; when provided, it selects that platform's saved recipe instead of silently using the first platform.
+- Unsupported hostnames now show a clear message rather than testing an unrelated platform recipe.
+- Dry-run remains read-only: it only inspects visible fields and never fills or submits the form.
+- Validation: GitHub Actions required to confirm the Rust/Tauri and extension builds after this change.
