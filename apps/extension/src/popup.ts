@@ -323,8 +323,12 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
 
 function platformIdForUrl(url: string): string | null {
   let hostname: string;
+  let pathname: string;
   try {
-    hostname = new URL(url).hostname.toLowerCase().replace(/^www\\./, "");
+    const parsedUrl = new URL(url);
+    hostname = parsedUrl.hostname.toLowerCase().replace(/^www\./, "");
+    pathname = parsedUrl.pathname.toLowerCase();
+  }
   } catch {
     return null;
   }
@@ -341,8 +345,12 @@ function platformIdForUrl(url: string): string | null {
     ["crunchbase", ["crunchbase.com"]],
     ["behance", ["behance.net"]],
     ["quora", ["quora.com"]],
-    ["google-business-profile", ["google.com", "business.google.com"]]
+    ["google-business-profile", ["business.google.com"]]
   ];
+
+  if (hostname === "google.com" && pathname.startsWith("/business")) {
+    return "google-business-profile";
+  }
 
   return platformDomains.find(([, domains]) =>
     domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
