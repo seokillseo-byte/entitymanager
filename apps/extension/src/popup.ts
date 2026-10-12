@@ -33,6 +33,7 @@ const fetchPayloadButton = document.querySelector<HTMLButtonElement>("#fetchPayl
 const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloadButton");
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
 const dryRunButton = document.querySelector<HTMLButtonElement>("#dryRunButton");
+const fillPreviewButton = document.querySelector<HTMLButtonElement>("#fillPreviewButton");
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
@@ -59,6 +60,10 @@ injectButton?.addEventListener("click", () => {
 
 dryRunButton?.addEventListener("click", () => {
   void previewSubmitVerifyActiveTab();
+});
+
+fillPreviewButton?.addEventListener("click", () => {
+  void fillPreviewActiveTab();
 });
 
 submitVerifyButton?.addEventListener("click", () => {
@@ -184,6 +189,28 @@ async function submitVerifyActiveTab(): Promise<void> {
   }
 }
 
+async function fillPreviewActiveTab(): Promise<void> {
+  try {
+    const currentUrl = await getActiveTabUrl();
+    const payload = await fetchDryRunPreviewPayload(currentUrl);
+    const tabId = await getActiveTabId();
+    const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
+      type: "ENTITYMANAGER_SUBMIT_VERIFY",
+      payload,
+      fillOnly: true
+    } satisfies SubmitVerifyMessage);
+
+    setStatus([
+      response.message,
+      `Filled: ${response.filledFields.join(", ") || "none"}`,
+      `Not submitted: yes`,
+      `Missing: ${response.missingFields.join(", ") || "none"}`
+    ].join("\n"));
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Safe fill preview failed.");
+  }
+}
+
 async function previewSubmitVerifyActiveTab(): Promise<void> {
   try {
     const currentUrl = await getActiveTabUrl();
@@ -249,7 +276,11 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           ["email", pagePayload.fieldSelectors.email, pagePayload.formValues.email],
           ["displayName", pagePayload.fieldSelectors.displayName, pagePayload.formValues.displayName],
           ["bio", pagePayload.fieldSelectors.bio, pagePayload.formValues.bio],
-          ["websiteUrl", pagePayload.fieldSelectors.websiteUrl, pagePayload.formValues.websiteUrl]
+          ["websiteUrl", pagePayload.fieldSelectors.websiteUrl, pagePayload.formValues.websiteUrl],
+          ["company", pagePayload.fieldSelectors.company, pagePayload.formValues.company],
+          ["location", pagePayload.fieldSelectors.location, pagePayload.formValues.location],
+          ["socialLinks", pagePayload.fieldSelectors.socialLinks, pagePayload.formValues.socialLinks],
+          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage]
         ];
         const plannedFields = fieldEntries
           .filter(([, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors)))
@@ -427,22 +458,33 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
     throw new Error("Submit/verify payload action must be submit_or_verify_account.");
   }
 
+  const defaultFormValues: AccountSubmitVerifyPayload["formValues"] = {
+    username: "",
+    email: "",
+    displayName: "",
+    bio: "",
+    websiteUrl: "",
+    company: "",
+    location: "",
+    socialLinks: "",
+    profileImage: ""
+  };
+  const defaultFieldSelectors: AccountSubmitVerifyPayload["fieldSelectors"] = {
+    username: [],
+    email: [],
+    displayName: [],
+    bio: [],
+    websiteUrl: [],
+    company: [],
+    location: [],
+    socialLinks: [],
+    profileImage: []
+  };
+
   return {
     ...parsed,
-    formValues: parsed.formValues || {
-      username: "",
-      email: "",
-      displayName: "",
-      bio: "",
-      websiteUrl: ""
-    },
-    fieldSelectors: parsed.fieldSelectors || {
-      username: [],
-      email: [],
-      displayName: [],
-      bio: [],
-      websiteUrl: []
-    },
+    formValues: { ...defaultFormValues, ...(parsed.formValues || {}) },
+    fieldSelectors: { ...defaultFieldSelectors, ...(parsed.fieldSelectors || {}) },
     requiredFields: parsed.requiredFields || ["username", "email", "displayName", "bio", "websiteUrl"],
     requiresCaptchaToken: parsed.requiresCaptchaToken ?? true,
     submitSelectors: parsed.submitSelectors || [],
