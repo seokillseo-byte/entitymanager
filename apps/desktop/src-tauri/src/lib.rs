@@ -2311,6 +2311,12 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
         Err(_) => return,
     };
     let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let request_target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("");
+    let request_path = request_target.split_once('?').map_or(request_target, |(path, _)| path);
 
     if request.starts_with("OPTIONS ") {
         let _ = write_http_response(&mut stream, 204, "");
@@ -2330,8 +2336,7 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
         return;
     }
 
-    if request.starts_with("GET /account/submit-verify/preview ") {
-        let request_target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
+    if request.starts_with("GET ") && request_path == "/account/submit-verify/preview" {
         let requested_platform_id = request_target.split_once('?')
             .and_then(|(_, query)| query.split('&').find_map(|part| {
                 let (key, value) = part.split_once('=')?;
