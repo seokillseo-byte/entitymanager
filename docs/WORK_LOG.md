@@ -300,3 +300,10 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Unsupported hostnames now show a clear message rather than testing an unrelated platform recipe.
 - Dry-run remains read-only: it only inspects visible fields and never fills or submits the form.
 - Validation: GitHub Actions required to confirm the Rust/Tauri and extension builds after this change.
+
+## 2026-10-12 — Align GitHub Profile Dry-run Selectors
+
+- Added GitHub profile-settings selectors for display name, bio, and website URL fields (user[profile_name], user[profile_bio], and user[profile_blog]).
+- For a GitHub dry-run, require only the profile fields relevant to the GitHub profile settings page; do not mark username and email as missing when those controls are not on that page.
+- Dry-run remains inspection-only: it does not fill fields or click the submit button.
+- Validation: GitHub Actions will verify the Windows desktop and extension builds.
