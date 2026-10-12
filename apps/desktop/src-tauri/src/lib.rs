@@ -1387,6 +1387,7 @@ fn complete_account_submit_verify(
 
 fn get_dry_run_preview_payload_record(
     app_handle: &tauri::AppHandle,
+    requested_platform_id: Option<&str>,
 ) -> Result<AccountSubmitVerifyPayload, String> {
     let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
@@ -1394,7 +1395,12 @@ fn get_dry_run_preview_payload_record(
     ensure_default_selector_recipes(&connection)?;
 
     let platforms = get_platform_records(&connection)?;
-    let platform = platforms.first().ok_or_else(|| "Không có nền tảng nào để chạy thử. Hãy mở Platform Library trước.".to_string())?;
+    let platform = if let Some(platform_id) = requested_platform_id {
+        platforms.iter().find(|item| item.id.eq_ignore_ascii_case(platform_id))
+            .ok_or_else(|| format!("Không tìm thấy nền tảng '{}' trong Platform Library.", platform_id))?
+    } else {
+        platforms.first().ok_or_else(|| "Không có nền tảng nào để chạy thử. Hãy mở Platform Library trước.".to_string())?
+    };
     let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
     let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
     let recipe = get_selector_recipe_record(&connection, &platform.id).ok();
@@ -1409,10 +1415,16 @@ fn get_dry_run_preview_payload_record(
         .take(22)
         .collect::<String>();
     let username = if clean_brand.is_empty() { "entitymanager-test".to_string() } else { format!("{clean_brand}test") };
-    let required_fields = recipe.as_ref()
-        .map(|item| lines_to_strings(&item.required_fields))
-        .filter(|items| !items.is_empty())
-        .unwrap_or_else(|| vec!["username".to_string(), "email".to_string(), "displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()]);
+    // GitHub's /settings/profile page edits profile fields, not account credentials.
+    // Keep the dry-run requirements aligned with fields that actually exist on that page.
+    let required_fields = if platform.id.eq_ignore_ascii_case("github") {
+        vec!["displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()]
+    } else {
+        recipe.as_ref()
+            .map(|item| lines_to_strings(&item.required_fields))
+            .filter(|items| !items.is_empty())
+            .unwrap_or_else(|| vec!["username".to_string(), "email".to_string(), "displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()])
+    };
     let submit_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.submit_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.0.clone());
     let verify_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.verify_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.1.clone());
 
@@ -2198,6 +2210,10 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
     if key == "github" || name.contains("github") {
         selectors.username.insert(0, "input[name='user[login]']".to_string());
         selectors.email.insert(0, "input[name='user[email]']".to_string());
+        // GitHub profile settings use these names, rather than generic name/bio/website selectors.
+        selectors.display_name.insert(0, "input[name='user[profile_name]']".to_string());
+        selectors.bio.insert(0, "textarea[name='user[profile_bio]']".to_string());
+        selectors.website_url.insert(0, "input[name='user[profile_blog]']".to_string());
     }
 
     if key == "medium" || name.contains("medium") {
@@ -2315,7 +2331,13 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
     }
 
     if request.starts_with("GET /account/submit-verify/preview ") {
-        let response = match get_dry_run_preview_payload_record(&app_handle) {
+        let request_target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
+        let requested_platform_id = request_target.split_once('?')
+            .and_then(|(_, query)| query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "platformId").then_some(value)
+            }));
+        let response = match get_dry_run_preview_payload_record(&app_handle, requested_platform_id) {
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
