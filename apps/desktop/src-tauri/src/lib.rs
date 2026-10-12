@@ -281,6 +281,10 @@ struct SubmitVerifyFormValues {
     display_name: String,
     bio: String,
     website_url: String,
+    company: String,
+    location: String,
+    social_links: String,
+    profile_image: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -291,6 +295,10 @@ struct SubmitVerifyFieldSelectors {
     display_name: Vec<String>,
     bio: Vec<String>,
     website_url: Vec<String>,
+    company: Vec<String>,
+    location: Vec<String>,
+    social_links: Vec<String>,
+    profile_image: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1415,10 +1423,24 @@ fn get_dry_run_preview_payload_record(
         .take(22)
         .collect::<String>();
     let username = if clean_brand.is_empty() { "entitymanager-test".to_string() } else { format!("{clean_brand}test") };
+    let entity_social_links = profile
+        .same_as_urls
+        .lines()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n");
     // GitHub's /settings/profile page edits profile fields, not account credentials.
     // Keep the dry-run requirements aligned with fields that actually exist on that page.
     let required_fields = if platform.id.eq_ignore_ascii_case("github") {
-        vec!["displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()]
+        vec![
+            "displayName".to_string(),
+            "bio".to_string(),
+            "websiteUrl".to_string(),
+            "company".to_string(),
+            "location".to_string(),
+        ]
     } else {
         recipe.as_ref()
             .map(|item| lines_to_strings(&item.required_fields))
@@ -1437,9 +1459,13 @@ fn get_dry_run_preview_payload_record(
         form_values: SubmitVerifyFormValues {
             username,
             email: profile.email,
-            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name } else { profile.brand_name },
-            bio: if profile.short_description.trim().is_empty() { platform.notes.clone() } else { profile.short_description },
+            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name.clone() } else { profile.brand_name.clone() },
+            bio: if profile.short_description.trim().is_empty() { platform.notes.clone() } else { profile.short_description.clone() },
             website_url: money_site.homepage_url,
+            company: profile.legal_name.clone(),
+            location: profile.address.clone(),
+            social_links: entity_social_links,
+            profile_image: String::new(),
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
@@ -1447,6 +1473,10 @@ fn get_dry_run_preview_payload_record(
             display_name: json_array_to_strings(&recipe_field_selectors["displayName"]).into_iter().chain(fallback_field_selectors.display_name).collect(),
             bio: json_array_to_strings(&recipe_field_selectors["bio"]).into_iter().chain(fallback_field_selectors.bio).collect(),
             website_url: json_array_to_strings(&recipe_field_selectors["websiteUrl"]).into_iter().chain(fallback_field_selectors.website_url).collect(),
+            company: json_array_to_strings(&recipe_field_selectors["company"]).into_iter().chain(fallback_field_selectors.company).collect(),
+            location: json_array_to_strings(&recipe_field_selectors["location"]).into_iter().chain(fallback_field_selectors.location).collect(),
+            social_links: json_array_to_strings(&recipe_field_selectors["socialLinks"]).into_iter().chain(fallback_field_selectors.social_links).collect(),
+            profile_image: json_array_to_strings(&recipe_field_selectors["profileImage"]).into_iter().chain(fallback_field_selectors.profile_image).collect(),
         },
         required_fields,
         requires_captcha_token: recipe.as_ref().map(|item| item.requires_captcha_token).unwrap_or(false),
@@ -1518,6 +1548,14 @@ fn get_next_submit_verify_payload_record(
         .map(|item| lines_to_strings(&item.required_fields))
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| json_array_to_strings(&payload["requiredFields"]));
+    let entity_social_links = profile
+        .same_as_urls
+        .lines()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n");
 
     Ok(AccountSubmitVerifyPayload {
         queue_id: item.id,
@@ -1528,9 +1566,13 @@ fn get_next_submit_verify_payload_record(
         form_values: SubmitVerifyFormValues {
             username: account.recommended_username,
             email: profile.email,
-            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name } else { profile.brand_name },
-            bio: if profile.short_description.trim().is_empty() { account.notes.clone() } else { profile.short_description },
+            display_name: if profile.brand_name.trim().is_empty() { profile.legal_name.clone() } else { profile.brand_name.clone() },
+            bio: if profile.short_description.trim().is_empty() { account.notes.clone() } else { profile.short_description.clone() },
             website_url: money_site.homepage_url,
+            company: profile.legal_name.clone(),
+            location: profile.address.clone(),
+            social_links: entity_social_links,
+            profile_image: String::new(),
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["username"])).chain(fallback_field_selectors.username).collect(),
@@ -1538,6 +1580,10 @@ fn get_next_submit_verify_payload_record(
             display_name: json_array_to_strings(&recipe_field_selectors["displayName"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["displayName"])).chain(fallback_field_selectors.display_name).collect(),
             bio: json_array_to_strings(&recipe_field_selectors["bio"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["bio"])).chain(fallback_field_selectors.bio).collect(),
             website_url: json_array_to_strings(&recipe_field_selectors["websiteUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["websiteUrl"])).chain(fallback_field_selectors.website_url).collect(),
+            company: json_array_to_strings(&recipe_field_selectors["company"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["company"])).chain(fallback_field_selectors.company).collect(),
+            location: json_array_to_strings(&recipe_field_selectors["location"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["location"])).chain(fallback_field_selectors.location).collect(),
+            social_links: json_array_to_strings(&recipe_field_selectors["socialLinks"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["socialLinks"])).chain(fallback_field_selectors.social_links).collect(),
+            profile_image: json_array_to_strings(&recipe_field_selectors["profileImage"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["profileImage"])).chain(fallback_field_selectors.profile_image).collect(),
         },
         required_fields: if required_fields.is_empty() {
             vec![
@@ -1875,7 +1921,11 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
                 "email": field_selectors.email,
                 "displayName": field_selectors.display_name,
                 "bio": field_selectors.bio,
-                "websiteUrl": field_selectors.website_url
+                "websiteUrl": field_selectors.website_url,
+                "company": field_selectors.company,
+                "location": field_selectors.location,
+                "socialLinks": field_selectors.social_links,
+                "profileImage": field_selectors.profile_image
             }))
             .unwrap_or_else(|_| "{}".to_string()),
             submit_selectors: submit_verify.0.join("\n"),
@@ -2203,6 +2253,30 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
             "input[id*='website' i]".to_string(),
             "input[name*='url' i]".to_string(),
         ],
+        company: vec![
+            "input[name='company']".to_string(),
+            "input[id*='company' i]".to_string(),
+            "input[name*='organization' i]".to_string(),
+            "input[id*='organization' i]".to_string(),
+        ],
+        location: vec![
+            "input[name='location']".to_string(),
+            "input[id*='location' i]".to_string(),
+            "input[name*='address' i]".to_string(),
+            "input[id*='address' i]".to_string(),
+        ],
+        social_links: vec![
+            "input[name*='social' i]".to_string(),
+            "input[id*='social' i]".to_string(),
+            "input[placeholder*='social' i]".to_string(),
+            "input[placeholder*='profile' i]".to_string(),
+        ],
+        profile_image: vec![
+            "input[type='file'][accept*='image' i]".to_string(),
+            "input[type='file'][name*='avatar' i]".to_string(),
+            "input[type='file'][name*='photo' i]".to_string(),
+            "input[type='file'][name*='image' i]".to_string(),
+        ],
     };
     let key = platform_id.to_lowercase();
     let name = platform_name.to_lowercase();
@@ -2214,6 +2288,11 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
         selectors.display_name.insert(0, "input[name='user[profile_name]']".to_string());
         selectors.bio.insert(0, "textarea[name='user[profile_bio]']".to_string());
         selectors.website_url.insert(0, "input[name='user[profile_blog]']".to_string());
+        selectors.company.insert(0, "input[name='user[profile_company]']".to_string());
+        selectors.location.insert(0, "input[name='user[profile_location]']".to_string());
+        selectors.social_links.insert(0, "input[name='user[profile_social_accounts][]']".to_string());
+        selectors.social_links.insert(1, "input[placeholder^='Link to social profile' i]".to_string());
+        selectors.profile_image.insert(0, "input[type='file'][name='user[profile_picture]']".to_string());
     }
 
     if key == "medium" || name.contains("medium") {
