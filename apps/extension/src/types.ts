@@ -22,6 +22,10 @@ export interface AccountSubmitVerifyPayload {
     displayName: string;
     bio: string;
     websiteUrl: string;
+    company: string;
+    location: string;
+    socialLinks: string;
+    profileImage: string;
   };
   fieldSelectors: {
     username: string[];
@@ -29,6 +33,10 @@ export interface AccountSubmitVerifyPayload {
     displayName: string[];
     bio: string[];
     websiteUrl: string[];
+    company: string[];
+    location: string[];
+    socialLinks: string[];
+    profileImage: string[];
   };
   requiredFields: Array<keyof AccountSubmitVerifyPayload["formValues"]>;
   requiresCaptchaToken: boolean;
@@ -56,6 +64,7 @@ export interface SubmitVerifyMessage {
   type: "ENTITYMANAGER_SUBMIT_VERIFY";
   payload: AccountSubmitVerifyPayload;
   dryRun?: boolean;
+  fillOnly?: boolean;
 }
 
 export interface InjectionReport {
