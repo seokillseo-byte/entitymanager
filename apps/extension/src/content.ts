@@ -24,7 +24,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (typedMessage.type === "ENTITYMANAGER_SUBMIT_VERIFY" && typedMessage.payload) {
-    const result = submitOrVerifyAccount(typedMessage.payload as AccountSubmitVerifyPayload, Boolean(typedMessage.dryRun));
+    const result = submitOrVerifyAccount(
+      typedMessage.payload as AccountSubmitVerifyPayload,
+      Boolean(typedMessage.dryRun),
+      Boolean(typedMessage.fillOnly)
+    );
     sendResponse(result);
     return true;
   }
@@ -83,7 +87,7 @@ function findTokenFields(tokenField: string): Array<HTMLInputElement | HTMLTextA
   return Array.from(new Set(fields));
 }
 
-function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload, dryRun: boolean): SubmitVerifyResponse {
+function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload, dryRun: boolean, fillOnly: boolean): SubmitVerifyResponse {
   const plannedFields = previewFillableFields(payload);
   const plannedButton = findClickableElement([...payload.verifySelectors, ...payload.submitSelectors]);
   const plannedSelector = plannedButton?.getAttribute("data-entitymanager-selector") || "";
@@ -100,6 +104,19 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload, dryRun: bool
       plannedFields,
       plannedSelector,
       message: `Dry-run preview for ${payload.platformName}: would fill ${plannedFields.join(", ") || "no fields"}; would click ${plannedSelector || "nothing"}.`
+    };
+  }
+
+  if (fillOnly) {
+    return {
+      success: missingFields.length === 0,
+      evidenceUrl: window.location.href,
+      clickedSelector: "",
+      filledFields,
+      missingFields,
+      plannedFields,
+      plannedSelector,
+      message: `Safe fill preview for ${payload.platformName}: filled ${filledFields.join(", ") || "no fields"} and did not submit.`
     };
   }
 
@@ -160,37 +177,43 @@ function submitOrVerifyAccount(payload: AccountSubmitVerifyPayload, dryRun: bool
 }
 
 function previewFillableFields(payload: AccountSubmitVerifyPayload): string[] {
-  const entries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
-    ["username", payload.fieldSelectors.username, payload.formValues.username],
-    ["email", payload.fieldSelectors.email, payload.formValues.email],
-    ["displayName", payload.fieldSelectors.displayName, payload.formValues.displayName],
-    ["bio", payload.fieldSelectors.bio, payload.formValues.bio],
-    ["websiteUrl", payload.fieldSelectors.websiteUrl, payload.formValues.websiteUrl]
-  ];
-
-  return entries
+  return formValueEntries(payload)
     .filter(([, selectors, value]) => value.trim() && findFillableField(selectors))
     .map(([fieldName]) => fieldName);
 }
 
 function fillFormValues(payload: AccountSubmitVerifyPayload): string[] {
   const filledFields: string[] = [];
-  const entries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
-    ["username", payload.fieldSelectors.username, payload.formValues.username],
-    ["email", payload.fieldSelectors.email, payload.formValues.email],
-    ["displayName", payload.fieldSelectors.displayName, payload.formValues.displayName],
-    ["bio", payload.fieldSelectors.bio, payload.formValues.bio],
-    ["websiteUrl", payload.fieldSelectors.websiteUrl, payload.formValues.websiteUrl]
-  ];
 
-  for (const [fieldName, selectors, value] of entries) {
+  for (const [fieldName, selectors, value] of formValueEntries(payload)) {
     if (!value.trim()) {
+      continue;
+    }
+
+    if (fieldName === "socialLinks") {
+      const links = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+      const fields = findFillableFields(selectors).filter((field) => field.type !== "file");
+
+      fields.slice(0, links.length).forEach((field, index) => {
+        field.focus();
+        field.value = links[index];
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      if (fields.length > 0 && links.length > 0) {
+        filledFields.push(fieldName);
+      }
       continue;
     }
 
     const field = findFillableField(selectors);
 
     if (!field) {
+      continue;
+    }
+
+    if (field.type === "file") {
       continue;
     }
 
@@ -202,6 +225,20 @@ function fillFormValues(payload: AccountSubmitVerifyPayload): string[] {
   }
 
   return filledFields;
+}
+
+function formValueEntries(payload: AccountSubmitVerifyPayload): Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> {
+  return [
+    ["username", payload.fieldSelectors.username, payload.formValues.username],
+    ["email", payload.fieldSelectors.email, payload.formValues.email],
+    ["displayName", payload.fieldSelectors.displayName, payload.formValues.displayName],
+    ["bio", payload.fieldSelectors.bio, payload.formValues.bio],
+    ["websiteUrl", payload.fieldSelectors.websiteUrl, payload.formValues.websiteUrl],
+    ["company", payload.fieldSelectors.company, payload.formValues.company],
+    ["location", payload.fieldSelectors.location, payload.formValues.location],
+    ["socialLinks", payload.fieldSelectors.socialLinks, payload.formValues.socialLinks],
+    ["profileImage", payload.fieldSelectors.profileImage, payload.formValues.profileImage]
+  ];
 }
 
 function findMissingRequiredFields(payload: AccountSubmitVerifyPayload, assumeFill: boolean): string[] {
@@ -236,9 +273,15 @@ function findMissingRequiredFields(payload: AccountSubmitVerifyPayload, assumeFi
 }
 
 function findFillableField(selectors: string[]): HTMLInputElement | HTMLTextAreaElement | null {
+  return findFillableFields(selectors)[0] || null;
+}
+
+function findFillableFields(selectors: string[]): Array<HTMLInputElement | HTMLTextAreaElement> {
+  const results: Array<HTMLInputElement | HTMLTextAreaElement> = [];
+
   for (const selector of selectors) {
     const fields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector));
-    const field = fields.find((candidate) => {
+    const visibleFields = fields.filter((candidate) => {
       const rect = candidate.getBoundingClientRect();
       const disabled = candidate.hasAttribute("disabled") || candidate.getAttribute("aria-disabled") === "true" || candidate.readOnly;
       const style = window.getComputedStyle(candidate);
@@ -246,12 +289,10 @@ function findFillableField(selectors: string[]): HTMLInputElement | HTMLTextArea
       return !disabled && rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
     });
 
-    if (field) {
-      return field;
-    }
+    results.push(...visibleFields);
   }
 
-  return null;
+  return Array.from(new Set(results));
 }
 
 function findClickableElement(selectors: string[]): HTMLElement | null {
