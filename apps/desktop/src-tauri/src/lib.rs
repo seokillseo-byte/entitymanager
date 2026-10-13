@@ -14,12 +14,36 @@ static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn image_asset_value_to_bridge_value(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
-        || trimmed.starts_with("data:")
-    {
+    if trimmed.is_empty() || trimmed.starts_with("data:") {
         return trimmed.to_string();
+    }
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let response = match reqwest::blocking::Client::new()
+            .get(trimmed)
+            .header(reqwest::header::USER_AGENT, "EntityManager/0.1 image bridge")
+            .send()
+        {
+            Ok(response) => response,
+            Err(_) => return trimmed.to_string(),
+        };
+        if !response.status().is_success() {
+            return trimmed.to_string();
+        }
+
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.starts_with("image/"))
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let bytes = match response.bytes() {
+            Ok(bytes) => bytes,
+            Err(_) => return trimmed.to_string(),
+        };
+
+        return format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes));
     }
 
     let path = PathBuf::from(trimmed.trim_matches('"'));
