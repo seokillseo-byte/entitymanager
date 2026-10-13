@@ -166,6 +166,8 @@ struct EntityProfileRecord {
     topical_niche: String,
     expertise_proof: String,
     trust_signals: String,
+    avatar_image_url: String,
+    banner_image_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -299,6 +301,8 @@ struct SubmitVerifyFormValues {
     location: String,
     social_links: String,
     profile_image: String,
+    avatar_image_url: String,
+    banner_image_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -313,6 +317,8 @@ struct SubmitVerifyFieldSelectors {
     location: Vec<String>,
     social_links: Vec<String>,
     profile_image: Vec<String>,
+    avatar_image_url: Vec<String>,
+    banner_image_url: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -812,7 +818,7 @@ fn get_entity_profile(app_handle: tauri::AppHandle) -> Result<EntityProfileRecor
         .prepare(
             "SELECT id, profile_type, brand_name, legal_name, short_description, full_description,
                     founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
-                    topical_niche, expertise_proof, trust_signals
+                    topical_niche, expertise_proof, trust_signals, avatar_image_url, banner_image_url
              FROM entity_profiles
              WHERE id = 'primary'",
         )
@@ -836,6 +842,8 @@ fn get_entity_profile(app_handle: tauri::AppHandle) -> Result<EntityProfileRecor
             topical_niche: row.get(13)?,
             expertise_proof: row.get(14)?,
             trust_signals: row.get(15)?,
+            avatar_image_url: row.get(16)?,
+            banner_image_url: row.get(17)?,
         })
     });
 
@@ -1479,7 +1487,9 @@ fn get_dry_run_preview_payload_record(
             company: profile.legal_name.clone(),
             location: profile.address.clone(),
             social_links: entity_social_links,
-            profile_image: String::new(),
+            profile_image: profile.avatar_image_url.clone(),
+            avatar_image_url: profile.avatar_image_url.clone(),
+            banner_image_url: profile.banner_image_url.clone(),
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
@@ -1491,6 +1501,8 @@ fn get_dry_run_preview_payload_record(
             location: json_array_to_strings(&recipe_field_selectors["location"]).into_iter().chain(fallback_field_selectors.location).collect(),
             social_links: json_array_to_strings(&recipe_field_selectors["socialLinks"]).into_iter().chain(fallback_field_selectors.social_links).collect(),
             profile_image: json_array_to_strings(&recipe_field_selectors["profileImage"]).into_iter().chain(fallback_field_selectors.profile_image).collect(),
+            avatar_image_url: json_array_to_strings(&recipe_field_selectors["avatarImageUrl"]).into_iter().chain(fallback_field_selectors.avatar_image_url).collect(),
+            banner_image_url: json_array_to_strings(&recipe_field_selectors["bannerImageUrl"]).into_iter().chain(fallback_field_selectors.banner_image_url).collect(),
         },
         required_fields,
         requires_captcha_token: recipe.as_ref().map(|item| item.requires_captcha_token).unwrap_or(false),
@@ -1586,7 +1598,9 @@ fn get_next_submit_verify_payload_record(
             company: profile.legal_name.clone(),
             location: profile.address.clone(),
             social_links: entity_social_links,
-            profile_image: String::new(),
+            profile_image: profile.avatar_image_url.clone(),
+            avatar_image_url: profile.avatar_image_url.clone(),
+            banner_image_url: profile.banner_image_url.clone(),
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["username"])).chain(fallback_field_selectors.username).collect(),
@@ -1598,6 +1612,8 @@ fn get_next_submit_verify_payload_record(
             location: json_array_to_strings(&recipe_field_selectors["location"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["location"])).chain(fallback_field_selectors.location).collect(),
             social_links: json_array_to_strings(&recipe_field_selectors["socialLinks"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["socialLinks"])).chain(fallback_field_selectors.social_links).collect(),
             profile_image: json_array_to_strings(&recipe_field_selectors["profileImage"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["profileImage"])).chain(fallback_field_selectors.profile_image).collect(),
+            avatar_image_url: json_array_to_strings(&recipe_field_selectors["avatarImageUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["avatarImageUrl"])).chain(fallback_field_selectors.avatar_image_url).collect(),
+            banner_image_url: json_array_to_strings(&recipe_field_selectors["bannerImageUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["bannerImageUrl"])).chain(fallback_field_selectors.banner_image_url).collect(),
         },
         required_fields: if required_fields.is_empty() {
             vec![
@@ -1771,7 +1787,9 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 target_keywords TEXT NOT NULL,
                 topical_niche TEXT NOT NULL,
                 expertise_proof TEXT NOT NULL,
-                trust_signals TEXT NOT NULL
+                trust_signals TEXT NOT NULL,
+                avatar_image_url TEXT NOT NULL DEFAULT '',
+                banner_image_url TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS accounts (
@@ -1848,6 +1866,8 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
 
     ensure_column(connection, "integration_settings", "key_status", "TEXT NOT NULL DEFAULT 'missing'")?;
     ensure_column(connection, "integration_settings", "last_test_at", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "entity_profiles", "avatar_image_url", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "entity_profiles", "banner_image_url", "TEXT NOT NULL DEFAULT ''")?;
 
     Ok(())
 }
@@ -1939,7 +1959,9 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
                 "company": field_selectors.company,
                 "location": field_selectors.location,
                 "socialLinks": field_selectors.social_links,
-                "profileImage": field_selectors.profile_image
+                "profileImage": field_selectors.profile_image,
+                "avatarImageUrl": field_selectors.avatar_image_url,
+                "bannerImageUrl": field_selectors.banner_image_url
             }))
             .unwrap_or_else(|_| "{}".to_string()),
             submit_selectors: submit_verify.0.join("\n"),
@@ -2106,7 +2128,7 @@ fn get_entity_profile_record(connection: &Connection) -> Result<EntityProfileRec
         .query_row(
             "SELECT id, profile_type, brand_name, legal_name, short_description, full_description,
                     founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
-                    topical_niche, expertise_proof, trust_signals
+                    topical_niche, expertise_proof, trust_signals, avatar_image_url, banner_image_url
              FROM entity_profiles
              WHERE id = 'primary'",
             [],
@@ -2128,6 +2150,8 @@ fn get_entity_profile_record(connection: &Connection) -> Result<EntityProfileRec
                     topical_niche: row.get(13)?,
                     expertise_proof: row.get(14)?,
                     trust_signals: row.get(15)?,
+                    avatar_image_url: row.get(16)?,
+                    banner_image_url: row.get(17)?,
                 })
             },
         )
@@ -2291,6 +2315,18 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
             "input[type='file'][name*='photo' i]".to_string(),
             "input[type='file'][name*='image' i]".to_string(),
         ],
+        avatar_image_url: vec![
+            "input[type='file'][accept*='image' i]".to_string(),
+            "input[type='file'][name*='avatar' i]".to_string(),
+            "input[type='file'][name*='photo' i]".to_string(),
+            "input[type='file'][name*='image' i]".to_string(),
+        ],
+        banner_image_url: vec![
+            "input[type='file'][name*='banner' i]".to_string(),
+            "input[type='file'][name*='cover' i]".to_string(),
+            "input[type='file'][name*='header' i]".to_string(),
+            "input[type='file'][accept*='image' i]".to_string(),
+        ],
     };
     let key = platform_id.to_lowercase();
     let name = platform_name.to_lowercase();
@@ -2307,6 +2343,7 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
         selectors.social_links.insert(0, "input[name='user[profile_social_accounts][]']".to_string());
         selectors.social_links.insert(1, "input[placeholder^='Link to social profile' i]".to_string());
         selectors.profile_image.insert(0, "input[type='file'][name='user[profile_picture]']".to_string());
+        selectors.avatar_image_url.insert(0, "input[type='file'][name='user[profile_picture]']".to_string());
     }
 
     if key == "medium" || name.contains("medium") {
@@ -2975,9 +3012,9 @@ fn save_entity_profile_record(connection: &Connection, profile: &EntityProfileRe
             "INSERT INTO entity_profiles (
                 id, profile_type, brand_name, legal_name, short_description, full_description,
                 founder_name, author_name, email, phone, address, same_as_urls, target_keywords,
-                topical_niche, expertise_proof, trust_signals
+                topical_niche, expertise_proof, trust_signals, avatar_image_url, banner_image_url
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(id)
              DO UPDATE SET profile_type = excluded.profile_type,
                            brand_name = excluded.brand_name,
@@ -2993,7 +3030,9 @@ fn save_entity_profile_record(connection: &Connection, profile: &EntityProfileRe
                            target_keywords = excluded.target_keywords,
                            topical_niche = excluded.topical_niche,
                            expertise_proof = excluded.expertise_proof,
-                           trust_signals = excluded.trust_signals",
+                           trust_signals = excluded.trust_signals,
+                           avatar_image_url = excluded.avatar_image_url,
+                           banner_image_url = excluded.banner_image_url",
             params![
                 profile.id,
                 profile.profile_type,
@@ -3010,7 +3049,9 @@ fn save_entity_profile_record(connection: &Connection, profile: &EntityProfileRe
                 profile.target_keywords,
                 profile.topical_niche,
                 profile.expertise_proof,
-                profile.trust_signals
+                profile.trust_signals,
+                profile.avatar_image_url,
+                profile.banner_image_url
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -3191,6 +3232,8 @@ fn default_entity_profile() -> EntityProfileRecord {
         topical_niche: "SEO services and entity authority building".to_string(),
         expertise_proof: "Case studies, client results, process documentation, author bio, and service pages.".to_string(),
         trust_signals: "Consistent NAP, branded profiles, author pages, social proof, privacy/contact pages, and clear ownership.".to_string(),
+        avatar_image_url: String::new(),
+        banner_image_url: String::new(),
     }
 }
 
