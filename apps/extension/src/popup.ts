@@ -418,9 +418,13 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               continue;
             }
             try {
+              if (!value.startsWith("data:")) {
+                attentionFields.push(`${fieldName}:cannot_download_image_use_local_file_path`);
+                continue;
+              }
               const blob = await blobFromImageValue(value);
               if (!blob) {
-                attentionFields.push(`${fieldName}:image_fetch_failed`);
+                attentionFields.push(`${fieldName}:cannot_read_image_use_local_file_path`);
                 continue;
               }
               const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
@@ -491,15 +495,19 @@ async function prepareSafeFillPayload(payload: AccountSubmitVerifyPayload, curre
 
   if (platformId === "github") {
     nextPayload.formValues.bannerImageUrl = "";
+    nextPayload.formValues.profileImage = "";
+    nextPayload.fieldSelectors.profileImage = [];
     nextPayload.fieldSelectors.bannerImageUrl = [];
-    nextPayload.requiredFields = nextPayload.requiredFields.filter((field) => field !== "bannerImageUrl");
+    nextPayload.requiredFields = nextPayload.requiredFields.filter((field) => field !== "bannerImageUrl" && field !== "profileImage");
   }
 
   const avatarValue = nextPayload.formValues.avatarImageUrl || nextPayload.formValues.profileImage;
   const hydratedAvatar = await hydrateImageValueForPage(avatarValue);
   if (hydratedAvatar) {
     nextPayload.formValues.avatarImageUrl = hydratedAvatar;
-    nextPayload.formValues.profileImage = hydratedAvatar;
+    if (platformId !== "github") {
+      nextPayload.formValues.profileImage = hydratedAvatar;
+    }
   }
 
   const hydratedBanner = await hydrateImageValueForPage(nextPayload.formValues.bannerImageUrl);
