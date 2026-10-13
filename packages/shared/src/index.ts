@@ -208,6 +208,12 @@ export interface AccountSubmitVerifyPayload {
     displayName: string;
     bio: string;
     websiteUrl: string;
+    company: string;
+    location: string;
+    socialLinks: string;
+    profileImage: string;
+    avatarImageUrl: string;
+    bannerImageUrl: string;
   };
   fieldSelectors: {
     username: string[];
@@ -215,6 +221,12 @@ export interface AccountSubmitVerifyPayload {
     displayName: string[];
     bio: string[];
     websiteUrl: string[];
+    company: string[];
+    location: string[];
+    socialLinks: string[];
+    profileImage: string[];
+    avatarImageUrl: string[];
+    bannerImageUrl: string[];
   };
   requiredFields: Array<keyof AccountSubmitVerifyPayload["formValues"]>;
   requiresCaptchaToken: boolean;
@@ -222,6 +234,9 @@ export interface AccountSubmitVerifyPayload {
   verifySelectors: string[];
   evidenceCapture: "current_url";
   notes: string;
+  executionSteps?: Array<"dry_run" | "fill_text" | "upload_media" | "submit_verify">;
+  saveTextSelector?: string;
+  mediaConfirmSelector?: string;
 }
 
 export interface SelectorRecipeRecord {
