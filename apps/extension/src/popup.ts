@@ -384,6 +384,13 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           }
           return null;
         };
+        const saveGithubProfileText = async (): Promise<boolean> => {
+          const saveButton = findButtonByExactText("Update profile");
+          if (!saveButton) return false;
+          saveButton.click();
+          await new Promise((resolve) => setTimeout(resolve, 1800));
+          return true;
+        };
         const blobFromImageValue = async (imageValue: string): Promise<Blob | null> => {
           if (imageValue.startsWith("data:")) {
             const parts = imageValue.split(",");
@@ -420,6 +427,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           .map(([name]) => name);
         const filledFields: string[] = [];
         const attentionFields: string[] = [];
+        let githubTextFieldsFilled = false;
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -468,6 +476,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             });
             if (links.length > 0) {
               filledFields.push(fieldName);
+              if (isGithubProfilePage()) githubTextFieldsFilled = true;
             }
             continue;
           }
@@ -518,6 +527,14 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           setFieldValue(field, value);
           if (field.value === value) {
             filledFields.push(fieldName);
+            if (isGithubProfilePage()) githubTextFieldsFilled = true;
+          }
+        }
+        if (githubTextFieldsFilled) {
+          if (await saveGithubProfileText()) {
+            filledFields.push("githubProfile:saved");
+          } else {
+            attentionFields.push("githubProfile:update_button_not_found");
           }
         }
         const missingFields: string[] = [...attentionFields];
