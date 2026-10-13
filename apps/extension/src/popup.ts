@@ -220,6 +220,44 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
         };
         const findByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
+          const findGithubProfileUrlFields = (): HTMLInputElement[] => {
+            const direct = document.querySelector<HTMLInputElement>("input[name='user[profile_blog]'], input[id='user_profile_blog']");
+            if (direct && !direct.disabled && !direct.readOnly && isVisible(direct)) {
+              return [direct];
+            }
+
+            const labels = Array.from(document.querySelectorAll<HTMLElement>("label, dt, span, div"))
+              .filter((candidate) => candidate.textContent?.trim().toLowerCase() === "url");
+            for (const label of labels) {
+              const labelled = label.querySelector<HTMLInputElement>("input:not([type='file'])");
+              if (labelled && !labelled.disabled && !labelled.readOnly && isVisible(labelled)) return [labelled];
+
+              const container = label.closest<HTMLElement>("dl, .form-group, .mb-3, .mt-3, .Box-row, div");
+              const containerInput = container?.querySelector<HTMLInputElement>("input:not([type='file'])");
+              if (containerInput && !containerInput.disabled && !containerInput.readOnly && isVisible(containerInput)) return [containerInput];
+
+              let sibling = label.nextElementSibling;
+              while (sibling) {
+                const siblingInput = sibling.querySelector<HTMLInputElement>("input:not([type='file'])");
+                if (siblingInput && !siblingInput.disabled && !siblingInput.readOnly && isVisible(siblingInput)) return [siblingInput];
+                sibling = sibling.nextElementSibling;
+              }
+            }
+
+            const visibleTextInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type='file'])"))
+              .filter((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate));
+            const socialIndex = visibleTextInputs.findIndex((candidate) => {
+              const text = `${candidate.name} ${candidate.id} ${candidate.placeholder}`.toLowerCase();
+              return text.includes("social") || text.includes("link to social profile");
+            });
+            const bio = document.querySelector<HTMLTextAreaElement>("textarea[name='user[profile_bio]'], textarea[id='user_profile_bio']");
+            const afterBio = bio ? visibleTextInputs.filter((candidate) => candidate.getBoundingClientRect().top > bio.getBoundingClientRect().bottom - 4) : visibleTextInputs;
+            const beforeSocial = socialIndex >= 0 ? afterBio.filter((candidate) => visibleTextInputs.indexOf(candidate) < socialIndex) : afterBio;
+            return beforeSocial.filter((candidate) => {
+              const text = `${candidate.name} ${candidate.id} ${candidate.placeholder} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+              return !text.includes("social") && !text.includes("company") && !text.includes("location") && !text.includes("email");
+            }).slice(0, 1);
+          };
           const labels: Record<string, string[]> = {
             websiteUrl: ["url", "website", "blog"],
             avatarImageUrl: ["avatar", "profile picture", "profile photo", "photo", "image"],
@@ -231,16 +269,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           const wanted = labels[fieldName] || [];
           if (wanted.length === 0) return [];
           if (fieldName === "websiteUrl" && location.hostname === "github.com" && location.pathname === "/settings/profile") {
-            const githubBlogField = document.querySelector<HTMLInputElement>("input[name='user[profile_blog]']");
-            if (githubBlogField && !githubBlogField.disabled && !githubBlogField.readOnly && isVisible(githubBlogField)) {
-              return [githubBlogField];
-            }
-            const urlLabel = Array.from(document.querySelectorAll<HTMLElement>("label, dt, span, div"))
-              .find((candidate) => candidate.textContent?.trim().toLowerCase() === "url");
-            const labelledInput = urlLabel?.parentElement?.querySelector<HTMLInputElement>("input:not([type='file'])");
-            if (labelledInput && !labelledInput.disabled && !labelledInput.readOnly && isVisible(labelledInput)) {
-              return [labelledInput];
-            }
+            return findGithubProfileUrlFields();
           }
           return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
             .filter((candidate) => {
@@ -324,6 +353,13 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             editButton?.click();
             await new Promise((resolve) => setTimeout(resolve, 800));
             fields = findFields(selectors, isImageField, fieldName);
+            if (fields.length === 0 && location.hostname === "github.com" && location.pathname === "/settings/profile") {
+              fields = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='file']"))
+                .filter((candidate) => {
+                  const context = `${candidate.name} ${candidate.id} ${candidate.accept} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+                  return !candidate.disabled && (context.includes("image") || context.includes("photo") || context.includes("picture") || context.includes("avatar") || candidate.accept.includes("image"));
+                });
+            }
           }
           if (fields.length === 0) continue;
 
