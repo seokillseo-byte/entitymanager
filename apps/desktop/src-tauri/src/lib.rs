@@ -347,6 +347,9 @@ struct AccountSubmitVerifyPayload {
     verify_selectors: Vec<String>,
     evidence_capture: String,
     notes: String,
+    execution_steps: Vec<String>,
+    save_text_selector: String,
+    media_confirm_selector: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1436,6 +1439,9 @@ fn complete_captcha_injection_record(
                 "submitSelectors": selectors.0,
                 "verifySelectors": selectors.1,
                 "evidenceCapture": "current_url",
+                "executionSteps": execution_steps_for_platform(&account.platform_id),
+                "saveTextSelector": save_text_selector_for_platform(&account.platform_id, &account.platform_name),
+                "mediaConfirmSelector": media_confirm_selector_for_platform(&account.platform_id, &account.platform_name),
                 "message": "CAPTCHA injected. Submit/verify account is ready for browser automation or manual confirmation."
             })
             .to_string(),
@@ -1572,6 +1578,9 @@ fn get_dry_run_preview_payload_record(
         verify_selectors,
         evidence_capture: "current_url".to_string(),
         notes: "Chế độ chạy thử độc lập: không cần hàng đợi, không điền dữ liệu và không nhấn nút gửi.".to_string(),
+        execution_steps: execution_steps_for_platform(&platform.id),
+        save_text_selector: save_text_selector_for_platform(&platform.id, &platform.name),
+        media_confirm_selector: media_confirm_selector_for_platform(&platform.id, &platform.name),
     })
 }
 
@@ -1698,6 +1707,18 @@ fn get_next_submit_verify_payload_record(
         verify_selectors: if verify_selectors.is_empty() { fallback_selectors.1 } else { verify_selectors },
         evidence_capture: payload["evidenceCapture"].as_str().unwrap_or("current_url").to_string(),
         notes: payload["message"].as_str().unwrap_or("Submit or verify the account, then capture current URL as evidence.").to_string(),
+        execution_steps: {
+            let payload_steps = json_array_to_strings(&payload["executionSteps"]);
+            if payload_steps.is_empty() { execution_steps_for_platform(&account.platform_id) } else { payload_steps }
+        },
+        save_text_selector: payload["saveTextSelector"].as_str()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| save_text_selector_for_platform(&account.platform_id, &account.platform_name)),
+        media_confirm_selector: payload["mediaConfirmSelector"].as_str()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| media_confirm_selector_for_platform(&account.platform_id, &account.platform_name)),
     })
 }
 
@@ -2413,11 +2434,38 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
     if key == "medium" || name.contains("medium") {
         selectors.email.insert(0, "input[name='email']".to_string());
         selectors.display_name.insert(0, "input[name='name']".to_string());
+        selectors.display_name.insert(1, "input[aria-label*='name' i]".to_string());
+        selectors.bio.insert(0, "textarea[aria-label*='bio' i]".to_string());
+        selectors.bio.insert(1, "textarea[placeholder*='bio' i]".to_string());
+        selectors.website_url.insert(0, "input[aria-label*='website' i]".to_string());
+        selectors.website_url.insert(1, "input[placeholder*='website' i]".to_string());
+        selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.profile_image.insert(0, "input[type='file'][accept*='image' i]".to_string());
     }
 
     if key == "tumblr" || name.contains("tumblr") {
         selectors.email.insert(0, "input[name='email']".to_string());
         selectors.username.insert(0, "input[name='tumblelog[name]']".to_string());
+        selectors.display_name.insert(0, "input[name*='title' i]".to_string());
+        selectors.display_name.insert(1, "input[aria-label*='title' i]".to_string());
+        selectors.bio.insert(0, "textarea[name*='description' i]".to_string());
+        selectors.bio.insert(1, "textarea[aria-label*='description' i]".to_string());
+        selectors.website_url.insert(0, "input[name*='url' i]".to_string());
+        selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.banner_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+    }
+
+    if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
+        selectors.display_name.insert(0, "input[name*='name' i]".to_string());
+        selectors.display_name.insert(1, "input[aria-label*='name' i]".to_string());
+        selectors.bio.insert(0, "textarea[name*='bio' i]".to_string());
+        selectors.bio.insert(1, "textarea[aria-label*='bio' i]".to_string());
+        selectors.bio.insert(2, "textarea[placeholder*='about' i]".to_string());
+        selectors.website_url.insert(0, "input[name*='website' i]".to_string());
+        selectors.website_url.insert(1, "input[aria-label*='website' i]".to_string());
+        selectors.social_links.insert(0, "input[name*='link' i]".to_string());
+        selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.profile_image.insert(0, "input[type='file'][accept*='image' i]".to_string());
     }
 
     if key == "pinterest" || name.contains("pinterest") {
@@ -2484,6 +2532,18 @@ fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<Strin
         );
     }
 
+    if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
+        return (
+            vec![
+                "button[type='submit']".to_string(),
+                "button[aria-label*='save' i]".to_string(),
+                "button[data-testid*='save' i]".to_string(),
+                "button[data-test*='save' i]".to_string(),
+            ],
+            generic_verify,
+        );
+    }
+
     if key == "pinterest" || name.contains("pinterest") {
         return (
             vec![
@@ -2496,6 +2556,62 @@ fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<Strin
     }
 
     (generic_submit, generic_verify)
+}
+
+fn execution_steps_for_platform(platform_id: &str) -> Vec<String> {
+    let key = platform_id.to_lowercase();
+    if key == "github" || key == "medium" || key == "aboutme" || key == "tumblr" {
+        return vec![
+            "dry_run".to_string(),
+            "fill_text".to_string(),
+            "upload_media".to_string(),
+            "submit_verify".to_string(),
+        ];
+    }
+
+    vec![
+        "dry_run".to_string(),
+        "fill_text".to_string(),
+        "submit_verify".to_string(),
+    ]
+}
+
+fn save_text_selector_for_platform(platform_id: &str, platform_name: &str) -> String {
+    let key = platform_id.to_lowercase();
+    let name = platform_name.to_lowercase();
+
+    if key == "github" || name.contains("github") {
+        return "button[type='submit']".to_string();
+    }
+
+    if key == "medium" || name.contains("medium") {
+        return "button[type='submit'], button[data-testid*='save' i], button[aria-label*='save' i]".to_string();
+    }
+
+    if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
+        return "button[type='submit'], button[aria-label*='save' i], button[data-testid*='save' i]".to_string();
+    }
+
+    if key == "tumblr" || name.contains("tumblr") {
+        return "button[type='submit'], button[aria-label*='save' i], button[data-testid*='save' i]".to_string();
+    }
+
+    String::new()
+}
+
+fn media_confirm_selector_for_platform(platform_id: &str, platform_name: &str) -> String {
+    let key = platform_id.to_lowercase();
+    let name = platform_name.to_lowercase();
+
+    if key == "github" || name.contains("github") {
+        return String::new();
+    }
+
+    if key == "medium" || name.contains("medium") || key == "aboutme" || name.contains("about.me") || key == "tumblr" || name.contains("tumblr") {
+        return "button[type='submit'], button[aria-label*='save' i], button[aria-label*='apply' i], button[data-testid*='save' i]".to_string();
+    }
+
+    String::new()
 }
 
 fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppHandle) {
