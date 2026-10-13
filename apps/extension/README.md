@@ -18,6 +18,14 @@ Manual JSON paste is still supported as a fallback for debugging.
 
 Use `Chạy thử Selector Recipe` trước khi thực hiện bất kỳ thao tác nào. Chức năng này lấy cấu hình chạy thử riêng từ Desktop, không phụ thuộc hàng đợi CAPTCHA/Submit-Verify. Nó chỉ đọc các trường trên tab đang mở, không điền dữ liệu và không nhấn nút gửi. Kết quả được ghi vào SQLite qua endpoint lịch sử chạy thử.
 
+Phase 1.18 hardens platform execution into three safe operator steps:
+
+1. `Chạy thử Selector Recipe`: preview selectors and button checks only.
+2. `Điền thử an toàn`: fill text/profile fields and save supported profile forms such as GitHub.
+3. `Cập nhật avatar/banner`: upload media separately so image modals do not reset unsaved text fields.
+
+Desktop payloads may include `executionSteps`, `saveTextSelector`, and `mediaConfirmSelector` so each platform can document the intended flow without scattering platform-specific behavior through the extension.
+
 ## Form fill and safety checks
 
 Before clicking submit/verify, the extension attempts to fill:
@@ -27,6 +35,8 @@ Before clicking submit/verify, the extension attempts to fill:
 - display name
 - bio
 - website URL
+- company, location, social links
+- avatar/profile image and banner image when the platform has a safe upload path
 
 The payload comes from Desktop SQLite data: account record, entity profile, and money site. The extension blocks submit when a required value is empty, a required selector cannot be found, a required field remains empty after fill, or the CAPTCHA token field is missing.
 
