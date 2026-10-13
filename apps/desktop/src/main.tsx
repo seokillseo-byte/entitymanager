@@ -1464,6 +1464,14 @@ function App() {
                   SameAs URLs
                   <textarea rows={3} value={entityProfile.sameAsUrls} onChange={(event) => updateEntityProfile({ sameAsUrls: event.target.value })} />
                 </label>
+                <label className="full-span">
+                  Avatar / Logo Image URL
+                  <input value={entityProfile.avatarImageUrl} onChange={(event) => updateEntityProfile({ avatarImageUrl: event.target.value })} placeholder="https://example.com/logo.png" />
+                </label>
+                <label className="full-span">
+                  Banner / Cover Image URL · recommended 1200x630px
+                  <input value={entityProfile.bannerImageUrl} onChange={(event) => updateEntityProfile({ bannerImageUrl: event.target.value })} placeholder="https://example.com/entity-banner-1200x630.jpg" />
+                </label>
                 <label>
                   Target Keywords
                   <textarea rows={3} value={entityProfile.targetKeywords} onChange={(event) => updateEntityProfile({ targetKeywords: event.target.value })} />
