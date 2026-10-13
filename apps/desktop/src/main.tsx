@@ -116,6 +116,17 @@ type ReleaseAsset = { name: string; browser_download_url: string; size: number }
 type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
 type DryRunHistoryAudit = { totalRecords: number; uniqueIds: number; oldestCreatedAt: string | null; newestCreatedAt: string | null };
 
+function releaseBuildNumber(release: Pick<LatestRelease, "tag_name">) {
+  const match = release.tag_name.match(/build-(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function pickHighestBuildRelease(releases: LatestRelease[]) {
+  return releases
+    .filter((release) => release.assets.some((asset) => asset.name === "EntityManager-Chrome-Extension.zip") && release.assets.some((asset) => asset.name.endsWith("-setup.exe")))
+    .sort((a, b) => releaseBuildNumber(b) - releaseBuildNumber(a))[0] ?? null;
+}
+
 function buildExportFilename(prefix: string) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${prefix}-${stamp}.json`;
@@ -157,14 +168,15 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", {
+    void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases?per_page=20", {
       headers: { Accept: "application/vnd.github+json" },
     })
       .then((response) => {
         if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
-        return response.json() as Promise<LatestRelease>;
+        return response.json() as Promise<LatestRelease[]>;
       })
-      .then((release) => {
+      .then((releases) => {
+        const release = pickHighestBuildRelease(releases);
         if (!cancelled) setLatestRelease(release);
       })
       .catch(() => {
@@ -906,13 +918,17 @@ function App() {
                     {latestRelease ? latestRelease.name : "Phiên bản mới nhất trên GitHub Releases"}
                   </p>
                   <p className="panel-hint">
-                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Cập nhật: ${new Date(latestRelease.published_at).toLocaleDateString()}` : "Phiên bản và tệp tải sẽ lấy từ bản phát hành mới nhất."}
+                    {latestRelease ? `Tag: ${latestRelease.tag_name} · Build: ${releaseBuildNumber(latestRelease)} · Cập nhật: ${new Date(latestRelease.published_at).toLocaleDateString()}` : "Phiên bản và tệp tải sẽ lấy từ build mới nhất."}
                   </p>
                   <button
                     className="primary-action extension-download-action"
                     type="button"
                     onClick={() => {
-                      void invoke("open_latest_release_download", { assetName: "EntityManager-Chrome-Extension.zip" }).catch((error) => setStatusMessage(`Không mở được link tải Extension: ${String(error)}`));
+                      if (!latestRelease) {
+                        setStatusMessage("Chưa lấy được thông tin release mới nhất từ GitHub.");
+                        return;
+                      }
+                      void invoke("open_release_asset_download", { releaseTag: latestRelease.tag_name, assetName: "EntityManager-Chrome-Extension.zip" }).catch((error) => setStatusMessage(`Không mở được link tải Extension: ${String(error)}`));
                     }}
                   >
                     <Download size={18} />
@@ -941,21 +957,19 @@ function App() {
                     className="primary-action extension-download-action"
                     type="button"
                     onClick={() => {
-                      void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
-                        .then((response) => response.json() as Promise<LatestRelease>)
-                        .then((release) => {
-                          const asset = release.assets.find((item) => item.name.endsWith("-setup.exe"));
-                          if (!asset) throw new Error("Bản phát hành mới nhất chưa có file cài đặt .exe");
-                          return invoke("open_latest_release_download", { assetName: asset.name });
-                        })
-                        .catch((error) => setStatusMessage(`Không mở được link tải bộ cài Windows: ${String(error)}`));
+                      const asset = latestRelease?.assets.find((item) => item.name.endsWith("-setup.exe"));
+                      if (!latestRelease || !asset) {
+                        setStatusMessage("Chưa lấy được link tải bộ cài Windows mới nhất từ GitHub.");
+                        return;
+                      }
+                      void invoke("open_release_asset_download", { releaseTag: latestRelease.tag_name, assetName: asset.name }).catch((error) => setStatusMessage(`Không mở được link tải bộ cài Windows: ${String(error)}`));
                     }}
                   >
                     <Download size={18} />
                     Tải bộ cài Windows (.exe)
                   </button>
                   <p className="panel-hint">
-                    Chỉ hiển thị và tải bản phát hành mới nhất; các bản cũ không được liệt kê trong Overview.{" "}
+                    Overview chọn build có số lớn nhất, tránh lệch khi GitHub publish nhiều release gần nhau.{" "}
                     <a href={latestRelease?.html_url ?? "https://github.com/seokillseo-byte/entitymanager/releases/latest"} target="_blank" rel="noreferrer">Xem ghi chú phát hành</a>
                   </p>
                 </article>
