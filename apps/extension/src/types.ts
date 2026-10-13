@@ -26,6 +26,8 @@ export interface AccountSubmitVerifyPayload {
     location: string;
     socialLinks: string;
     profileImage: string;
+    avatarImageUrl: string;
+    bannerImageUrl: string;
   };
   fieldSelectors: {
     username: string[];
@@ -37,6 +39,8 @@ export interface AccountSubmitVerifyPayload {
     location: string[];
     socialLinks: string[];
     profileImage: string[];
+    avatarImageUrl: string[];
+    bannerImageUrl: string[];
   };
   requiredFields: Array<keyof AccountSubmitVerifyPayload["formValues"]>;
   requiresCaptchaToken: boolean;
