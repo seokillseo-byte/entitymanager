@@ -197,7 +197,7 @@ async function submitVerifyActiveTab(): Promise<void> {
 async function fillPreviewActiveTab(): Promise<void> {
   try {
     const currentUrl = await getActiveTabUrl();
-    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl);
+    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl, { includeGithubAvatar: false });
     const tabId = await getActiveTabId();
     const response = await runSafeFillInPage(tabId, payload);
 
@@ -215,7 +215,7 @@ async function fillPreviewActiveTab(): Promise<void> {
 async function uploadAvatarOnlyActiveTab(): Promise<void> {
   try {
     const currentUrl = await getActiveTabUrl();
-    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl);
+    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl, { includeGithubAvatar: true });
     const avatarPayload: AccountSubmitVerifyPayload = {
       ...payload,
       formValues: {
@@ -384,13 +384,6 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           }
           return null;
         };
-        const saveGithubProfileBeforeAvatar = async (): Promise<boolean> => {
-          const saveButton = findButtonByExactText("Update profile");
-          if (!saveButton) return false;
-          saveButton.click();
-          await new Promise((resolve) => setTimeout(resolve, 1800));
-          return true;
-        };
         const blobFromImageValue = async (imageValue: string): Promise<Blob | null> => {
           if (imageValue.startsWith("data:")) {
             const parts = imageValue.split(",");
@@ -427,8 +420,6 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           .map(([name]) => name);
         const filledFields: string[] = [];
         const attentionFields: string[] = [];
-        let githubProfileSavedBeforeAvatar = false;
-        let githubTextFieldsFilled = false;
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -477,7 +468,6 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             });
             if (links.length > 0) {
               filledFields.push(fieldName);
-              if (isGithubProfilePage()) githubTextFieldsFilled = true;
             }
             continue;
           }
@@ -489,14 +479,6 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               continue;
             }
             try {
-              if (isGithubProfilePage() && fieldName === "avatarImageUrl" && githubTextFieldsFilled && !githubProfileSavedBeforeAvatar) {
-                githubProfileSavedBeforeAvatar = true;
-                if (await saveGithubProfileBeforeAvatar()) {
-                  filledFields.push("githubProfile:saved");
-                } else {
-                  attentionFields.push("githubProfile:update_button_not_found");
-                }
-              }
               if (!value.startsWith("data:")) {
                 attentionFields.push(`${fieldName}:cannot_download_image_use_local_file_path`);
                 continue;
@@ -536,7 +518,6 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           setFieldValue(field, value);
           if (field.value === value) {
             filledFields.push(fieldName);
-            if (isGithubProfilePage()) githubTextFieldsFilled = true;
           }
         }
         const missingFields: string[] = [...attentionFields];
@@ -574,7 +555,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
   });
 }
 
-async function prepareSafeFillPayload(payload: AccountSubmitVerifyPayload, currentUrl: string): Promise<AccountSubmitVerifyPayload> {
+async function prepareSafeFillPayload(payload: AccountSubmitVerifyPayload, currentUrl: string, options: { includeGithubAvatar?: boolean } = {}): Promise<AccountSubmitVerifyPayload> {
   const nextPayload: AccountSubmitVerifyPayload = {
     ...payload,
     formValues: { ...payload.formValues },
@@ -586,6 +567,11 @@ async function prepareSafeFillPayload(payload: AccountSubmitVerifyPayload, curre
   if (platformId === "github") {
     nextPayload.formValues.bannerImageUrl = "";
     nextPayload.formValues.profileImage = "";
+    if (!options.includeGithubAvatar) {
+      nextPayload.formValues.avatarImageUrl = "";
+      nextPayload.fieldSelectors.avatarImageUrl = [];
+      nextPayload.requiredFields = nextPayload.requiredFields.filter((field) => field !== "avatarImageUrl");
+    }
     nextPayload.fieldSelectors.profileImage = [];
     nextPayload.fieldSelectors.bannerImageUrl = [];
     nextPayload.requiredFields = nextPayload.requiredFields.filter((field) => field !== "bannerImageUrl" && field !== "profileImage");
