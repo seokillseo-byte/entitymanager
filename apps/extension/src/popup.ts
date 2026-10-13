@@ -200,7 +200,7 @@ async function fillPreviewActiveTab(): Promise<void> {
       response.message,
       `Filled: ${response.filledFields.join(", ") || "none"}`,
       `Not submitted: yes`,
-      `Missing: ${response.missingFields.join(", ") || "none"}`
+      `Needs attention: ${response.missingFields.join(", ") || "none"}`
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Safe fill preview failed.");
@@ -342,6 +342,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && findFields(selectors, fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl", fieldName).length > 0)
           .map(([name]) => name);
         const filledFields: string[] = [];
+        const attentionFields: string[] = [];
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -361,9 +362,26 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
                   const context = `${candidate.name} ${candidate.id} ${candidate.accept} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
                   return !candidate.disabled && (context.includes("image") || context.includes("photo") || context.includes("picture") || context.includes("avatar") || candidate.accept.includes("image"));
                 });
+              if (fields.length === 0) {
+                const uploadButton = Array.from(document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>("button, a[role='menuitem'], a[role='button']"))
+                  .find((candidate) => {
+                    const text = `${candidate.innerText || ""} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+                    return isVisible(candidate) && (text.includes("upload") || text.includes("photo") || text.includes("picture"));
+                  });
+                if (uploadButton) {
+                  attentionFields.push(`${fieldName}:manual_file_picker`);
+                } else {
+                  attentionFields.push(`${fieldName}:manual_upload_control`);
+                }
+              }
             }
           }
-          if (fields.length === 0) continue;
+          if (fields.length === 0) {
+            if (isImageField && !attentionFields.some((item) => item.startsWith(`${fieldName}:`))) {
+              attentionFields.push(`${fieldName}:upload_control_not_found`);
+            }
+            continue;
+          }
 
           if (fieldName === "socialLinks") {
             const links = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -377,10 +395,16 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
 
           if (isImageField) {
             const fileField = fields.find((field) => field.type === "file") as HTMLInputElement | undefined;
-            if (!fileField) continue;
+            if (!fileField) {
+              attentionFields.push(`${fieldName}:manual_upload_control`);
+              continue;
+            }
             try {
               const response = await fetch(value, { mode: "cors" });
-              if (!response.ok) continue;
+              if (!response.ok) {
+                attentionFields.push(`${fieldName}:image_fetch_failed`);
+                continue;
+              }
               const blob = await response.blob();
               const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
               const filename = fieldName === "bannerImageUrl" ? `entity-banner-1200x630.${extension}` : `entity-avatar.${extension}`;
@@ -392,7 +416,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               fileField.dispatchEvent(new Event("change", { bubbles: true }));
               filledFields.push(fieldName);
             } catch {
-              // Keep safe-fill non-destructive when an image URL is not fetchable from the page.
+              attentionFields.push(`${fieldName}:manual_or_blocked_image_upload`);
             }
             continue;
           }
@@ -404,7 +428,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             filledFields.push(fieldName);
           }
         }
-        const missingFields: string[] = [];
+        const missingFields: string[] = [...attentionFields];
         for (const fieldName of pagePayload.requiredFields) {
           if (!pagePayload.formValues[fieldName]?.trim()) {
             missingFields.push(`${fieldName}:value`);
