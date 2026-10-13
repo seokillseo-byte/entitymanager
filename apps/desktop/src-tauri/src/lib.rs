@@ -17,7 +17,16 @@ fn app_health() -> &'static str {
 }
 
 #[tauri::command]
-fn open_latest_release_download(asset_name: String) -> Result<(), String> {
+fn open_release_asset_download(release_tag: String, asset_name: String) -> Result<(), String> {
+    let valid_tag = release_tag.starts_with("desktop-v0.1.0-build-")
+        && release_tag
+            .trim_start_matches("desktop-v0.1.0-build-")
+            .chars()
+            .all(|character| character.is_ascii_digit());
+    if !valid_tag {
+        return Err("Tag release không được phép.".to_string());
+    }
+
     let valid_name = asset_name == "EntityManager-Chrome-Extension.zip"
         || (asset_name.starts_with("EntityManager_")
             && asset_name.ends_with("_x64-setup.exe")
@@ -28,7 +37,7 @@ fn open_latest_release_download(asset_name: String) -> Result<(), String> {
         return Err("Tên tệp tải không được phép.".to_string());
     }
     let url = format!(
-        "https://github.com/seokillseo-byte/entitymanager/releases/latest/download/{asset_name}"
+        "https://github.com/seokillseo-byte/entitymanager/releases/download/{release_tag}/{asset_name}"
     );
 
     #[cfg(target_os = "windows")]
@@ -44,6 +53,11 @@ fn open_latest_release_download(asset_name: String) -> Result<(), String> {
     {
         Err("Tải tệp qua nút này hiện chỉ được hỗ trợ trên Windows.".to_string())
     }
+}
+
+#[tauri::command]
+fn open_latest_release_download(asset_name: String) -> Result<(), String> {
+    open_release_asset_download("desktop-v0.1.0-build-222".to_string(), asset_name)
 }
 
 #[tauri::command]
@@ -3233,6 +3247,7 @@ pub fn run() {
             app_health,
             open_extension_download,
             open_latest_release_download,
+            open_release_asset_download,
             start_extension_bridge_server,
             local_config_path,
             get_money_site,
