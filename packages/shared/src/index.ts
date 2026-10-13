@@ -102,6 +102,8 @@ export interface EntityProfileRecord {
   topicalNiche: string;
   expertiseProof: string;
   trustSignals: string;
+  avatarImageUrl: string;
+  bannerImageUrl: string;
 }
 
 export interface AccountCreationPlanItem {
