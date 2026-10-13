@@ -424,6 +424,20 @@ struct DryRunHistoryRecord {
     created_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformValidationRecord {
+    platform_id: String,
+    platform_name: String,
+    status: String,
+    dry_run_checked_at: String,
+    text_saved_at: String,
+    media_uploaded_at: String,
+    last_tested_url: String,
+    notes: String,
+    updated_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -869,6 +883,58 @@ fn save_dry_run_history(app_handle: tauri::AppHandle, record: DryRunHistoryRecor
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
     save_dry_run_history_record(&connection, &record)?;
+    Ok(record)
+}
+
+#[tauri::command]
+fn get_platform_validation_records(app_handle: tauri::AppHandle) -> Result<Vec<PlatformValidationRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_platforms(&connection)?;
+    ensure_default_platform_validation(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
+                    media_uploaded_at, last_tested_url, notes, updated_at
+             FROM platform_validation
+             ORDER BY CASE platform_id
+                WHEN 'github' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'aboutme' THEN 3
+                WHEN 'tumblr' THEN 4
+                ELSE 5
+             END, platform_name ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(PlatformValidationRecord {
+                platform_id: row.get(0)?,
+                platform_name: row.get(1)?,
+                status: row.get(2)?,
+                dry_run_checked_at: row.get(3)?,
+                text_saved_at: row.get(4)?,
+                media_uploaded_at: row.get(5)?,
+                last_tested_url: row.get(6)?,
+                notes: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_platform_validation_record(
+    app_handle: tauri::AppHandle,
+    record: PlatformValidationRecord,
+) -> Result<PlatformValidationRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    save_platform_validation_record_to_db(&connection, &record)?;
     Ok(record)
 }
 
@@ -1945,6 +2011,18 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 current_url TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS platform_validation (
+                platform_id TEXT PRIMARY KEY,
+                platform_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'not_tested',
+                dry_run_checked_at TEXT NOT NULL DEFAULT '',
+                text_saved_at TEXT NOT NULL DEFAULT '',
+                media_uploaded_at TEXT NOT NULL DEFAULT '',
+                last_tested_url TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
             ",
         )
         .map_err(|error| error.to_string())?;
@@ -2285,6 +2363,82 @@ fn save_dry_run_history_record(connection: &Connection, record: &DryRunHistoryRe
             record.current_url, record.created_at
         ],
     ).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn ensure_default_platform_validation(connection: &Connection) -> Result<(), String> {
+    let platforms = get_platform_records(connection)?;
+    let timestamp = now_string();
+    for platform in platforms
+        .into_iter()
+        .filter(|platform| matches!(platform.id.as_str(), "github" | "medium" | "aboutme" | "tumblr"))
+    {
+        let record = PlatformValidationRecord {
+            platform_id: platform.id,
+            platform_name: platform.name,
+            status: "not_tested".to_string(),
+            dry_run_checked_at: "".to_string(),
+            text_saved_at: "".to_string(),
+            media_uploaded_at: "".to_string(),
+            last_tested_url: "".to_string(),
+            notes: "".to_string(),
+            updated_at: timestamp.clone(),
+        };
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO platform_validation (
+                    platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
+                    media_uploaded_at, last_tested_url, notes, updated_at
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    record.platform_id,
+                    record.platform_name,
+                    record.status,
+                    record.dry_run_checked_at,
+                    record.text_saved_at,
+                    record.media_uploaded_at,
+                    record.last_tested_url,
+                    record.notes,
+                    record.updated_at
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn save_platform_validation_record_to_db(connection: &Connection, record: &PlatformValidationRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO platform_validation (
+                platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
+                media_uploaded_at, last_tested_url, notes, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(platform_id)
+             DO UPDATE SET platform_name = excluded.platform_name,
+                           status = excluded.status,
+                           dry_run_checked_at = excluded.dry_run_checked_at,
+                           text_saved_at = excluded.text_saved_at,
+                           media_uploaded_at = excluded.media_uploaded_at,
+                           last_tested_url = excluded.last_tested_url,
+                           notes = excluded.notes,
+                           updated_at = excluded.updated_at",
+            params![
+                record.platform_id,
+                record.platform_name,
+                record.status,
+                record.dry_run_checked_at,
+                record.text_saved_at,
+                record.media_uploaded_at,
+                record.last_tested_url,
+                record.notes,
+                record.updated_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -3488,6 +3642,8 @@ pub fn run() {
             save_json_export,
             get_dry_run_history_audit,
             save_dry_run_history,
+            get_platform_validation_records,
+            save_platform_validation_record,
             get_evidence_records,
             save_evidence_record,
             get_entity_profile,

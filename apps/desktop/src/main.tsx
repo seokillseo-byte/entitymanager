@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Bot, Brain, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
@@ -22,6 +22,7 @@ const modules: EntityModule[] = [
   "Entity Graph",
   "Evidence Bank",
   "Platform Library",
+  "Platform Validation",
   "Selector Recipes",
   "API Integrations",
   "Reports",
@@ -38,6 +39,7 @@ const icons = {
   "Entity Graph": GitBranch,
   "Evidence Bank": FileCheck2,
   "Platform Library": Library,
+  "Platform Validation": CheckSquare,
   "Selector Recipes": Bot,
   "API Integrations": KeyRound,
   Reports: Database,
@@ -111,6 +113,14 @@ const automationModes: AutomationModeFilter[] = ["all", "auto", "semi_auto", "ma
 const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
 const accountStatuses: AccountStatus[] = ["planned", "created", "needs_manual_review", "failed", "verified"];
 const queueStatuses: AutomationQueueStatus[] = ["queued", "waiting", "resolved", "failed"];
+const validationStatuses: PlatformValidationStatus[] = ["not_tested", "dry_run_ok", "text_saved", "media_uploaded", "needs_recipe_fix"];
+const validationStatusLabels: Record<PlatformValidationStatus, string> = {
+  not_tested: "Chưa test",
+  dry_run_ok: "Dry-run OK",
+  text_saved: "Text đã lưu",
+  media_uploaded: "Media đã upload",
+  needs_recipe_fix: "Cần sửa recipe"
+};
 
 type ReleaseAsset = { name: string; browser_download_url: string; size: number };
 type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
@@ -139,6 +149,7 @@ function App() {
   const [platforms, setPlatforms] = useState<PlatformLibraryRecord[]>(fallbackPlatforms);
   const [selectorRecipes, setSelectorRecipes] = useState<SelectorRecipeRecord[]>([]);
   const [dryRunHistory, setDryRunHistory] = useState<DryRunHistoryRecord[]>([]);
+  const [platformValidation, setPlatformValidation] = useState<PlatformValidationRecord[]>([]);
   const [dryRunSourceAudit, setDryRunSourceAudit] = useState<DryRunHistoryAudit | null>(null);
   const [dryRunHistoryAllLoaded, setDryRunHistoryAllLoaded] = useState(false);
   const [diagnosticExportMessage, setDiagnosticExportMessage] = useState("");
@@ -252,6 +263,33 @@ function App() {
     [dryRunHistory, selectorRecipes]
   );
 
+  const validationPack = useMemo(() => {
+    const targets = ["github", "medium", "aboutme", "tumblr"];
+    const existing = new Map(platformValidation.map((record) => [record.platformId, record]));
+    return targets.map((platformId) => {
+      const platform = platforms.find((item) => item.id === platformId);
+      return existing.get(platformId) ?? {
+        platformId,
+        platformName: platform?.name ?? platformId,
+        status: "not_tested" as PlatformValidationStatus,
+        dryRunCheckedAt: "",
+        textSavedAt: "",
+        mediaUploadedAt: "",
+        lastTestedUrl: "",
+        notes: "",
+        updatedAt: ""
+      };
+    });
+  }, [platformValidation, platforms]);
+
+  const validationStats = useMemo(() => ({
+    total: validationPack.length,
+    dryRunOk: validationPack.filter((record) => ["dry_run_ok", "text_saved", "media_uploaded"].includes(record.status)).length,
+    textSaved: validationPack.filter((record) => ["text_saved", "media_uploaded"].includes(record.status)).length,
+    mediaUploaded: validationPack.filter((record) => record.status === "media_uploaded").length,
+    needsFix: validationPack.filter((record) => record.status === "needs_recipe_fix").length
+  }), [validationPack]);
+
   const accountCreationPlan = useMemo<AccountCreationPlanItem[]>(() => {
     const cleanBrand = entityProfile.brandName
       .toLowerCase()
@@ -289,7 +327,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -300,7 +338,8 @@ function App() {
         invoke<AutomationQueueItem[]>("get_automation_queue"),
         invoke<DryRunHistoryRecord[]>("get_dry_run_history"),
         invoke<DryRunHistoryAudit>("get_dry_run_history_audit"),
-        invoke<EvidenceRecord[]>("get_evidence_records")
+        invoke<EvidenceRecord[]>("get_evidence_records"),
+        invoke<PlatformValidationRecord[]>("get_platform_validation_records")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -314,6 +353,7 @@ function App() {
       setDryRunHistory(storedDryRunHistory.map((record, index) => normalizeDryRunHistoryRecord(record, index)));
       setDryRunSourceAudit(storedDryRunAudit);
       setEvidenceRecords(storedEvidence);
+      setPlatformValidation(storedValidation);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -379,6 +419,29 @@ function App() {
       setSelectorRecipes((current) => current.map((item) => (item.platformId === recipe.platformId ? nextRecipe : item)));
       setStatusMessage("Preview mode: Selector recipe changes are local only");
     }
+  }
+
+  async function savePlatformValidation(record: PlatformValidationRecord) {
+    const nextRecord = { ...record, updatedAt: new Date().toISOString() };
+    try {
+      const saved = await invoke<PlatformValidationRecord>("save_platform_validation_record", { record: nextRecord });
+      setPlatformValidation((current) => upsertByPlatformId(current, saved));
+      setStatusMessage(`${saved.platformName} validation status saved`);
+    } catch {
+      setPlatformValidation((current) => upsertByPlatformId(current, nextRecord));
+      setStatusMessage("Preview mode: Validation status is local only");
+    }
+  }
+
+  function updatePlatformValidation(platformId: string, patch: Partial<PlatformValidationRecord>) {
+    const current = validationPack.find((record) => record.platformId === platformId);
+    if (!current) return;
+    const timestamp = new Date().toISOString();
+    const nextRecord: PlatformValidationRecord = { ...current, ...patch, updatedAt: timestamp };
+    if (patch.status === "dry_run_ok" && !nextRecord.dryRunCheckedAt) nextRecord.dryRunCheckedAt = timestamp;
+    if (patch.status === "text_saved" && !nextRecord.textSavedAt) nextRecord.textSavedAt = timestamp;
+    if (patch.status === "media_uploaded" && !nextRecord.mediaUploadedAt) nextRecord.mediaUploadedAt = timestamp;
+    setPlatformValidation((records) => upsertByPlatformId(records, nextRecord));
   }
 
   async function exportDryRunDiagnostics() {
@@ -1227,6 +1290,89 @@ function App() {
           </section>
         )}
 
+        {activeModule === "Platform Validation" && (
+          <section className="single-panel platform-validation-page">
+            <section className="metrics-grid">
+              <article className="metric-card neutral"><span>Platforms</span><strong>{validationStats.total}</strong></article>
+              <article className="metric-card good"><span>Dry-run OK</span><strong>{validationStats.dryRunOk}</strong></article>
+              <article className="metric-card good"><span>Text Saved</span><strong>{validationStats.textSaved}</strong></article>
+              <article className={validationStats.needsFix ? "metric-card warning" : "metric-card neutral"}><span>Needs Fix</span><strong>{validationStats.needsFix}</strong></article>
+            </section>
+
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Platform Validation Pack</p>
+                  <h2>Checklist test từng platform</h2>
+                </div>
+                <span className="badge">{validationStats.mediaUploaded}/{validationStats.total} media uploaded</span>
+              </div>
+              <p className="muted-text">Dùng màn này để ghi nhận anh đã test tới đâu: chạy dry-run, lưu text, upload avatar/banner, hoặc đánh dấu cần sửa recipe. Đây là sổ kiểm soát riêng, không tự xóa lịch sử dry-run và không bấm gì trên website.</p>
+
+              <div className="data-table-wrap">
+                <table className="data-table platform-validation-table">
+                  <thead>
+                    <tr>
+                      <th>Platform</th>
+                      <th>Status</th>
+                      <th>Checklist timestamps</th>
+                      <th>Test URL</th>
+                      <th>Notes</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {validationPack.map((record) => (
+                      <tr key={record.platformId}>
+                        <td>
+                          <strong>{record.platformName}</strong>
+                          <small>{record.platformId}</small>
+                        </td>
+                        <td>
+                          <select value={record.status} onChange={(event) => updatePlatformValidation(record.platformId, { status: event.target.value as PlatformValidationStatus })}>
+                            {validationStatuses.map((status) => (
+                              <option key={status} value={status}>{validationStatusLabels[status]}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <small>Dry-run: {record.dryRunCheckedAt ? new Date(record.dryRunCheckedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                          <small>Text: {record.textSavedAt ? new Date(record.textSavedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                          <small>Media: {record.mediaUploadedAt ? new Date(record.mediaUploadedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                        </td>
+                        <td>
+                          <input
+                            aria-label={record.platformName + " last tested URL"}
+                            placeholder="https://..."
+                            value={record.lastTestedUrl}
+                            onChange={(event) => updatePlatformValidation(record.platformId, { lastTestedUrl: event.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <textarea
+                            aria-label={record.platformName + " validation notes"}
+                            rows={3}
+                            placeholder="Ví dụ: avatar cần ảnh < 1MB, selector bio fail..."
+                            value={record.notes}
+                            onChange={(event) => updatePlatformValidation(record.platformId, { notes: event.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <div className="queue-actions">
+                            <button className="secondary-action" type="button" onClick={() => void savePlatformValidation(record)}>Save</button>
+                            <button className="secondary-action" type="button" onClick={() => setActiveModule("Selector Recipes")}>Fix recipe</button>
+                          </div>
+                          <small>Updated: {record.updatedAt ? new Date(record.updatedAt).toLocaleString("vi-VN") : "not saved"}</small>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        )}
+
         {activeModule === "Selector Recipes" && (
           <section className="single-panel selector-recipes-page">
             <article className="panel selector-recipes-panel">
@@ -1998,6 +2144,16 @@ function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   }
 
   return items.map((item) => (item.id === next.id ? next : item));
+}
+
+function upsertByPlatformId<T extends { platformId: string }>(items: T[], next: T): T[] {
+  const exists = items.some((item) => item.platformId === next.platformId);
+
+  if (!exists) {
+    return [next, ...items];
+  }
+
+  return items.map((item) => (item.platformId === next.platformId ? next : item));
 }
 
 function maskToken(token: string): string {
