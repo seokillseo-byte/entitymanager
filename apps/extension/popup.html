@@ -11,7 +11,7 @@
       <header>
         <strong>EntityManager Bridge</strong>
         <span>Cầu nối EntityManager Desktop · Chế độ chạy thử an toàn</span>
-        <small class="build-badge">Extension v0.1.13 · save before avatar</small>
+        <small class="build-badge">Extension v0.1.14 · avatar separate step</small>
       </header>
 
       <label>
@@ -45,10 +45,11 @@
         <button id="injectButton" type="button">Tiêm CAPTCHA vào trang</button>
         <button id="dryRunButton" type="button">Chạy thử Selector Recipe</button>
         <button id="fillPreviewButton" type="button">Điền thử an toàn</button>
+        <button id="avatarOnlyButton" type="button">Cập nhật avatar</button>
         <button id="submitVerifyButton" type="button">Gửi / xác minh tài khoản</button>
       </div>
 
-      <p class="help">Chạy thử chỉ đọc. Điền thử an toàn sẽ điền dữ liệu entity/EEAT vào form nhưng không nhấn nút gửi.</p>
+      <p class="help">Chạy thử chỉ đọc. Điền thử an toàn lưu các trường entity/EEAT; Cập nhật avatar chỉ xử lý ảnh đại diện.</p>
       <pre id="statusOutput">Sẵn sàng. Mở EntityManager Desktop rồi mở trang thử nghiệm trong tab hiện tại.</pre>
     </main>
     <script src="popup.js" type="module"></script>
