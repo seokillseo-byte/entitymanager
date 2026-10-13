@@ -325,6 +325,26 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           field.dispatchEvent(new Event("input", { bubbles: true }));
           field.dispatchEvent(new Event("change", { bubbles: true }));
         };
+        const findButtonByExactText = (label: string): HTMLButtonElement | null => {
+          const wanted = label.trim().toLowerCase();
+          return Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+            .find((button) => {
+              const text = `${button.innerText || ""} ${(button as HTMLInputElement).value || ""} ${button.getAttribute("aria-label") || ""}`.trim().toLowerCase();
+              return isVisible(button) &&
+                !button.disabled &&
+                button.getAttribute("aria-disabled") !== "true" &&
+                text.includes(wanted);
+            }) ?? null;
+        };
+        const waitForButtonByExactText = async (label: string, timeoutMs = 6000): Promise<HTMLButtonElement | null> => {
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < timeoutMs) {
+            const button = findButtonByExactText(label);
+            if (button) return button;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          return null;
+        };
         const blobFromImageValue = async (imageValue: string): Promise<Blob | null> => {
           if (imageValue.startsWith("data:")) {
             const parts = imageValue.split(",");
@@ -436,6 +456,16 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               fileField.dispatchEvent(new Event("input", { bubbles: true }));
               fileField.dispatchEvent(new Event("change", { bubbles: true }));
               filledFields.push(fieldName);
+              if (isGithubProfilePage() && fieldName === "avatarImageUrl") {
+                const confirmButton = await waitForButtonByExactText("Set new profile picture");
+                if (confirmButton) {
+                  confirmButton.click();
+                  await new Promise((resolve) => setTimeout(resolve, 800));
+                  filledFields.push("avatarImageUrl:confirmed");
+                } else {
+                  attentionFields.push("avatarImageUrl:confirm_button_not_found");
+                }
+              }
             } catch {
               attentionFields.push(`${fieldName}:manual_or_blocked_image_upload`);
             }
