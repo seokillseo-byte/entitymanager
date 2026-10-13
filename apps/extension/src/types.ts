@@ -48,6 +48,9 @@ export interface AccountSubmitVerifyPayload {
   verifySelectors: string[];
   evidenceCapture: "current_url";
   notes: string;
+  executionSteps?: Array<"dry_run" | "fill_text" | "upload_media" | "submit_verify">;
+  saveTextSelector?: string;
+  mediaConfirmSelector?: string;
 }
 
 export interface BridgeStorage {
