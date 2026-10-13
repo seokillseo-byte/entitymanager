@@ -230,6 +230,18 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           };
           const wanted = labels[fieldName] || [];
           if (wanted.length === 0) return [];
+          if (fieldName === "websiteUrl" && location.hostname === "github.com" && location.pathname === "/settings/profile") {
+            const githubBlogField = document.querySelector<HTMLInputElement>("input[name='user[profile_blog]']");
+            if (githubBlogField && !githubBlogField.disabled && !githubBlogField.readOnly && isVisible(githubBlogField)) {
+              return [githubBlogField];
+            }
+            const urlLabel = Array.from(document.querySelectorAll<HTMLElement>("label, dt, span, div"))
+              .find((candidate) => candidate.textContent?.trim().toLowerCase() === "url");
+            const labelledInput = urlLabel?.parentElement?.querySelector<HTMLInputElement>("input:not([type='file'])");
+            if (labelledInput && !labelledInput.disabled && !labelledInput.readOnly && isVisible(labelledInput)) {
+              return [labelledInput];
+            }
+          }
           return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
             .filter((candidate) => {
               const usable = !candidate.disabled && !candidate.readOnly && (includeFile || candidate.type !== "file");

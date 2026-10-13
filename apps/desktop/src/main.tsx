@@ -1465,12 +1465,12 @@ function App() {
                   <textarea rows={3} value={entityProfile.sameAsUrls} onChange={(event) => updateEntityProfile({ sameAsUrls: event.target.value })} />
                 </label>
                 <label className="full-span">
-                  Avatar / Logo Image URL
-                  <input value={entityProfile.avatarImageUrl} onChange={(event) => updateEntityProfile({ avatarImageUrl: event.target.value })} placeholder="https://example.com/logo.png" />
+                  Avatar / Logo Image URL or local file path
+                  <input value={entityProfile.avatarImageUrl} onChange={(event) => updateEntityProfile({ avatarImageUrl: event.target.value })} placeholder="https://example.com/logo.png hoặc C:\\Users\\Admin\\Downloads\\logo.png" />
                 </label>
                 <label className="full-span">
-                  Banner / Cover Image URL · recommended 1200x630px
-                  <input value={entityProfile.bannerImageUrl} onChange={(event) => updateEntityProfile({ bannerImageUrl: event.target.value })} placeholder="https://example.com/entity-banner-1200x630.jpg" />
+                  Banner / Cover Image URL or local file path · recommended 1200x630px
+                  <input value={entityProfile.bannerImageUrl} onChange={(event) => updateEntityProfile({ bannerImageUrl: event.target.value })} placeholder="https://example.com/entity-banner-1200x630.jpg hoặc C:\\Users\\Admin\\Downloads\\banner.jpg" />
                 </label>
                 <label>
                   Target Keywords

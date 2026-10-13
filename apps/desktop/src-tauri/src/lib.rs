@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -10,6 +11,41 @@ use tauri::Manager;
 
 const SECRET_SERVICE: &str = "EntityManager";
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn image_asset_value_to_bridge_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("data:")
+    {
+        return trimmed.to_string();
+    }
+
+    let path = PathBuf::from(trimmed.trim_matches('"'));
+    if !path.exists() || !path.is_file() {
+        return trimmed.to_string();
+    }
+
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return trimmed.to_string(),
+    };
+    let extension = path
+        .extension()
+        .and_then(|item| item.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        _ => "image/jpeg",
+    };
+
+    format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes))
+}
 
 #[tauri::command]
 fn app_health() -> &'static str {
@@ -1453,6 +1489,8 @@ fn get_dry_run_preview_payload_record(
         .take(4)
         .collect::<Vec<_>>()
         .join("\n");
+    let avatar_image_value = image_asset_value_to_bridge_value(&profile.avatar_image_url);
+    let banner_image_value = image_asset_value_to_bridge_value(&profile.banner_image_url);
     // GitHub's /settings/profile page edits profile fields, not account credentials.
     // Keep the dry-run requirements aligned with fields that actually exist on that page.
     let required_fields = if platform.id.eq_ignore_ascii_case("github") {
@@ -1483,13 +1521,13 @@ fn get_dry_run_preview_payload_record(
             email: profile.email,
             display_name: if profile.brand_name.trim().is_empty() { profile.legal_name.clone() } else { profile.brand_name.clone() },
             bio: if profile.short_description.trim().is_empty() { platform.notes.clone() } else { profile.short_description.clone() },
-            website_url: money_site.homepage_url,
+            website_url: money_site.homepage_url.trim().to_string(),
             company: profile.legal_name.clone(),
             location: profile.address.clone(),
             social_links: entity_social_links,
-            profile_image: profile.avatar_image_url.clone(),
-            avatar_image_url: profile.avatar_image_url.clone(),
-            banner_image_url: profile.banner_image_url.clone(),
+            profile_image: avatar_image_value.clone(),
+            avatar_image_url: avatar_image_value,
+            banner_image_url: banner_image_value,
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(fallback_field_selectors.username).collect(),
@@ -1582,6 +1620,8 @@ fn get_next_submit_verify_payload_record(
         .take(4)
         .collect::<Vec<_>>()
         .join("\n");
+    let avatar_image_value = image_asset_value_to_bridge_value(&profile.avatar_image_url);
+    let banner_image_value = image_asset_value_to_bridge_value(&profile.banner_image_url);
 
     Ok(AccountSubmitVerifyPayload {
         queue_id: item.id,
@@ -1594,13 +1634,13 @@ fn get_next_submit_verify_payload_record(
             email: profile.email,
             display_name: if profile.brand_name.trim().is_empty() { profile.legal_name.clone() } else { profile.brand_name.clone() },
             bio: if profile.short_description.trim().is_empty() { account.notes.clone() } else { profile.short_description.clone() },
-            website_url: money_site.homepage_url,
+            website_url: money_site.homepage_url.trim().to_string(),
             company: profile.legal_name.clone(),
             location: profile.address.clone(),
             social_links: entity_social_links,
-            profile_image: profile.avatar_image_url.clone(),
-            avatar_image_url: profile.avatar_image_url.clone(),
-            banner_image_url: profile.banner_image_url.clone(),
+            profile_image: avatar_image_value.clone(),
+            avatar_image_url: avatar_image_value,
+            banner_image_url: banner_image_value,
         },
         field_selectors: SubmitVerifyFieldSelectors {
             username: json_array_to_strings(&recipe_field_selectors["username"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["username"])).chain(fallback_field_selectors.username).collect(),
