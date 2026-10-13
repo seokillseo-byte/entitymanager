@@ -219,7 +219,40 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           const style = window.getComputedStyle(candidate);
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
         };
-        const findFields = (selectors: string[], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
+        const findByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
+          const labels: Record<string, string[]> = {
+            websiteUrl: ["url", "website", "blog"],
+            avatarImageUrl: ["avatar", "profile picture", "profile photo", "photo", "image"],
+            profileImage: ["avatar", "profile picture", "profile photo", "photo", "image"],
+            bannerImageUrl: ["banner", "cover", "header"],
+            company: ["company", "organization"],
+            location: ["location", "address"]
+          };
+          const wanted = labels[fieldName] || [];
+          if (wanted.length === 0) return [];
+          return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
+            .filter((candidate) => {
+              const usable = !candidate.disabled && !candidate.readOnly && (includeFile || candidate.type !== "file");
+              const visibleEnough = includeFile && candidate.type === "file" ? true : isVisible(candidate);
+              if (!usable || !visibleEnough) return false;
+              const labelText = Array.from(document.querySelectorAll<HTMLLabelElement>("label"))
+                .filter((label) => label.control === candidate || label.contains(candidate))
+                .map((label) => label.innerText)
+                .join(" ");
+              const context = [
+                candidate.name,
+                candidate.id,
+                candidate.type,
+                candidate.placeholder,
+                candidate.getAttribute("aria-label") || "",
+                labelText,
+                candidate.parentElement?.innerText || "",
+                candidate.parentElement?.previousElementSibling?.textContent || ""
+              ].join(" ").toLowerCase();
+              return wanted.some((word) => context.includes(word));
+            });
+        };
+        const findFields = (selectors: string[], includeFile = false, fieldName?: keyof AccountSubmitVerifyPayload["formValues"]): Array<HTMLInputElement | HTMLTextAreaElement> => {
           const fields: Array<HTMLInputElement | HTMLTextAreaElement> = [];
           for (const selector of selectors) {
             try {
@@ -233,7 +266,21 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               // Ignore malformed selectors and continue with the remaining candidates.
             }
           }
+          if (fields.length === 0 && fieldName) {
+            fields.push(...findByNearbyText(fieldName, includeFile));
+          }
           return Array.from(new Set(fields));
+        };
+        const setFieldValue = (field: HTMLInputElement | HTMLTextAreaElement, nextValue: string): void => {
+          const prototype = Object.getPrototypeOf(field) as HTMLInputElement | HTMLTextAreaElement;
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+          if (descriptor?.set) {
+            descriptor.set.call(field, nextValue);
+          } else {
+            field.value = nextValue;
+          }
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+          field.dispatchEvent(new Event("change", { bubbles: true }));
         };
         const fieldEntries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
           ["username", pagePayload.fieldSelectors.username, pagePayload.formValues.username],
@@ -249,22 +296,30 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           ["bannerImageUrl", pagePayload.fieldSelectors.bannerImageUrl, pagePayload.formValues.bannerImageUrl]
         ];
         const plannedFields = fieldEntries
-          .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && findFields(selectors, fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl").length > 0)
+          .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && findFields(selectors, fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl", fieldName).length > 0)
           .map(([name]) => name);
         const filledFields: string[] = [];
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
-          const fields = findFields(selectors, isImageField);
+          let fields = findFields(selectors, isImageField, fieldName);
+          if (fields.length === 0 && (fieldName === "profileImage" || fieldName === "avatarImageUrl")) {
+            const editButton = Array.from(document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>("button, a[role='button']"))
+              .find((candidate) => {
+                const text = `${candidate.innerText || ""} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
+                return isVisible(candidate) && (text.includes("edit") || text.includes("photo") || text.includes("picture") || text.includes("avatar"));
+              });
+            editButton?.click();
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            fields = findFields(selectors, isImageField, fieldName);
+          }
           if (fields.length === 0) continue;
 
           if (fieldName === "socialLinks") {
             const links = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
             fields.slice(0, links.length).forEach((field, index) => {
               field.focus();
-              field.value = links[index];
-              field.dispatchEvent(new Event("input", { bubbles: true }));
-              field.dispatchEvent(new Event("change", { bubbles: true }));
+              setFieldValue(field, links[index]);
             });
             if (links.length > 0) filledFields.push(fieldName);
             continue;
@@ -294,16 +349,14 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
 
           const field = fields[0];
           field.focus();
-          field.value = value;
-          field.dispatchEvent(new Event("input", { bubbles: true }));
-          field.dispatchEvent(new Event("change", { bubbles: true }));
+          setFieldValue(field, value);
           filledFields.push(fieldName);
         }
         const missingFields: string[] = [];
         for (const fieldName of pagePayload.requiredFields) {
           if (!pagePayload.formValues[fieldName]?.trim()) {
             missingFields.push(`${fieldName}:value`);
-          } else if (!findFields(pagePayload.fieldSelectors[fieldName], fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl").length) {
+          } else if (!findFields(pagePayload.fieldSelectors[fieldName], fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl", fieldName).length) {
             missingFields.push(`${fieldName}:selector`);
           }
         }
