@@ -237,7 +237,9 @@ function formValueEntries(payload: AccountSubmitVerifyPayload): Array<[keyof Acc
     ["company", payload.fieldSelectors.company, payload.formValues.company],
     ["location", payload.fieldSelectors.location, payload.formValues.location],
     ["socialLinks", payload.fieldSelectors.socialLinks, payload.formValues.socialLinks],
-    ["profileImage", payload.fieldSelectors.profileImage, payload.formValues.profileImage]
+    ["profileImage", payload.fieldSelectors.profileImage, payload.formValues.profileImage],
+    ["avatarImageUrl", payload.fieldSelectors.avatarImageUrl, payload.formValues.avatarImageUrl],
+    ["bannerImageUrl", payload.fieldSelectors.bannerImageUrl, payload.formValues.bannerImageUrl]
   ];
 }
 
