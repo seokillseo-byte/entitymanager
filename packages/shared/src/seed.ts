@@ -217,5 +217,7 @@ export const demoEntityProfileSeed: EntityProfileRecord = {
   targetKeywords: "entity SEO, EEAT SEO, SEO services Vietnam",
   topicalNiche: "SEO services and entity authority building",
   expertiseProof: "Case studies, client results, process documentation, author bio, and service pages.",
-  trustSignals: "Consistent NAP, branded profiles, author pages, social proof, privacy/contact pages, and clear ownership."
+  trustSignals: "Consistent NAP, branded profiles, author pages, social proof, privacy/contact pages, and clear ownership.",
+  avatarImageUrl: "",
+  bannerImageUrl: ""
 };
