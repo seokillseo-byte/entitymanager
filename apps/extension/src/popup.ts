@@ -194,11 +194,7 @@ async function fillPreviewActiveTab(): Promise<void> {
     const currentUrl = await getActiveTabUrl();
     const payload = await fetchDryRunPreviewPayload(currentUrl);
     const tabId = await getActiveTabId();
-    const response = await sendTabMessage<SubmitVerifyResponse>(tabId, {
-      type: "ENTITYMANAGER_SUBMIT_VERIFY",
-      payload,
-      fillOnly: true
-    } satisfies SubmitVerifyMessage);
+    const response = await runSafeFillInPage(tabId, payload);
 
     setStatus([
       response.message,
@@ -209,6 +205,104 @@ async function fillPreviewActiveTab(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Safe fill preview failed.");
   }
+}
+
+async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayload): Promise<SubmitVerifyResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript<SubmitVerifyResponse>({
+      target: { tabId },
+      args: [payload],
+      func: (pagePayload) => {
+        const isVisible = (element: Element): boolean => {
+          const candidate = element as HTMLElement;
+          const rect = candidate.getBoundingClientRect();
+          const style = window.getComputedStyle(candidate);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        const findFields = (selectors: string[]): Array<HTMLInputElement | HTMLTextAreaElement> => {
+          const fields: Array<HTMLInputElement | HTMLTextAreaElement> = [];
+          for (const selector of selectors) {
+            try {
+              fields.push(...Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector))
+                .filter((candidate) => !candidate.disabled && !candidate.readOnly && candidate.type !== "file" && isVisible(candidate)));
+            } catch {
+              // Ignore malformed selectors and continue with the remaining candidates.
+            }
+          }
+          return Array.from(new Set(fields));
+        };
+        const fieldEntries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
+          ["username", pagePayload.fieldSelectors.username, pagePayload.formValues.username],
+          ["email", pagePayload.fieldSelectors.email, pagePayload.formValues.email],
+          ["displayName", pagePayload.fieldSelectors.displayName, pagePayload.formValues.displayName],
+          ["bio", pagePayload.fieldSelectors.bio, pagePayload.formValues.bio],
+          ["websiteUrl", pagePayload.fieldSelectors.websiteUrl, pagePayload.formValues.websiteUrl],
+          ["company", pagePayload.fieldSelectors.company, pagePayload.formValues.company],
+          ["location", pagePayload.fieldSelectors.location, pagePayload.formValues.location],
+          ["socialLinks", pagePayload.fieldSelectors.socialLinks, pagePayload.formValues.socialLinks],
+          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage]
+        ];
+        const plannedFields = fieldEntries
+          .filter(([, selectors, value]) => Boolean(value.trim()) && findFields(selectors).length > 0)
+          .map(([name]) => name);
+        const filledFields: string[] = [];
+        for (const [fieldName, selectors, value] of fieldEntries) {
+          if (!value.trim()) continue;
+          const fields = findFields(selectors);
+          if (fields.length === 0) continue;
+
+          if (fieldName === "socialLinks") {
+            const links = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+            fields.slice(0, links.length).forEach((field, index) => {
+              field.focus();
+              field.value = links[index];
+              field.dispatchEvent(new Event("input", { bubbles: true }));
+              field.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            if (links.length > 0) filledFields.push(fieldName);
+            continue;
+          }
+
+          const field = fields[0];
+          field.focus();
+          field.value = value;
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+          field.dispatchEvent(new Event("change", { bubbles: true }));
+          filledFields.push(fieldName);
+        }
+        const missingFields: string[] = [];
+        for (const fieldName of pagePayload.requiredFields) {
+          if (!pagePayload.formValues[fieldName]?.trim()) {
+            missingFields.push(`${fieldName}:value`);
+          } else if (!findFields(pagePayload.fieldSelectors[fieldName]).length) {
+            missingFields.push(`${fieldName}:selector`);
+          }
+        }
+
+        return {
+          success: missingFields.length === 0,
+          evidenceUrl: window.location.href,
+          clickedSelector: "",
+          filledFields,
+          missingFields,
+          plannedFields,
+          plannedSelector: "",
+          message: `Điền thử an toàn cho ${pagePayload.platformName}: đã điền ${filledFields.join(", ") || "0 trường"} và không bấm gửi.`
+        };
+      }
+    }, (results) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(`Chrome không thể điền thử trên tab hiện tại. Hãy tải lại trang web rồi thử lại. Chi tiết: ${chrome.runtime.lastError.message || "không rõ nguyên nhân"}`));
+        return;
+      }
+      const result = results?.[0]?.result;
+      if (!result) {
+        reject(new Error("Chrome không trả kết quả điền thử. Hãy tải lại trang web và thử lại."));
+        return;
+      }
+      resolve(result);
+    });
+  });
 }
 
 async function previewSubmitVerifyActiveTab(): Promise<void> {
