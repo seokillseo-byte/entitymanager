@@ -1659,7 +1659,7 @@ fn get_next_submit_verify_payload_record(
     Ok(AccountSubmitVerifyPayload {
         queue_id: item.id,
         account_id: item.account_id,
-        platform_id: account.platform_id,
+        platform_id: account.platform_id.clone(),
         platform_name: item.platform_name,
         action: "submit_or_verify_account".to_string(),
         form_values: SubmitVerifyFormValues {
