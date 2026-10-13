@@ -13,7 +13,7 @@ declare const chrome: {
     executeScript<T = unknown>(details: {
       target: { tabId: number };
       files?: string[];
-      func?: (payload: AccountSubmitVerifyPayload) => T;
+      func?: (payload: AccountSubmitVerifyPayload) => T | Promise<T>;
       args?: unknown[];
     }, callback?: (results?: Array<{ result?: T }>) => void): void;
   };
@@ -212,19 +212,23 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
     chrome.scripting.executeScript<SubmitVerifyResponse>({
       target: { tabId },
       args: [payload],
-      func: (pagePayload) => {
+      func: async (pagePayload) => {
         const isVisible = (element: Element): boolean => {
           const candidate = element as HTMLElement;
           const rect = candidate.getBoundingClientRect();
           const style = window.getComputedStyle(candidate);
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
         };
-        const findFields = (selectors: string[]): Array<HTMLInputElement | HTMLTextAreaElement> => {
+        const findFields = (selectors: string[], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
           const fields: Array<HTMLInputElement | HTMLTextAreaElement> = [];
           for (const selector of selectors) {
             try {
               fields.push(...Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector))
-                .filter((candidate) => !candidate.disabled && !candidate.readOnly && candidate.type !== "file" && isVisible(candidate)));
+                .filter((candidate) => {
+                  const usable = !candidate.disabled && !candidate.readOnly && (includeFile || candidate.type !== "file");
+                  const visibleEnough = includeFile && candidate.type === "file" ? true : isVisible(candidate);
+                  return usable && visibleEnough;
+                }));
             } catch {
               // Ignore malformed selectors and continue with the remaining candidates.
             }
@@ -240,15 +244,18 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           ["company", pagePayload.fieldSelectors.company, pagePayload.formValues.company],
           ["location", pagePayload.fieldSelectors.location, pagePayload.formValues.location],
           ["socialLinks", pagePayload.fieldSelectors.socialLinks, pagePayload.formValues.socialLinks],
-          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage]
+          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage],
+          ["avatarImageUrl", pagePayload.fieldSelectors.avatarImageUrl, pagePayload.formValues.avatarImageUrl],
+          ["bannerImageUrl", pagePayload.fieldSelectors.bannerImageUrl, pagePayload.formValues.bannerImageUrl]
         ];
         const plannedFields = fieldEntries
-          .filter(([, selectors, value]) => Boolean(value.trim()) && findFields(selectors).length > 0)
+          .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && findFields(selectors, fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl").length > 0)
           .map(([name]) => name);
         const filledFields: string[] = [];
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
-          const fields = findFields(selectors);
+          const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
+          const fields = findFields(selectors, isImageField);
           if (fields.length === 0) continue;
 
           if (fieldName === "socialLinks") {
@@ -263,6 +270,28 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             continue;
           }
 
+          if (isImageField) {
+            const fileField = fields.find((field) => field.type === "file") as HTMLInputElement | undefined;
+            if (!fileField) continue;
+            try {
+              const response = await fetch(value, { mode: "cors" });
+              if (!response.ok) continue;
+              const blob = await response.blob();
+              const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
+              const filename = fieldName === "bannerImageUrl" ? `entity-banner-1200x630.${extension}` : `entity-avatar.${extension}`;
+              const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+              const transfer = new DataTransfer();
+              transfer.items.add(file);
+              fileField.files = transfer.files;
+              fileField.dispatchEvent(new Event("input", { bubbles: true }));
+              fileField.dispatchEvent(new Event("change", { bubbles: true }));
+              filledFields.push(fieldName);
+            } catch {
+              // Keep safe-fill non-destructive when an image URL is not fetchable from the page.
+            }
+            continue;
+          }
+
           const field = fields[0];
           field.focus();
           field.value = value;
@@ -274,7 +303,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
         for (const fieldName of pagePayload.requiredFields) {
           if (!pagePayload.formValues[fieldName]?.trim()) {
             missingFields.push(`${fieldName}:value`);
-          } else if (!findFields(pagePayload.fieldSelectors[fieldName]).length) {
+          } else if (!findFields(pagePayload.fieldSelectors[fieldName], fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl").length) {
             missingFields.push(`${fieldName}:selector`);
           }
         }
@@ -374,7 +403,9 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           ["company", pagePayload.fieldSelectors.company, pagePayload.formValues.company],
           ["location", pagePayload.fieldSelectors.location, pagePayload.formValues.location],
           ["socialLinks", pagePayload.fieldSelectors.socialLinks, pagePayload.formValues.socialLinks],
-          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage]
+          ["profileImage", pagePayload.fieldSelectors.profileImage, pagePayload.formValues.profileImage],
+          ["avatarImageUrl", pagePayload.fieldSelectors.avatarImageUrl, pagePayload.formValues.avatarImageUrl],
+          ["bannerImageUrl", pagePayload.fieldSelectors.bannerImageUrl, pagePayload.formValues.bannerImageUrl]
         ];
         const plannedFields = fieldEntries
           .filter(([, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors)))
@@ -561,7 +592,9 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
     company: "",
     location: "",
     socialLinks: "",
-    profileImage: ""
+    profileImage: "",
+    avatarImageUrl: "",
+    bannerImageUrl: ""
   };
   const defaultFieldSelectors: AccountSubmitVerifyPayload["fieldSelectors"] = {
     username: [],
@@ -572,7 +605,9 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
     company: [],
     location: [],
     socialLinks: [],
-    profileImage: []
+    profileImage: [],
+    avatarImageUrl: [],
+    bannerImageUrl: []
   };
 
   return {
