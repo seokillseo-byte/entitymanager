@@ -345,6 +345,13 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           }
           return null;
         };
+        const saveGithubProfileBeforeAvatar = async (): Promise<boolean> => {
+          const saveButton = findButtonByExactText("Update profile");
+          if (!saveButton) return false;
+          saveButton.click();
+          await new Promise((resolve) => setTimeout(resolve, 1800));
+          return true;
+        };
         const blobFromImageValue = async (imageValue: string): Promise<Blob | null> => {
           if (imageValue.startsWith("data:")) {
             const parts = imageValue.split(",");
@@ -381,6 +388,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           .map(([name]) => name);
         const filledFields: string[] = [];
         const attentionFields: string[] = [];
+        let githubProfileSavedBeforeAvatar = false;
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -438,6 +446,14 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               continue;
             }
             try {
+              if (isGithubProfilePage() && fieldName === "avatarImageUrl" && !githubProfileSavedBeforeAvatar) {
+                githubProfileSavedBeforeAvatar = true;
+                if (await saveGithubProfileBeforeAvatar()) {
+                  filledFields.push("githubProfile:saved");
+                } else {
+                  attentionFields.push("githubProfile:update_button_not_found");
+                }
+              }
               if (!value.startsWith("data:")) {
                 attentionFields.push(`${fieldName}:cannot_download_image_use_local_file_path`);
                 continue;
