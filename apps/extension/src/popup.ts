@@ -219,45 +219,44 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           const style = window.getComputedStyle(candidate);
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
         };
-        const findByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
-          const findGithubProfileUrlFields = (): HTMLInputElement[] => {
-            const direct = document.querySelector<HTMLInputElement>("input[name='user[profile_blog]'], input[id='user_profile_blog']");
-            if (direct && !direct.disabled && !direct.readOnly && isVisible(direct)) {
-              return [direct];
-            }
+        const isGithubProfilePage = (): boolean => location.hostname === "github.com" && location.pathname === "/settings/profile";
+        const findGithubProfileUrlFields = (): HTMLInputElement[] => {
+          const direct = document.querySelector<HTMLInputElement>("input[name='user[profile_blog]'], input[id='user_profile_blog']");
+          if (direct && !direct.disabled && !direct.readOnly && isVisible(direct)) {
+            return [direct];
+          }
 
-            const labels = Array.from(document.querySelectorAll<HTMLElement>("label, dt, span, div"))
-              .filter((candidate) => candidate.textContent?.trim().toLowerCase() === "url");
-            for (const label of labels) {
-              const labelled = label.querySelector<HTMLInputElement>("input:not([type='file'])");
-              if (labelled && !labelled.disabled && !labelled.readOnly && isVisible(labelled)) return [labelled];
+          const label = Array.from(document.querySelectorAll<HTMLElement>("label"))
+            .find((candidate) => candidate.textContent?.trim().toLowerCase() === "url");
+          if (label) {
+            const labelRect = label.getBoundingClientRect();
+            const geometric = Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type='file'])"))
+              .filter((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate))
+              .map((candidate) => ({ candidate, rect: candidate.getBoundingClientRect() }))
+              .filter(({ rect }) => rect.top >= labelRect.bottom - 8 && rect.top <= labelRect.bottom + 80 && Math.abs(rect.left - labelRect.left) < 80)
+              .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)[0]?.candidate;
+            if (geometric) return [geometric];
+          }
 
-              const container = label.closest<HTMLElement>("dl, .form-group, .mb-3, .mt-3, .Box-row, div");
-              const containerInput = container?.querySelector<HTMLInputElement>("input:not([type='file'])");
-              if (containerInput && !containerInput.disabled && !containerInput.readOnly && isVisible(containerInput)) return [containerInput];
-
-              let sibling = label.nextElementSibling;
-              while (sibling) {
-                const siblingInput = sibling.querySelector<HTMLInputElement>("input:not([type='file'])");
-                if (siblingInput && !siblingInput.disabled && !siblingInput.readOnly && isVisible(siblingInput)) return [siblingInput];
-                sibling = sibling.nextElementSibling;
-              }
-            }
-
-            const visibleTextInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type='file'])"))
-              .filter((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate));
-            const socialIndex = visibleTextInputs.findIndex((candidate) => {
-              const text = `${candidate.name} ${candidate.id} ${candidate.placeholder}`.toLowerCase();
-              return text.includes("social") || text.includes("link to social profile");
-            });
-            const bio = document.querySelector<HTMLTextAreaElement>("textarea[name='user[profile_bio]'], textarea[id='user_profile_bio']");
-            const afterBio = bio ? visibleTextInputs.filter((candidate) => candidate.getBoundingClientRect().top > bio.getBoundingClientRect().bottom - 4) : visibleTextInputs;
-            const beforeSocial = socialIndex >= 0 ? afterBio.filter((candidate) => visibleTextInputs.indexOf(candidate) < socialIndex) : afterBio;
-            return beforeSocial.filter((candidate) => {
+          const visibleTextInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type='file'])"))
+            .filter((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate));
+          const bio = document.querySelector<HTMLTextAreaElement>("textarea[name='user[profile_bio]'], textarea[id='user_profile_bio']");
+          const social = visibleTextInputs.find((candidate) => {
+            const text = `${candidate.name} ${candidate.id} ${candidate.placeholder}`.toLowerCase();
+            return text.includes("social") || text.includes("link to social profile");
+          });
+          const bioBottom = bio?.getBoundingClientRect().bottom ?? 0;
+          const socialTop = social?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
+          return visibleTextInputs
+            .filter((candidate) => {
+              const rect = candidate.getBoundingClientRect();
               const text = `${candidate.name} ${candidate.id} ${candidate.placeholder} ${candidate.getAttribute("aria-label") || ""}`.toLowerCase();
-              return !text.includes("social") && !text.includes("company") && !text.includes("location") && !text.includes("email");
-            }).slice(0, 1);
-          };
+              return rect.top > bioBottom && rect.top < socialTop && !text.includes("social") && !text.includes("company") && !text.includes("location") && !text.includes("email");
+            })
+            .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+            .slice(0, 1);
+        };
+        const findByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"], includeFile = false): Array<HTMLInputElement | HTMLTextAreaElement> => {
           const labels: Record<string, string[]> = {
             websiteUrl: ["url", "website", "blog"],
             avatarImageUrl: ["avatar", "profile picture", "profile photo", "photo", "image"],
@@ -268,7 +267,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           };
           const wanted = labels[fieldName] || [];
           if (wanted.length === 0) return [];
-          if (fieldName === "websiteUrl" && location.hostname === "github.com" && location.pathname === "/settings/profile") {
+          if (fieldName === "websiteUrl" && isGithubProfilePage()) {
             return findGithubProfileUrlFields();
           }
           return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
@@ -294,6 +293,9 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             });
         };
         const findFields = (selectors: string[], includeFile = false, fieldName?: keyof AccountSubmitVerifyPayload["formValues"]): Array<HTMLInputElement | HTMLTextAreaElement> => {
+          if (fieldName === "websiteUrl" && isGithubProfilePage()) {
+            return findGithubProfileUrlFields();
+          }
           const fields: Array<HTMLInputElement | HTMLTextAreaElement> = [];
           for (const selector of selectors) {
             try {
@@ -398,7 +400,9 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           const field = fields[0];
           field.focus();
           setFieldValue(field, value);
-          filledFields.push(fieldName);
+          if (field.value === value) {
+            filledFields.push(fieldName);
+          }
         }
         const missingFields: string[] = [];
         for (const fieldName of pagePayload.requiredFields) {
