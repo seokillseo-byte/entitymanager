@@ -34,7 +34,7 @@ const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloa
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
 const dryRunButton = document.querySelector<HTMLButtonElement>("#dryRunButton");
 const fillPreviewButton = document.querySelector<HTMLButtonElement>("#fillPreviewButton");
-const avatarOnlyButton = document.querySelector<HTMLButtonElement>("#avatarOnlyButton");
+const mediaOnlyButton = document.querySelector<HTMLButtonElement>("#mediaOnlyButton");
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
@@ -44,6 +44,7 @@ const defaultSubmitFetchUrl = "http://127.0.0.1:17321/account/submit-verify/next
 const defaultDryRunPreviewUrl = "http://127.0.0.1:17321/account/submit-verify/preview";
 const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
 const defaultDryRunHistoryCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/dry-run-history";
+type ExecutionStep = "dry_run" | "fill_text" | "upload_media" | "submit_verify";
 
 void loadState();
 
@@ -67,8 +68,8 @@ fillPreviewButton?.addEventListener("click", () => {
   void fillPreviewActiveTab();
 });
 
-avatarOnlyButton?.addEventListener("click", () => {
-  void uploadAvatarOnlyActiveTab();
+mediaOnlyButton?.addEventListener("click", () => {
+  void uploadMediaOnlyActiveTab();
 });
 
 submitVerifyButton?.addEventListener("click", () => {
@@ -202,7 +203,7 @@ async function fillPreviewActiveTab(): Promise<void> {
     const response = await runSafeFillInPage(tabId, payload);
 
     setStatus([
-      response.message,
+      formatExecutionSummary(payload, "fill_text", response),
       `Filled: ${response.filledFields.join(", ") || "none"}`,
       `Not submitted: yes`,
       `Needs attention: ${response.missingFields.join(", ") || "none"}`
@@ -212,7 +213,7 @@ async function fillPreviewActiveTab(): Promise<void> {
   }
 }
 
-async function uploadAvatarOnlyActiveTab(): Promise<void> {
+async function uploadMediaOnlyActiveTab(): Promise<void> {
   try {
     const currentUrl = await getActiveTabUrl();
     const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl, { includeGithubAvatar: true });
@@ -229,7 +230,7 @@ async function uploadAvatarOnlyActiveTab(): Promise<void> {
         socialLinks: "",
         profileImage: "",
         avatarImageUrl: payload.formValues.avatarImageUrl,
-        bannerImageUrl: ""
+        bannerImageUrl: payload.formValues.bannerImageUrl
       },
       requiredFields: []
     };
@@ -237,12 +238,12 @@ async function uploadAvatarOnlyActiveTab(): Promise<void> {
     const response = await runSafeFillInPage(tabId, avatarPayload);
 
     setStatus([
-      response.message.replace("Điền thử an toàn", "Cập nhật avatar"),
+      formatExecutionSummary(avatarPayload, "upload_media", response),
       `Filled: ${response.filledFields.join(", ") || "none"}`,
       `Needs attention: ${response.missingFields.join(", ") || "none"}`
     ].join("\n"));
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Avatar update failed.");
+    setStatus(error instanceof Error ? error.message : "Media update failed.");
   }
 }
 
@@ -384,8 +385,31 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           }
           return null;
         };
-        const saveGithubProfileText = async (): Promise<boolean> => {
-          const saveButton = findButtonByExactText("Update profile");
+        const waitForSelector = async <T extends HTMLElement>(selector: string, timeoutMs = 6000): Promise<T | null> => {
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < timeoutMs) {
+            try {
+              const element = document.querySelector<T>(selector);
+              if (element && isVisible(element) && !element.hasAttribute("disabled") && element.getAttribute("aria-disabled") !== "true") {
+                return element;
+              }
+            } catch {
+              return null;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          return null;
+        };
+        const saveProfileText = async (): Promise<boolean> => {
+          let saveButton: HTMLButtonElement | null = null;
+          if (pagePayload.saveTextSelector) {
+            try {
+              saveButton = document.querySelector<HTMLButtonElement>(pagePayload.saveTextSelector);
+            } catch {
+              saveButton = null;
+            }
+          }
+          saveButton = saveButton || findButtonByExactText("Update profile");
           if (!saveButton) return false;
           saveButton.click();
           await new Promise((resolve) => setTimeout(resolve, 1800));
@@ -427,7 +451,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           .map(([name]) => name);
         const filledFields: string[] = [];
         const attentionFields: string[] = [];
-        let githubTextFieldsFilled = false;
+        let textFieldsFilled = false;
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -476,7 +500,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
             });
             if (links.length > 0) {
               filledFields.push(fieldName);
-              if (isGithubProfilePage()) githubTextFieldsFilled = true;
+              textFieldsFilled = true;
             }
             continue;
           }
@@ -507,13 +531,24 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               fileField.dispatchEvent(new Event("change", { bubbles: true }));
               filledFields.push(fieldName);
               if (isGithubProfilePage() && fieldName === "avatarImageUrl") {
-                const confirmButton = await waitForButtonByExactText("Set new profile picture");
+                const confirmButton = pagePayload.mediaConfirmSelector
+                  ? await waitForSelector<HTMLButtonElement>(pagePayload.mediaConfirmSelector)
+                  : await waitForButtonByExactText("Set new profile picture");
                 if (confirmButton) {
                   confirmButton.click();
                   await new Promise((resolve) => setTimeout(resolve, 800));
                   filledFields.push("avatarImageUrl:confirmed");
                 } else {
                   attentionFields.push("avatarImageUrl:confirm_button_not_found");
+                }
+              } else if (pagePayload.mediaConfirmSelector) {
+                const confirmButton = await waitForSelector<HTMLButtonElement>(pagePayload.mediaConfirmSelector);
+                if (confirmButton) {
+                  confirmButton.click();
+                  await new Promise((resolve) => setTimeout(resolve, 800));
+                  filledFields.push(`${fieldName}:confirmed`);
+                } else {
+                  attentionFields.push(`${fieldName}:confirm_button_not_found`);
                 }
               }
             } catch {
@@ -527,14 +562,14 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           setFieldValue(field, value);
           if (field.value === value) {
             filledFields.push(fieldName);
-            if (isGithubProfilePage()) githubTextFieldsFilled = true;
+            textFieldsFilled = true;
           }
         }
-        if (githubTextFieldsFilled) {
-          if (await saveGithubProfileText()) {
-            filledFields.push("githubProfile:saved");
+        if (textFieldsFilled && (pagePayload.saveTextSelector || isGithubProfilePage())) {
+          if (await saveProfileText()) {
+            filledFields.push(`${pagePayload.platformId}:textSaved`);
           } else {
-            attentionFields.push("githubProfile:update_button_not_found");
+            attentionFields.push(`${pagePayload.platformId}:save_button_not_found`);
           }
         }
         const missingFields: string[] = [...attentionFields];
@@ -691,6 +726,45 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           }
           return null;
         };
+        const findFieldByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"]): HTMLInputElement | HTMLTextAreaElement | null => {
+          const labels: Record<string, string[]> = {
+            displayName: ["name", "display name", "full name", "title"],
+            bio: ["bio", "about", "description", "summary"],
+            websiteUrl: ["url", "website", "homepage", "blog"],
+            company: ["company", "organization"],
+            location: ["location", "address"],
+            socialLinks: ["social", "profile", "link"],
+            username: ["username", "user name", "handle"],
+            email: ["email"],
+            profileImage: ["avatar", "photo", "image", "picture"],
+            avatarImageUrl: ["avatar", "photo", "image", "picture"],
+            bannerImageUrl: ["banner", "cover", "header"]
+          };
+          const wanted = labels[fieldName] || [];
+          if (wanted.length === 0) return null;
+          return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
+            .find((candidate) => {
+              const rect = candidate.getBoundingClientRect();
+              const style = window.getComputedStyle(candidate);
+              const labelText = Array.from(document.querySelectorAll<HTMLLabelElement>("label"))
+                .filter((label) => label.control === candidate || label.contains(candidate))
+                .map((label) => label.innerText)
+                .join(" ");
+              const context = [
+                candidate.name,
+                candidate.id,
+                candidate.placeholder,
+                candidate.getAttribute("aria-label") || "",
+                labelText,
+                candidate.parentElement?.innerText || "",
+                candidate.parentElement?.previousElementSibling?.textContent || ""
+              ].join(" ").toLowerCase();
+              return !candidate.disabled && !candidate.readOnly &&
+                rect.width > 0 && rect.height > 0 &&
+                style.visibility !== "hidden" && style.display !== "none" &&
+                wanted.some((word) => context.includes(word));
+            }) ?? null;
+        };
         const fieldEntries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
           ["username", pagePayload.fieldSelectors.username, pagePayload.formValues.username],
           ["email", pagePayload.fieldSelectors.email, pagePayload.formValues.email],
@@ -705,13 +779,13 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           ["bannerImageUrl", pagePayload.fieldSelectors.bannerImageUrl, pagePayload.formValues.bannerImageUrl]
         ];
         const plannedFields = fieldEntries
-          .filter(([, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors)))
+          .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors) || findFieldByNearbyText(fieldName)))
           .map(([name]) => name);
         const missingFields: string[] = [];
         for (const fieldName of pagePayload.requiredFields) {
           if (!pagePayload.formValues[fieldName]?.trim()) {
             missingFields.push(`${fieldName}:value`);
-          } else if (!findField(pagePayload.fieldSelectors[fieldName])) {
+          } else if (!findField(pagePayload.fieldSelectors[fieldName]) && !findFieldByNearbyText(fieldName)) {
             missingFields.push(`${fieldName}:selector`);
           }
         }
@@ -916,8 +990,22 @@ function validateSubmitVerifyPayload(parsed: Partial<AccountSubmitVerifyPayload>
     submitSelectors: parsed.submitSelectors || [],
     verifySelectors: parsed.verifySelectors || [],
     evidenceCapture: parsed.evidenceCapture || "current_url",
-    notes: parsed.notes || ""
+    notes: parsed.notes || "",
+    executionSteps: parsed.executionSteps || ["dry_run", "fill_text", "upload_media", "submit_verify"],
+    saveTextSelector: parsed.saveTextSelector || "",
+    mediaConfirmSelector: parsed.mediaConfirmSelector || ""
   } as AccountSubmitVerifyPayload;
+}
+
+function formatExecutionSummary(payload: AccountSubmitVerifyPayload, step: ExecutionStep, response: SubmitVerifyResponse): string {
+  const labels: Record<ExecutionStep, string> = {
+    dry_run: "Chạy thử Selector Recipe",
+    fill_text: "Điền và lưu text",
+    upload_media: "Cập nhật avatar/banner",
+    submit_verify: "Gửi / xác minh tài khoản"
+  };
+  const expectedSteps = payload.executionSteps?.length ? payload.executionSteps.join(" → ") : "dry_run → fill_text → upload_media → submit_verify";
+  return `${labels[step]} cho ${payload.platformName}: ${response.success ? "thành công" : "cần kiểm tra"}. Workflow: ${expectedSteps}. ${response.message}`;
 }
 
 function getActiveTabUrl(): Promise<string> {
