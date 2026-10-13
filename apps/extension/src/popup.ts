@@ -34,6 +34,7 @@ const savePayloadButton = document.querySelector<HTMLButtonElement>("#savePayloa
 const injectButton = document.querySelector<HTMLButtonElement>("#injectButton");
 const dryRunButton = document.querySelector<HTMLButtonElement>("#dryRunButton");
 const fillPreviewButton = document.querySelector<HTMLButtonElement>("#fillPreviewButton");
+const avatarOnlyButton = document.querySelector<HTMLButtonElement>("#avatarOnlyButton");
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 
@@ -64,6 +65,10 @@ dryRunButton?.addEventListener("click", () => {
 
 fillPreviewButton?.addEventListener("click", () => {
   void fillPreviewActiveTab();
+});
+
+avatarOnlyButton?.addEventListener("click", () => {
+  void uploadAvatarOnlyActiveTab();
 });
 
 submitVerifyButton?.addEventListener("click", () => {
@@ -204,6 +209,40 @@ async function fillPreviewActiveTab(): Promise<void> {
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Safe fill preview failed.");
+  }
+}
+
+async function uploadAvatarOnlyActiveTab(): Promise<void> {
+  try {
+    const currentUrl = await getActiveTabUrl();
+    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl);
+    const avatarPayload: AccountSubmitVerifyPayload = {
+      ...payload,
+      formValues: {
+        username: "",
+        email: "",
+        displayName: "",
+        bio: "",
+        websiteUrl: "",
+        company: "",
+        location: "",
+        socialLinks: "",
+        profileImage: "",
+        avatarImageUrl: payload.formValues.avatarImageUrl,
+        bannerImageUrl: ""
+      },
+      requiredFields: []
+    };
+    const tabId = await getActiveTabId();
+    const response = await runSafeFillInPage(tabId, avatarPayload);
+
+    setStatus([
+      response.message.replace("Điền thử an toàn", "Cập nhật avatar"),
+      `Filled: ${response.filledFields.join(", ") || "none"}`,
+      `Needs attention: ${response.missingFields.join(", ") || "none"}`
+    ].join("\n"));
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Avatar update failed.");
   }
 }
 
@@ -389,6 +428,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
         const filledFields: string[] = [];
         const attentionFields: string[] = [];
         let githubProfileSavedBeforeAvatar = false;
+        let githubTextFieldsFilled = false;
         for (const [fieldName, selectors, value] of fieldEntries) {
           if (!value.trim()) continue;
           const isImageField = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
@@ -435,7 +475,10 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               field.focus();
               setFieldValue(field, links[index]);
             });
-            if (links.length > 0) filledFields.push(fieldName);
+            if (links.length > 0) {
+              filledFields.push(fieldName);
+              if (isGithubProfilePage()) githubTextFieldsFilled = true;
+            }
             continue;
           }
 
@@ -446,7 +489,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               continue;
             }
             try {
-              if (isGithubProfilePage() && fieldName === "avatarImageUrl" && !githubProfileSavedBeforeAvatar) {
+              if (isGithubProfilePage() && fieldName === "avatarImageUrl" && githubTextFieldsFilled && !githubProfileSavedBeforeAvatar) {
                 githubProfileSavedBeforeAvatar = true;
                 if (await saveGithubProfileBeforeAvatar()) {
                   filledFields.push("githubProfile:saved");
@@ -493,6 +536,7 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           setFieldValue(field, value);
           if (field.value === value) {
             filledFields.push(fieldName);
+            if (isGithubProfilePage()) githubTextFieldsFilled = true;
           }
         }
         const missingFields: string[] = [...attentionFields];
