@@ -325,6 +325,24 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
           field.dispatchEvent(new Event("input", { bubbles: true }));
           field.dispatchEvent(new Event("change", { bubbles: true }));
         };
+        const blobFromImageValue = async (imageValue: string): Promise<Blob | null> => {
+          if (imageValue.startsWith("data:")) {
+            const parts = imageValue.split(",");
+            if (parts.length < 2) return null;
+            const header = parts[0] || "";
+            const mime = header.match(/^data:([^;]+)/)?.[1] || "image/jpeg";
+            const binary = atob(parts.slice(1).join(","));
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) {
+              bytes[index] = binary.charCodeAt(index);
+            }
+            return new Blob([bytes], { type: mime });
+          }
+
+          const response = await fetch(imageValue, { mode: "cors" });
+          if (!response.ok) return null;
+          return response.blob();
+        };
         const fieldEntries: Array<[keyof AccountSubmitVerifyPayload["formValues"], string[], string]> = [
           ["username", pagePayload.fieldSelectors.username, pagePayload.formValues.username],
           ["email", pagePayload.fieldSelectors.email, pagePayload.formValues.email],
@@ -400,12 +418,11 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
               continue;
             }
             try {
-              const response = await fetch(value, { mode: "cors" });
-              if (!response.ok) {
+              const blob = await blobFromImageValue(value);
+              if (!blob) {
                 attentionFields.push(`${fieldName}:image_fetch_failed`);
                 continue;
               }
-              const blob = await response.blob();
               const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
               const filename = fieldName === "bannerImageUrl" ? `entity-banner-1200x630.${extension}` : `entity-avatar.${extension}`;
               const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
