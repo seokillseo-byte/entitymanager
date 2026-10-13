@@ -192,7 +192,7 @@ async function submitVerifyActiveTab(): Promise<void> {
 async function fillPreviewActiveTab(): Promise<void> {
   try {
     const currentUrl = await getActiveTabUrl();
-    const payload = await fetchDryRunPreviewPayload(currentUrl);
+    const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl);
     const tabId = await getActiveTabId();
     const response = await runSafeFillInPage(tabId, payload);
 
@@ -461,6 +461,56 @@ async function runSafeFillInPage(tabId: number, payload: AccountSubmitVerifyPayl
       resolve(result);
     });
   });
+}
+
+async function prepareSafeFillPayload(payload: AccountSubmitVerifyPayload, currentUrl: string): Promise<AccountSubmitVerifyPayload> {
+  const nextPayload: AccountSubmitVerifyPayload = {
+    ...payload,
+    formValues: { ...payload.formValues },
+    fieldSelectors: { ...payload.fieldSelectors },
+    requiredFields: [...payload.requiredFields]
+  };
+  const platformId = platformIdForUrl(currentUrl);
+
+  if (platformId === "github") {
+    nextPayload.formValues.bannerImageUrl = "";
+    nextPayload.fieldSelectors.bannerImageUrl = [];
+    nextPayload.requiredFields = nextPayload.requiredFields.filter((field) => field !== "bannerImageUrl");
+  }
+
+  const avatarValue = nextPayload.formValues.avatarImageUrl || nextPayload.formValues.profileImage;
+  const hydratedAvatar = await hydrateImageValueForPage(avatarValue);
+  if (hydratedAvatar) {
+    nextPayload.formValues.avatarImageUrl = hydratedAvatar;
+    nextPayload.formValues.profileImage = hydratedAvatar;
+  }
+
+  const hydratedBanner = await hydrateImageValueForPage(nextPayload.formValues.bannerImageUrl);
+  if (hydratedBanner) {
+    nextPayload.formValues.bannerImageUrl = hydratedBanner;
+  }
+
+  return nextPayload;
+}
+
+async function hydrateImageValueForPage(value: string): Promise<string> {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return trimmed;
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  try {
+    const response = await fetch(trimmed);
+    if (!response.ok) return trimmed;
+    const blob = await response.blob();
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : trimmed);
+      reader.onerror = () => resolve(trimmed);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return trimmed;
+  }
 }
 
 async function previewSubmitVerifyActiveTab(): Promise<void> {
