@@ -137,6 +137,16 @@ type RecipeFixSuggestion = {
   selectorSuggestions: Record<string, string[]>;
   submitSuggestions: string[];
 };
+type PlatformGuide = {
+  primaryUrl: string;
+  secondaryUrls: string[];
+  profileArea: string;
+  textStep: string;
+  mediaStep: string;
+  saveStep: string;
+  evidenceStep: string;
+  warnings: string[];
+};
 
 function releaseBuildNumber(release: Pick<LatestRelease, "tag_name">) {
   const match = release.tag_name.match(/build-(\d+)$/);
@@ -255,6 +265,62 @@ function submitSelectorSuggestionsForPlatform(platformId: string) {
     return ['button[aria-label*="save" i]', 'button[data-testid*="save" i]', 'button[data-test-id*="save" i]', 'button[type="submit"]'];
   }
   return ['button[type="submit"]', 'input[type="submit"]', 'button[name="submit"]'];
+}
+
+function guidedRunnerForPlatform(platformId: string, fallbackUrl = ""): PlatformGuide {
+  const guides: Record<string, PlatformGuide> = {
+    github: {
+      primaryUrl: "https://github.com/settings/profile",
+      secondaryUrls: ["https://github.com/settings/profile", "https://github.com/settings/account"],
+      profileArea: "Settings → Public profile",
+      textStep: "Chạy dry-run tại /settings/profile, sau đó dùng Điền thử an toàn để lưu display name, bio, URL, company, location và social links.",
+      mediaStep: "Dùng Cập nhật avatar/banner cho avatar. GitHub không có banner profile phổ thông, nên banner có thể bỏ qua.",
+      saveStep: "Text profile cần được lưu trước; avatar là bước riêng và cần confirm Set new profile picture.",
+      evidenceStep: "Mở profile public của tài khoản GitHub sau khi lưu, copy URL profile làm evidence.",
+      warnings: ["Logo/avatar nên dưới 1MB để GitHub nhận upload ổn.", "Không chạy upload avatar cùng lúc với lưu text nếu trang báo rời khỏi website."]
+    },
+    medium: {
+      primaryUrl: "https://medium.com/me/settings",
+      secondaryUrls: ["https://medium.com/me/settings", "https://medium.com/me/about", "https://medium.com/"],
+      profileArea: "Medium → Settings/Profile hoặc About page của tài khoản",
+      textStep: "Mở trang settings/profile, chạy dry-run, rồi điền display name, bio/about và website URL nếu trang có field.",
+      mediaStep: "Upload avatar/logo ở khu vực profile photo. Medium thường không có banner profile chuẩn trong settings cá nhân.",
+      saveStep: "Sau khi Điền thử an toàn, kiểm tra nút Save/Update trên trang Medium rồi lưu profile.",
+      evidenceStep: "Mở trang public Medium của tài khoản hoặc author page, copy URL đó làm evidence.",
+      warnings: ["Medium thay đổi UI theo trạng thái login khá nhiều; nếu dry-run fail, vào Selector Recipes → Platform Test Assistant để draft fix.", "Website URL có thể nằm ở About/Profile section chứ không phải màn signup."]
+    },
+    aboutme: {
+      primaryUrl: "https://about.me/account/edit",
+      secondaryUrls: ["https://about.me/account/edit", "https://about.me/settings", "https://about.me/"],
+      profileArea: "About.me → Edit page/Profile details",
+      textStep: "Mở trang edit profile, dry-run rồi điền name, bio/about, website và social/profile links.",
+      mediaStep: "Upload avatar/logo ở profile photo. Banner/cover chỉ xử lý nếu trang hiện input ảnh tương ứng.",
+      saveStep: "Bấm Save/Publish/Update sau khi điền text và sau khi upload media nếu About.me tách hai bước.",
+      evidenceStep: "Mở trang public about.me/username, copy URL profile làm evidence.",
+      warnings: ["About.me có thể yêu cầu publish page trước khi URL public hoạt động.", "Nếu social link chưa có field, thêm link thủ công rồi chạy dry-run lại để assistant học lỗi."]
+    },
+    tumblr: {
+      primaryUrl: "https://www.tumblr.com/settings/blog",
+      secondaryUrls: ["https://www.tumblr.com/settings/blog", "https://www.tumblr.com/customize", "https://www.tumblr.com/settings"],
+      profileArea: "Tumblr → Blog settings / Edit appearance / Customize",
+      textStep: "Mở blog settings hoặc edit appearance, dry-run rồi điền blog title, description/bio và website URL.",
+      mediaStep: "Upload avatar/logo và banner/header trong edit appearance nếu các control hiện trên trang.",
+      saveStep: "Tumblr thường có nút Save/Update theo từng khu vực; lưu text trước rồi xử lý avatar/banner.",
+      evidenceStep: "Mở URL blog public dạng username.tumblr.com hoặc tumblr.com/username, copy URL làm evidence.",
+      warnings: ["Tumblr có nhiều layout settings khác nhau theo loại blog; nếu dry-run fail, dùng Platform Test Assistant để lấy lỗi selector.", "CAPTCHA hoặc email verify có thể cần xử lý thủ công trước khi profile public ổn định."]
+    }
+  };
+
+  return guides[platformId] ?? {
+    primaryUrl: fallbackUrl,
+    secondaryUrls: fallbackUrl ? [fallbackUrl] : [],
+    profileArea: "Trang profile/settings của platform",
+    textStep: "Mở trang chỉnh sửa profile, chạy dry-run rồi điền các trường entity/EEAT có trên trang.",
+    mediaStep: "Upload avatar/logo hoặc banner nếu platform hỗ trợ.",
+    saveStep: "Lưu profile trên website trước khi đánh dấu hoàn tất trong Desktop.",
+    evidenceStep: "Mở trang public profile và copy URL làm evidence.",
+    warnings: ["Platform này chưa có hướng dẫn riêng; bắt đầu bằng dry-run và đọc lỗi trong Selector Recipes."]
+  };
 }
 
 function App() {
@@ -548,6 +614,9 @@ function App() {
     || activeExecutionAccount?.evidenceUrl
     || activeExecutionValidation?.lastTestedUrl
     || "";
+  const activePlatformGuide = activeExecutionPlan
+    ? guidedRunnerForPlatform(activeExecutionPlan.platformId, activeExecutionPlatform?.homepageUrl ?? "")
+    : null;
 
   async function loadLocalData() {
     try {
@@ -2104,10 +2173,40 @@ function App() {
                         <h3>{activeExecutionPlan.platformName}</h3>
                         <span className="muted-text">@{activeExecutionPlan.recommendedUsername} · authority {activeExecutionPlan.authorityScore}</span>
                       </div>
-                      {activeExecutionPlatform?.homepageUrl && (
-                        <a className="secondary-action" href={activeExecutionPlatform.homepageUrl} target="_blank" rel="noreferrer">Mở platform</a>
+                      {activePlatformGuide?.primaryUrl && (
+                        <a className="secondary-action" href={activePlatformGuide.primaryUrl} target="_blank" rel="noreferrer">Mở trang cần thao tác</a>
                       )}
                     </div>
+
+                    {activePlatformGuide && (
+                      <div className="platform-guided-runner">
+                        <div className="guided-runner-header">
+                          <div>
+                            <p className="eyebrow">PLATFORM-SPECIFIC GUIDED RUNNER</p>
+                            <strong>{activePlatformGuide.profileArea}</strong>
+                          </div>
+                          <button className="secondary-action" type="button" onClick={() => setActiveModule("Selector Recipes")}>Mở Fix Loop</button>
+                        </div>
+                        <div className="guided-url-list">
+                          <span>URL nên mở:</span>
+                          {activePlatformGuide.secondaryUrls.map((url) => (
+                            <a href={url} key={url} target="_blank" rel="noreferrer">{url}</a>
+                          ))}
+                        </div>
+                        <ol className="guided-step-list">
+                          <li><strong>Dry-run:</strong> mở đúng URL ở trên, bật extension và bấm Chạy thử Selector Recipe.</li>
+                          <li><strong>Text/NAP/EEAT:</strong> {activePlatformGuide.textStep}</li>
+                          <li><strong>Avatar/banner:</strong> {activePlatformGuide.mediaStep}</li>
+                          <li><strong>Lưu trên platform:</strong> {activePlatformGuide.saveStep}</li>
+                          <li><strong>Evidence:</strong> {activePlatformGuide.evidenceStep}</li>
+                        </ol>
+                        <div className="guided-warning-list">
+                          {activePlatformGuide.warnings.map((warning) => (
+                            <span key={warning}>{warning}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="workspace-task-list">
                       {[
