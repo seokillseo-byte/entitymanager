@@ -960,6 +960,8 @@ fn sync_platform_validation_record(
     ensure_default_platforms(&connection)?;
     ensure_default_platform_validation(&connection)?;
     let now = if report.created_at.trim().is_empty() { now_string() } else { report.created_at.clone() };
+    let last_tested_url = report.current_url.trim().to_string();
+    let note = platform_validation_note(&report);
     let existing = get_platform_validation_record(&connection, &report.platform_id).unwrap_or_else(|_| PlatformValidationRecord {
         platform_id: report.platform_id.clone(),
         platform_name: report.platform_name.clone(),
@@ -979,8 +981,8 @@ fn sync_platform_validation_record(
         dry_run_checked_at: existing.dry_run_checked_at,
         text_saved_at: existing.text_saved_at,
         media_uploaded_at: existing.media_uploaded_at,
-        last_tested_url: if report.current_url.trim().is_empty() { existing.last_tested_url } else { report.current_url },
-        notes: platform_validation_note(&report),
+        last_tested_url: if last_tested_url.is_empty() { existing.last_tested_url } else { last_tested_url },
+        notes: note,
         updated_at: now.clone(),
     };
 
