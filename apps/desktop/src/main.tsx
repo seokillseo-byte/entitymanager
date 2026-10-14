@@ -126,6 +126,17 @@ const validationStatusLabels: Record<PlatformValidationStatus, string> = {
 type ReleaseAsset = { name: string; browser_download_url: string; size: number };
 type LatestRelease = { name: string; tag_name: string; html_url: string; published_at: string; assets: ReleaseAsset[] };
 type DryRunHistoryAudit = { totalRecords: number; uniqueIds: number; oldestCreatedAt: string | null; newestCreatedAt: string | null };
+type RecipeFixSuggestion = {
+  platformId: string;
+  platformName: string;
+  latestUrl: string;
+  latestAt: string;
+  status: "ready" | "needs_fix" | "untested";
+  failedRuns: number;
+  missingIssues: string[];
+  selectorSuggestions: Record<string, string[]>;
+  submitSuggestions: string[];
+};
 
 function releaseBuildNumber(release: Pick<LatestRelease, "tag_name">) {
   const match = release.tag_name.match(/build-(\d+)$/);
@@ -141,6 +152,109 @@ function pickHighestBuildRelease(releases: LatestRelease[]) {
 function buildExportFilename(prefix: string) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${prefix}-${stamp}.json`;
+}
+
+function parseDryRunTime(value: string) {
+  if (!value.trim()) return 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric < 1e12 ? numeric * 1000 : numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeIssueField(issue: string) {
+  const [rawField, problem] = issue.split(":");
+  if (problem && problem !== "selector") return "";
+  const fieldKeyMap: Record<string, string> = {
+    username: "username",
+    email: "email",
+    displayName: "displayName",
+    display_name: "displayName",
+    bio: "bio",
+    websiteUrl: "websiteUrl",
+    website_url: "websiteUrl",
+    company: "company",
+    location: "location",
+    socialLinks: "socialLinks",
+    social_links: "socialLinks",
+    profileImage: "profileImage",
+    profile_image: "profileImage",
+    avatarImageUrl: "avatarImageUrl",
+    avatar_image_url: "avatarImageUrl",
+    bannerImageUrl: "bannerImageUrl",
+    banner_image_url: "bannerImageUrl"
+  };
+  return fieldKeyMap[rawField] ?? "";
+}
+
+function recipeSelectorCandidates(platformId: string): Record<string, string[]> {
+  const shared: Record<string, string[]> = {
+    username: ['input[name="username"]', 'input[autocomplete="username"]', 'input[aria-label*="username" i]'],
+    email: ['input[type="email"]', 'input[name="email"]'],
+    displayName: ['input[name="name"]', 'input[aria-label*="name" i]', 'input[placeholder*="name" i]'],
+    bio: ['textarea[name="bio"]', 'textarea[aria-label*="bio" i]', 'textarea[placeholder*="bio" i]', 'textarea[aria-label*="about" i]'],
+    websiteUrl: ['input[type="url"]', 'input[name*="website" i]', 'input[name*="url" i]', 'input[aria-label*="website" i]', 'input[placeholder*="url" i]'],
+    socialLinks: ['input[name*="link" i]', 'input[aria-label*="link" i]', 'input[placeholder*="link" i]', 'input[aria-label*="social" i]'],
+    avatarImageUrl: ['input[type="file"][accept*="image" i]', 'input[type="file"][name*="avatar" i]', 'input[type="file"][name*="photo" i]'],
+    profileImage: ['input[type="file"][accept*="image" i]', 'input[type="file"][name*="image" i]'],
+    bannerImageUrl: ['input[type="file"][name*="banner" i]', 'input[type="file"][name*="cover" i]', 'input[type="file"][name*="header" i]', 'input[type="file"][accept*="image" i]']
+  };
+
+  if (platformId === "medium") {
+    return {
+      ...shared,
+      displayName: ['input[name="name"]', 'input[data-testid*="name" i]', 'input[aria-label*="name" i]', 'input[placeholder*="name" i]'],
+      bio: ['textarea[aria-label*="bio" i]', 'textarea[placeholder*="bio" i]', 'textarea[name*="bio" i]'],
+      websiteUrl: ['input[name*="url" i]', 'input[aria-label*="website" i]', 'input[placeholder*="website" i]', 'input[aria-label*="url" i]'],
+      avatarImageUrl: ['input[type="file"][accept*="image" i]', 'input[type="file"][name*="image" i]']
+    };
+  }
+
+  if (platformId === "aboutme") {
+    return {
+      ...shared,
+      username: ['input[name*="slug" i]', 'input[name*="username" i]'],
+      displayName: ['input[name="name"]', 'input[name*="display" i]', 'input[aria-label*="name" i]'],
+      bio: ['textarea[name="bio"]', 'textarea[name*="bio" i]', 'textarea[placeholder*="about" i]'],
+      websiteUrl: ['input[name="website"]', 'input[name*="website" i]', 'input[aria-label*="website" i]'],
+      socialLinks: ['input[name*="link" i]', 'input[aria-label*="link" i]', 'input[placeholder*="link" i]']
+    };
+  }
+
+  if (platformId === "tumblr") {
+    return {
+      ...shared,
+      username: ['input[name="tumblelog[name]"]', 'input[name="blogName"]', 'input[aria-label*="username" i]'],
+      displayName: ['input[name="title"]', 'input[name*="title" i]', 'input[aria-label*="title" i]', 'input[placeholder*="title" i]'],
+      bio: ['textarea[name="description"]', 'textarea[name*="description" i]', 'textarea[aria-label*="description" i]', 'textarea[placeholder*="description" i]'],
+      websiteUrl: ['input[name="url"]', 'input[name*="url" i]', 'input[aria-label*="website" i]'],
+      bannerImageUrl: ['input[type="file"][name*="header" i]', 'input[type="file"][name*="banner" i]', 'input[type="file"][name*="cover" i]', 'input[type="file"][accept*="image" i]']
+    };
+  }
+
+  return shared;
+}
+
+function selectorSuggestionsForIssues(platformId: string, issues: string[]) {
+  const candidates = recipeSelectorCandidates(platformId);
+  return issues.reduce<Record<string, string[]>>((result, issue) => {
+    const field = normalizeIssueField(issue);
+    if (field && candidates[field]) result[field] = candidates[field];
+    return result;
+  }, {});
+}
+
+function submitSelectorSuggestionsForPlatform(platformId: string) {
+  if (platformId === "medium") {
+    return ['button[data-testid*="save" i]', 'button[aria-label*="save" i]', 'button[data-action="save"]', 'button[type="submit"]'];
+  }
+  if (platformId === "aboutme") {
+    return ['button[aria-label*="save" i]', 'button[data-testid*="save" i]', 'button[data-test*="save" i]', 'button[type="submit"]'];
+  }
+  if (platformId === "tumblr") {
+    return ['button[aria-label*="save" i]', 'button[data-testid*="save" i]', 'button[data-test-id*="save" i]', 'button[type="submit"]'];
+  }
+  return ['button[type="submit"]', 'input[type="submit"]', 'button[name="submit"]'];
 }
 
 function App() {
@@ -273,6 +387,44 @@ function App() {
     () => calculateSelectorHealthTrends(dryRunHistory, selectorRecipes),
     [dryRunHistory, selectorRecipes]
   );
+
+  const platformTestAssistant = useMemo<RecipeFixSuggestion[]>(() => {
+    return starterCampaignPlatformIds.slice(1).map((platformId) => {
+      const platform = platforms.find((item) => item.id === platformId);
+      const runs = dryRunHistory
+        .filter((run) => run.platformId === platformId)
+        .sort((a, b) => parseDryRunTime(b.createdAt) - parseDryRunTime(a.createdAt));
+      const failedRuns = runs.filter((run) => run.missingChecks.length > 0 || !run.plannedSelector || run.plannedFields.length === 0);
+      const latestRun = runs[0];
+      const missingIssues = Array.from(new Set(failedRuns.flatMap((run) => {
+        const issues = [...run.missingChecks];
+        if (!run.plannedSelector) issues.push("submitButton");
+        if (!run.plannedFields.length) issues.push("noPlannedFields");
+        return issues;
+      })));
+      const selectorSuggestions = selectorSuggestionsForIssues(platformId, missingIssues);
+      const submitSuggestions = missingIssues.includes("submitButton") || missingIssues.includes("noPlannedFields")
+        ? submitSelectorSuggestionsForPlatform(platformId)
+        : [];
+      const status: RecipeFixSuggestion["status"] = !runs.length
+        ? "untested"
+        : failedRuns.length
+          ? "needs_fix"
+          : "ready";
+
+      return {
+        platformId,
+        platformName: platform?.name ?? platformId,
+        latestUrl: latestRun?.currentUrl ?? "",
+        latestAt: latestRun?.createdAt ?? "",
+        status,
+        failedRuns: failedRuns.length,
+        missingIssues,
+        selectorSuggestions,
+        submitSuggestions
+      };
+    });
+  }, [dryRunHistory, platforms]);
 
   const validationPack = useMemo(() => {
     const targets = ["github", "medium", "aboutme", "tumblr"];
@@ -613,8 +765,8 @@ function App() {
 
   function draftRecipeSuggestions(platformId: string) {
     const recipe = selectorRecipes.find((item) => item.platformId === platformId);
-    const failedRuns = dryRunHistory.filter((item) => item.platformId === platformId && (item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0));
-    if (!recipe || !failedRuns.length) {
+    const assistantItem = platformTestAssistant.find((item) => item.platformId === platformId);
+    if (!recipe || !assistantItem || (assistantItem.missingIssues.length === 0 && assistantItem.submitSuggestions.length === 0)) {
       setStatusMessage("No failed dry-run data available for this platform yet.");
       return;
     }
@@ -628,45 +780,20 @@ function App() {
       return;
     }
 
-    const fallbackSelectors: Record<string, string[]> = {
-      username: ['input[name="username"]', "input#username", 'input[autocomplete="username"]'],
-      email: ['input[type="email"]', 'input[name="email"]', "input#email"],
-      displayName: ['input[name="displayName"]', 'input[name="name"]', "input#displayName"],
-      bio: ['textarea[name="bio"]', "textarea#bio", "textarea"],
-      websiteUrl: ['input[type="url"]', 'input[name="website"]', 'input[name="url"]']
-    };
-    const fieldKeyMap: Record<string, string> = {
-      username: "username", email: "email", displayName: "displayName", bio: "bio",
-      websiteUrl: "websiteUrl", display_name: "displayName", website_url: "websiteUrl"
-    };
     const submitSelectors = recipe.submitSelectors.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
     let fieldSuggestions = 0;
-    let needsSubmitSuggestion = false;
 
-    for (const run of failedRuns) {
-      const issues = [...run.missingChecks];
-      if (!run.plannedSelector) issues.push("submitButton");
-      if (!run.plannedFields.length) issues.push("noPlannedFields");
-      for (const issue of issues) {
-        if (issue === "submitButton") {
-          needsSubmitSuggestion = true;
-          continue;
-        }
-        const [rawField, problem] = issue.split(":");
-        if (problem !== "selector" && problem !== undefined) continue;
-        const field = fieldKeyMap[rawField];
-        if (!field || !fallbackSelectors[field]) continue;
-        const current = Array.isArray(selectors[field]) ? (selectors[field] as unknown[]).filter((value): value is string => typeof value === "string") : [];
-        const additions = fallbackSelectors[field].filter((candidate) => !current.includes(candidate));
-        if (additions.length) {
-          selectors[field] = [...current, ...additions];
-          fieldSuggestions += additions.length;
-        }
+    for (const [field, suggestions] of Object.entries(assistantItem.selectorSuggestions)) {
+      const current = Array.isArray(selectors[field]) ? (selectors[field] as unknown[]).filter((value): value is string => typeof value === "string") : [];
+      const additions = suggestions.filter((candidate) => !current.includes(candidate));
+      if (additions.length) {
+        selectors[field] = [...current, ...additions];
+        fieldSuggestions += additions.length;
       }
     }
 
-    const nextSubmitSelectors = needsSubmitSuggestion
-      ? [...new Set([...submitSelectors, "button[type='submit']", "input[type='submit']", "button[name='submit']"])]
+    const nextSubmitSelectors = assistantItem.submitSuggestions.length
+      ? [...new Set([...submitSelectors, ...assistantItem.submitSuggestions])]
       : submitSelectors;
     const drafted: SelectorRecipeRecord = {
       ...recipe,
@@ -675,7 +802,7 @@ function App() {
       updatedAt: new Date().toISOString()
     };
     setSelectorRecipes((current) => current.map((item) => item.platformId === platformId ? drafted : item));
-    setStatusMessage(`Drafted ${fieldSuggestions} field selector fallback(s)${needsSubmitSuggestion ? " and submit-button fallbacks" : ""} for ${recipe.platformName}. Review the editor, then click Save Recipe to persist.`);
+    setStatusMessage(`Drafted ${fieldSuggestions} field selector fallback(s)${assistantItem.submitSuggestions.length ? " and submit-button fallbacks" : ""} for ${recipe.platformName}. Review the editor, then click Save Recipe to persist.`);
   }
 
   async function saveEntityProfileForm(event: React.FormEvent<HTMLFormElement>) {
@@ -1569,6 +1696,43 @@ function App() {
                 {diagnosticValidation.errors.map((error, index) => <span key={index}>{error}</span>)}
                 {diagnosticValidation.valid && <span>{diagnosticValidation.complete ? "Included record count matches the SQLite count recorded at export time." : "The export is internally consistent but does not include every row in SQLite. Refresh history/export again after reviewing the record limit."} Source counts are audit metadata, not a cryptographic proof.</span>}
               </div>}
+              <div className="panel-header"><div><p className="eyebrow">Platform Test Assistant</p><h2>Medium / About.me / Tumblr fix loop</h2></div><span className="badge">{platformTestAssistant.filter((item) => item.status === "needs_fix").length} cần sửa</span></div>
+              <p className="muted-text">Assistant này đọc lỗi selector do extension gửi về Desktop, gom theo platform, rồi đề xuất selector cần thêm vào recipe. Quy trình: mở platform → chạy dry-run → nếu fail bấm Draft fix → Save Recipe → chạy dry-run lại.</p>
+              <div className="platform-test-assistant-grid">
+                {platformTestAssistant.map((item) => (
+                  <article className={`platform-test-card status-${item.status}`} key={item.platformId}>
+                    <div>
+                      <p className="eyebrow">{item.platformId}</p>
+                      <h3>{item.platformName}</h3>
+                      <strong>{item.status === "ready" ? "Dry-run đang ổn" : item.status === "needs_fix" ? "Cần sửa recipe" : "Chưa test"}</strong>
+                      <span>{item.failedRuns ? `${item.failedRuns} lần fail trong lịch sử đang tải` : "Chưa có lỗi trong lịch sử đang tải"}</span>
+                      <span>Lần gần nhất: {item.latestAt ? new Date(item.latestAt).toLocaleString("vi-VN") : "chưa có"}</span>
+                    </div>
+                    <div className="test-checklist">
+                      <span className={item.status !== "untested" ? "done" : ""}>1. Extension gửi dry-run về Desktop</span>
+                      <span className={item.missingIssues.length ? "needs-fix" : item.status === "ready" ? "done" : ""}>2. Lỗi selector: {item.missingIssues.join(", ") || "none"}</span>
+                      <span className={Object.keys(item.selectorSuggestions).length || item.submitSuggestions.length ? "needs-fix" : item.status === "ready" ? "done" : ""}>3. Gợi ý fix: {Object.keys(item.selectorSuggestions).join(", ") || (item.submitSuggestions.length ? "submitButton" : "none")}</span>
+                    </div>
+                    <div className="suggestion-list">
+                      {Object.entries(item.selectorSuggestions).map(([field, suggestions]) => (
+                        <div key={field}>
+                          <strong>{field}</strong>
+                          {suggestions.slice(0, 4).map((selector) => <code key={selector}>{selector}</code>)}
+                        </div>
+                      ))}
+                      {item.submitSuggestions.length > 0 && <div>
+                        <strong>submitButton</strong>
+                        {item.submitSuggestions.slice(0, 4).map((selector) => <code key={selector}>{selector}</code>)}
+                      </div>}
+                    </div>
+                    <div className="queue-actions">
+                      {item.latestUrl && <a className="secondary-action" href={item.latestUrl} target="_blank" rel="noreferrer">Mở URL lỗi gần nhất</a>}
+                      <button className="secondary-action" type="button" disabled={item.status !== "needs_fix"} onClick={() => draftRecipeSuggestions(item.platformId)}>Draft fix vào recipe</button>
+                      <button className="primary-action" type="button" onClick={() => setActiveModule("Entity Builder")}>Mở Campaign Workspace</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
               <div className="panel-header"><div><p className="eyebrow">Selector Failure Analytics</p><h2>Failures by platform</h2></div><span className="badge">{dryRunHistory.filter((item) => item.missingChecks.length > 0 || !item.plannedSelector || item.plannedFields.length === 0).length} failed previews</span></div>
               <div className="queue-list">
                 {selectorFailureAnalytics.map((item) => (

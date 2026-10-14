@@ -1092,6 +1092,75 @@ textarea {
 .selector-recipes-panel .status-message {
   overflow-wrap: anywhere;
 }
+.selector-recipes-panel .platform-test-assistant-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 12px 0 22px;
+}
+.selector-recipes-panel .platform-test-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #dbe4ee;
+  border-radius: 10px;
+  background: #fff;
+}
+.selector-recipes-panel .platform-test-card.status-ready {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+.selector-recipes-panel .platform-test-card.status-needs_fix {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+.selector-recipes-panel .platform-test-card h3 {
+  margin: 2px 0 6px;
+  color: #0f172a;
+}
+.selector-recipes-panel .platform-test-card span {
+  display: block;
+  color: #475569;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.selector-recipes-panel .test-checklist {
+  display: grid;
+  gap: 6px;
+}
+.selector-recipes-panel .test-checklist span {
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #f1f5f9;
+}
+.selector-recipes-panel .test-checklist .done {
+  background: #dcfce7;
+  color: #166534;
+}
+.selector-recipes-panel .test-checklist .needs-fix {
+  background: #fef3c7;
+  color: #92400e;
+}
+.selector-recipes-panel .suggestion-list {
+  display: grid;
+  gap: 8px;
+}
+.selector-recipes-panel .suggestion-list div {
+  display: grid;
+  gap: 5px;
+}
+.selector-recipes-panel .suggestion-list strong {
+  color: #0f172a;
+}
+.selector-recipes-panel .suggestion-list code {
+  display: block;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .selector-recipes-panel .queue-list {
   min-width: 0;
 }
@@ -1150,6 +1219,9 @@ textarea {
     position: static;
   }
   .selector-recipes-panel .selector-import-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .selector-recipes-panel .platform-test-assistant-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
