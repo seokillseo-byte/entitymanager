@@ -2161,6 +2161,7 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
     for platform in platforms {
         let field_selectors = submit_verify_field_selectors(&platform.id, &platform.name);
         let submit_verify = submit_verify_selectors(&platform.id, &platform.name);
+        let required_fields = required_fields_for_platform(&platform.id, &platform.name).join("\n");
         let recipe = SelectorRecipeRecord {
             platform_id: platform.id,
             platform_name: platform.name,
@@ -2180,7 +2181,7 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
             .unwrap_or_else(|_| "{}".to_string()),
             submit_selectors: submit_verify.0.join("\n"),
             verify_selectors: submit_verify.1.join("\n"),
-            required_fields: required_fields_for_platform(&platform.id, &platform.name).join("\n"),
+            required_fields,
             requires_captcha_token: platform.requires_captcha,
             updated_at: BUILTIN_SELECTOR_RECIPE_VERSION.to_string(),
         };
