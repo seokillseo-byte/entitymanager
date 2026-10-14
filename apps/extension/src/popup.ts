@@ -722,11 +722,14 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           const style = window.getComputedStyle(candidate);
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
         };
-        const findField = (selectors: string[]): HTMLInputElement | HTMLTextAreaElement | null => {
+        const findField = (selectors: string[], includeFile = false): HTMLInputElement | HTMLTextAreaElement | null => {
           for (const selector of selectors) {
             try {
               const field = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector))
-                .find((candidate) => !candidate.disabled && !candidate.readOnly && isVisible(candidate));
+                .find((candidate) => {
+                  const visibleEnough = includeFile && candidate.type === "file" ? true : isVisible(candidate);
+                  return !candidate.disabled && !candidate.readOnly && visibleEnough && (includeFile || candidate.type !== "file");
+                });
               if (field) return field;
             } catch {
               // Ignore malformed selectors and continue with the remaining candidates.
@@ -734,7 +737,7 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           }
           return null;
         };
-        const findFieldByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"]): HTMLInputElement | HTMLTextAreaElement | null => {
+        const findFieldByNearbyText = (fieldName: keyof AccountSubmitVerifyPayload["formValues"], includeFile = false): HTMLInputElement | HTMLTextAreaElement | null => {
           const labels: Record<string, string[]> = {
             displayName: ["name", "display name", "full name", "title"],
             bio: ["bio", "about", "description", "summary"],
@@ -767,9 +770,12 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
                 candidate.parentElement?.innerText || "",
                 candidate.parentElement?.previousElementSibling?.textContent || ""
               ].join(" ").toLowerCase();
+              const visibleEnough = includeFile && candidate.type === "file"
+                ? true
+                : rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
               return !candidate.disabled && !candidate.readOnly &&
-                rect.width > 0 && rect.height > 0 &&
-                style.visibility !== "hidden" && style.display !== "none" &&
+                visibleEnough &&
+                (includeFile || candidate.type !== "file") &&
                 wanted.some((word) => context.includes(word));
             }) ?? null;
         };
@@ -787,13 +793,17 @@ async function runDryRunInPage(tabId: number, payload: AccountSubmitVerifyPayloa
           ["bannerImageUrl", pagePayload.fieldSelectors.bannerImageUrl, pagePayload.formValues.bannerImageUrl]
         ];
         const plannedFields = fieldEntries
-          .filter(([fieldName, selectors, value]) => Boolean(value.trim()) && Boolean(findField(selectors) || findFieldByNearbyText(fieldName)))
+          .filter(([fieldName, selectors, value]) => {
+            const includeFile = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
+            return Boolean(value.trim()) && Boolean(findField(selectors, includeFile) || findFieldByNearbyText(fieldName, includeFile));
+          })
           .map(([name]) => name);
         const missingFields: string[] = [];
         for (const fieldName of pagePayload.requiredFields) {
+          const includeFile = fieldName === "profileImage" || fieldName === "avatarImageUrl" || fieldName === "bannerImageUrl";
           if (!pagePayload.formValues[fieldName]?.trim()) {
             missingFields.push(`${fieldName}:value`);
-          } else if (!findField(pagePayload.fieldSelectors[fieldName]) && !findFieldByNearbyText(fieldName)) {
+          } else if (!findField(pagePayload.fieldSelectors[fieldName], includeFile) && !findFieldByNearbyText(fieldName, includeFile)) {
             missingFields.push(`${fieldName}:selector`);
           }
         }
