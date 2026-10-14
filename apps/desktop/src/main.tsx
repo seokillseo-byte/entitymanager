@@ -114,6 +114,7 @@ const difficulties: DifficultyFilter[] = ["all", "easy", "medium", "hard"];
 const accountStatuses: AccountStatus[] = ["planned", "created", "needs_manual_review", "failed", "verified"];
 const queueStatuses: AutomationQueueStatus[] = ["queued", "waiting", "resolved", "failed"];
 const validationStatuses: PlatformValidationStatus[] = ["not_tested", "dry_run_ok", "text_saved", "media_uploaded", "needs_recipe_fix"];
+const starterCampaignPlatformIds = ["github", "medium", "aboutme", "tumblr"];
 const validationStatusLabels: Record<PlatformValidationStatus, string> = {
   not_tested: "Chưa test",
   dry_run_ok: "Dry-run OK",
@@ -165,6 +166,7 @@ function App() {
   const [automationQueue, setAutomationQueue] = useState<AutomationQueueItem[]>([]);
   const [captchaBridgePayload, setCaptchaBridgePayload] = useState<CaptchaInjectionPayload | null>(null);
   const [adapterResults, setAdapterResults] = useState<Record<string, IntegrationAdapterResult>>({});
+  const [campaignPlatformIds, setCampaignPlatformIds] = useState<string[]>(starterCampaignPlatformIds);
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -331,6 +333,29 @@ function App() {
       })
       .sort((first, second) => second.authorityScore - first.authorityScore);
   }, [entityProfile, platforms]);
+
+  const campaignPlans = useMemo(() => {
+    const selected = accountCreationPlan.filter((plan) => campaignPlatformIds.includes(plan.platformId));
+    return selected.length ? selected : accountCreationPlan.slice(0, 4);
+  }, [accountCreationPlan, campaignPlatformIds]);
+
+  const campaignDataRows = useMemo(() => ([
+    ["Brand name", entityProfile.brandName],
+    ["Legal/NAP name", entityProfile.legalName || entityProfile.brandName],
+    ["Author / founder", entityProfile.authorName || entityProfile.founderName],
+    ["Email", entityProfile.email],
+    ["Phone", entityProfile.phone],
+    ["Address", entityProfile.address],
+    ["Homepage URL", moneySite.homepageUrl],
+    ["Bio / short description", entityProfile.shortDescription],
+    ["Topical niche", entityProfile.topicalNiche],
+    ["Target keywords", entityProfile.targetKeywords],
+    ["SameAs / social links", entityProfile.sameAsUrls],
+    ["Avatar / logo", entityProfile.avatarImageUrl],
+    ["Banner", entityProfile.bannerImageUrl],
+    ["Expertise proof", entityProfile.expertiseProof],
+    ["Trust signals", entityProfile.trustSignals]
+  ]), [entityProfile, moneySite]);
 
   async function loadLocalData() {
     try {
@@ -650,6 +675,27 @@ function App() {
     await enqueueAutomationGates(account, plan);
   }
 
+  async function startEntityCampaign() {
+    if (!campaignPlans.length) {
+      setStatusMessage("Chưa chọn platform nào cho campaign.");
+      return;
+    }
+
+    for (const plan of campaignPlans) {
+      await saveAccountFromPlan(plan);
+    }
+
+    setStatusMessage(`Entity campaign prepared for ${campaignPlans.length} platform(s). Open each platform, run dry-run, fill profile, upload media, then capture evidence URL.`);
+  }
+
+  function toggleCampaignPlatform(platformId: string) {
+    setCampaignPlatformIds((current) => (
+      current.includes(platformId)
+        ? current.filter((id) => id !== platformId)
+        : [...current, platformId]
+    ));
+  }
+
   async function updateAccount(id: string, patch: Partial<AccountRecord>) {
     const current = accounts.find((account) => account.id === id);
 
@@ -731,6 +777,7 @@ function App() {
       gates.push("manual_review");
     }
 
+    gates.push("submit_verify");
     gates.push("evidence");
 
     for (const gate of gates) {
@@ -1692,6 +1739,66 @@ function App() {
                 <strong>{automationQueue.length}</strong>
               </article>
             </section>
+
+            <article className="panel campaign-runner-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">ENTITY ACCOUNT CAMPAIGN RUNNER</p>
+                  <h2>Chạy chiến dịch tạo entity cho money site</h2>
+                  <p className="muted-text">Chọn platform, kiểm tra dữ liệu sẽ điền, rồi tạo account record + hàng đợi thao tác. Đây là bước điều phối chiến dịch; extension sẽ xử lý dry-run, fill text, upload media và auto-sync validation trên từng website.</p>
+                </div>
+                <span className="badge">{campaignPlans.length} platform selected</span>
+              </div>
+
+              <div className="campaign-runner-grid">
+                <div>
+                  <div className="queue-actions campaign-actions">
+                    <button className="primary-action" type="button" onClick={() => void startEntityCampaign()}>Tạo campaign account records</button>
+                    <button className="secondary-action" type="button" onClick={() => setCampaignPlatformIds(starterCampaignPlatformIds)}>Chọn bộ starter</button>
+                    <button className="secondary-action" type="button" onClick={() => setCampaignPlatformIds(accountCreationPlan.slice(0, 8).map((plan) => plan.platformId))}>Chọn top authority</button>
+                  </div>
+                  <div className="campaign-platform-picker">
+                    {accountCreationPlan.map((plan) => (
+                      <label className="checkbox-row campaign-platform-option" key={plan.platformId}>
+                        <input
+                          type="checkbox"
+                          checked={campaignPlatformIds.includes(plan.platformId)}
+                          onChange={() => toggleCampaignPlatform(plan.platformId)}
+                        />
+                        <span>{plan.platformName}</span>
+                        <em>{plan.entityValue} / {plan.authorityScore}</em>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="campaign-data-preview">
+                  <strong>Dữ liệu sẽ dùng để điền profile/NAP/EEAT</strong>
+                  <div className="data-table-wrap">
+                    <table className="data-table">
+                      <tbody>
+                        {campaignDataRows.map(([label, value]) => (
+                          <tr key={label}>
+                            <td><strong>{label}</strong></td>
+                            <td>{value ? <span>{value}</span> : <span className="muted-text">Chưa nhập</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="workflow-step-list campaign-step-list">
+                <span>1. Account planned</span>
+                <span>2. Open platform</span>
+                <span>3. Dry-run selector</span>
+                <span>4. Fill NAP/profile text</span>
+                <span>5. Upload avatar/banner</span>
+                <span>6. Save profile</span>
+                <span>7. Capture evidence URL</span>
+              </div>
+            </article>
 
             <article className="panel saved-account-panel">
               <div className="panel-header">
