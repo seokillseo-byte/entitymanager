@@ -167,6 +167,8 @@ function App() {
   const [captchaBridgePayload, setCaptchaBridgePayload] = useState<CaptchaInjectionPayload | null>(null);
   const [adapterResults, setAdapterResults] = useState<Record<string, IntegrationAdapterResult>>({});
   const [campaignPlatformIds, setCampaignPlatformIds] = useState<string[]>(starterCampaignPlatformIds);
+  const [executionPlatformId, setExecutionPlatformId] = useState<string>(starterCampaignPlatformIds[0]);
+  const [executionEvidenceUrl, setExecutionEvidenceUrl] = useState("");
   const [platformTypeFilter, setPlatformTypeFilter] = useState<PlatformTypeFilter>("all");
   const [automationModeFilter, setAutomationModeFilter] = useState<AutomationModeFilter>("all");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
@@ -356,6 +358,44 @@ function App() {
     ["Expertise proof", entityProfile.expertiseProof],
     ["Trust signals", entityProfile.trustSignals]
   ]), [entityProfile, moneySite]);
+
+  const activeExecutionPlan = useMemo(() => {
+    return campaignPlans.find((plan) => plan.platformId === executionPlatformId) ?? campaignPlans[0] ?? null;
+  }, [campaignPlans, executionPlatformId]);
+
+  const activeExecutionAccount = useMemo(() => {
+    if (!activeExecutionPlan) return null;
+    return accounts.find((account) => account.platformId === activeExecutionPlan.platformId) ?? null;
+  }, [accounts, activeExecutionPlan]);
+
+  const activeExecutionPlatform = useMemo(() => {
+    if (!activeExecutionPlan) return null;
+    return platforms.find((platform) => platform.id === activeExecutionPlan.platformId) ?? null;
+  }, [activeExecutionPlan, platforms]);
+
+  const activeExecutionValidation = useMemo(() => {
+    if (!activeExecutionPlan) return null;
+    return platformValidation.find((record) => record.platformId === activeExecutionPlan.platformId)
+      ?? validationPack.find((record) => record.platformId === activeExecutionPlan.platformId)
+      ?? null;
+  }, [activeExecutionPlan, platformValidation, validationPack]);
+
+  const activeExecutionQueue = useMemo(() => {
+    if (!activeExecutionAccount && !activeExecutionPlan) return [];
+    return automationQueue.filter((item) => (
+      item.accountId === activeExecutionAccount?.id
+      || item.platformName === activeExecutionPlan?.platformName
+    ));
+  }, [activeExecutionAccount, activeExecutionPlan, automationQueue]);
+
+  const activeSubmitVerifyQueue = useMemo(() => (
+    activeExecutionQueue.find((item) => item.gateType === "submit_verify") ?? null
+  ), [activeExecutionQueue]);
+
+  const activeEvidenceUrl = executionEvidenceUrl
+    || activeExecutionAccount?.evidenceUrl
+    || activeExecutionValidation?.lastTestedUrl
+    || "";
 
   async function loadLocalData() {
     try {
@@ -696,6 +736,66 @@ function App() {
     ));
   }
 
+  function selectExecutionPlatform(platformId: string) {
+    setExecutionPlatformId(platformId);
+    const account = accounts.find((item) => item.platformId === platformId);
+    const validation = platformValidation.find((item) => item.platformId === platformId);
+    setExecutionEvidenceUrl(account?.evidenceUrl || validation?.lastTestedUrl || "");
+  }
+
+  async function prepareExtensionPayload(plan: AccountCreationPlanItem) {
+    const previewEndpoint = `http://127.0.0.1:17321/account/submit-verify/preview?platformId=${encodeURIComponent(plan.platformId)}`;
+
+    try {
+      await navigator.clipboard.writeText(previewEndpoint);
+      setStatusMessage(`${plan.platformName}: endpoint payload đã copy. Mở website, bật extension, rồi chạy dry-run/fill/media theo từng bước.`);
+    } catch {
+      setStatusMessage(`${plan.platformName}: endpoint payload sẵn sàng tại ${previewEndpoint}`);
+    }
+  }
+
+  async function markExecutionComplete() {
+    if (!activeExecutionPlan) {
+      setStatusMessage("Chưa chọn platform nào trong campaign workspace.");
+      return;
+    }
+
+    if (!activeExecutionAccount) {
+      await saveAccountFromPlan(activeExecutionPlan);
+      setStatusMessage(`${activeExecutionPlan.platformName}: đã tạo account record. Hãy kiểm tra lại evidence URL rồi bấm hoàn tất lần nữa.`);
+      return;
+    }
+
+    const evidenceUrl = activeEvidenceUrl.trim();
+    await updateAccount(activeExecutionAccount.id, { status: "verified", evidenceUrl });
+
+    if (activeSubmitVerifyQueue) {
+      await completeSubmitVerify(activeSubmitVerifyQueue, true, evidenceUrl);
+    }
+
+    if (evidenceUrl) {
+      const record: EvidenceRecord = {
+        id: `evidence-${activeExecutionPlan.platformId}-${Date.now()}`,
+        title: `${activeExecutionPlan.platformName} entity profile`,
+        evidenceType: "profile",
+        url: evidenceUrl,
+        relatedPlatformId: activeExecutionPlan.platformId,
+        notes: `Campaign evidence for ${entityProfile.brandName}: ${activeExecutionPlan.profileAngle}`,
+        status: "verified",
+        createdAt: new Date().toISOString()
+      };
+
+      try {
+        const saved = await invoke<EvidenceRecord>("save_evidence_record", { record });
+        setEvidenceRecords((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      } catch {
+        setEvidenceRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      }
+    }
+
+    setStatusMessage(`${activeExecutionPlan.platformName}: đã đánh dấu hoàn tất và lưu evidence cho entity campaign.`);
+  }
+
   async function updateAccount(id: string, patch: Partial<AccountRecord>) {
     const current = accounts.find((account) => account.id === id);
 
@@ -894,14 +994,14 @@ function App() {
     }
   }
 
-  async function completeSubmitVerify(item: AutomationQueueItem, success: boolean) {
+  async function completeSubmitVerify(item: AutomationQueueItem, success: boolean, evidenceUrl = "") {
     try {
       const result = await invoke<AccountSubmitVerifyResult>("complete_account_submit_verify", {
         request: {
           queueId: item.id,
           accountId: item.accountId,
           success,
-          evidenceUrl: "",
+          evidenceUrl,
           message: success
             ? "Submit/verify step completed from Desktop workflow control."
             : "Submit/verify step failed from Desktop workflow control."
@@ -1798,6 +1898,108 @@ function App() {
                 <span>6. Save profile</span>
                 <span>7. Capture evidence URL</span>
               </div>
+            </article>
+
+            <article className="panel campaign-workspace-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">CAMPAIGN EXECUTION WORKSPACE</p>
+                  <h2>Workspace thao tác từng platform</h2>
+                  <p className="muted-text">Bấm vào từng platform để xem việc cần làm ngay, mở website, lấy endpoint cho extension, theo dõi validation và lưu URL bằng chứng sau khi profile đã lưu.</p>
+                </div>
+                <span className="badge">{activeExecutionPlan?.platformName ?? "Chưa chọn"}</span>
+              </div>
+
+              {activeExecutionPlan ? (
+                <div className="campaign-workspace-grid">
+                  <div className="campaign-workspace-tabs">
+                    {campaignPlans.map((plan) => {
+                      const account = accounts.find((item) => item.platformId === plan.platformId);
+                      const validation = platformValidation.find((item) => item.platformId === plan.platformId)
+                        ?? validationPack.find((item) => item.platformId === plan.platformId);
+
+                      return (
+                        <button
+                          className={plan.platformId === activeExecutionPlan.platformId ? "campaign-workspace-tab active" : "campaign-workspace-tab"}
+                          key={plan.platformId}
+                          type="button"
+                          onClick={() => selectExecutionPlatform(plan.platformId)}
+                        >
+                          <strong>{plan.platformName}</strong>
+                          <span>{account ? ({ planned: "Đã lên kế hoạch", created: "Đã tạo", needs_manual_review: "Cần kiểm tra", failed: "Thất bại", verified: "Đã xác minh" } as Record<AccountStatus, string>)[account.status] : "Chưa có record"}</span>
+                          <em>{validation ? validationStatusLabels[validation.status] : "Chưa test"}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="campaign-workspace-detail">
+                    <div className="workspace-summary">
+                      <div>
+                        <p className="eyebrow">{activeExecutionPlan.platformType} / {activeExecutionPlan.entityValue}</p>
+                        <h3>{activeExecutionPlan.platformName}</h3>
+                        <span className="muted-text">@{activeExecutionPlan.recommendedUsername} · authority {activeExecutionPlan.authorityScore}</span>
+                      </div>
+                      {activeExecutionPlatform?.homepageUrl && (
+                        <a className="secondary-action" href={activeExecutionPlatform.homepageUrl} target="_blank" rel="noreferrer">Mở platform</a>
+                      )}
+                    </div>
+
+                    <div className="workspace-task-list">
+                      {[
+                        ["Account record", Boolean(activeExecutionAccount), "Tạo/lưu account record trước khi thao tác."],
+                        ["Dry-run selector", Boolean(activeExecutionValidation && activeExecutionValidation.status !== "not_tested"), "Extension kiểm tra đúng trường trước khi điền."],
+                        ["Text/NAP saved", Boolean(activeExecutionValidation && ["text_saved", "media_uploaded"].includes(activeExecutionValidation.status)), "Lưu brand, NAP, author, bio, homepage và social links."],
+                        ["Avatar/banner", Boolean(activeExecutionValidation?.status === "media_uploaded"), "Upload logo/avatar và banner nếu platform hỗ trợ."],
+                        ["Evidence URL", Boolean(activeEvidenceUrl.trim()), "Dán URL profile đã tạo/lưu thành công."],
+                        ["Verified", activeExecutionAccount?.status === "verified", "Đánh dấu hoàn tất khi profile đã lưu và có bằng chứng."]
+                      ].map(([label, done, hint]) => (
+                        <div className={done ? "workspace-task-row workspace-task-done" : "workspace-task-row"} key={String(label)}>
+                          <strong>{done ? "OK" : "TODO"}</strong>
+                          <span>{label}</span>
+                          <em>{hint}</em>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="workspace-endpoint-box">
+                      <strong>Payload cho extension</strong>
+                      <code>Preview: http://127.0.0.1:17321/account/submit-verify/preview?platformId={activeExecutionPlan.platformId}</code>
+                      <code>Submit/verify: http://127.0.0.1:17321/account/submit-verify/next</code>
+                      <code>Validation sync: http://127.0.0.1:17321/platform-validation/sync</code>
+                      <button className="secondary-action" type="button" onClick={() => void prepareExtensionPayload(activeExecutionPlan)}>Lấy payload cho extension</button>
+                    </div>
+
+                    <div className="workspace-validation-card">
+                      <strong>Trạng thái validation</strong>
+                      <span>{activeExecutionValidation ? validationStatusLabels[activeExecutionValidation.status] : "Chưa có dữ liệu validation"}</span>
+                      <small>{activeExecutionValidation?.lastTestedUrl || "Chưa có URL test gần nhất"}</small>
+                      {activeExecutionValidation?.notes && <p>{activeExecutionValidation.notes}</p>}
+                    </div>
+
+                    <div className="workspace-evidence-actions">
+                      <label>
+                        Evidence URL sau khi profile đã lưu
+                        <input
+                          placeholder="https://platform.com/profile/brand"
+                          type="url"
+                          value={activeEvidenceUrl}
+                          onChange={(event) => setExecutionEvidenceUrl(event.target.value)}
+                        />
+                      </label>
+                      <div className="queue-actions">
+                        <button className="secondary-action" type="button" onClick={() => void saveAccountFromPlan(activeExecutionPlan)}>Lưu account record</button>
+                        <button className="primary-action" type="button" onClick={() => void markExecutionComplete()}>Đánh dấu hoàn tất + lưu evidence</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <strong>Chưa có platform nào trong campaign</strong>
+                  <p>Chọn platform ở Campaign Runner để mở workspace thao tác từng nền tảng.</p>
+                </div>
+              )}
             </article>
 
             <article className="panel saved-account-panel">
