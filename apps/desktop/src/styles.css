@@ -906,6 +906,10 @@ textarea {
 .data-table tbody tr:hover { background: #f8fafc; }
 .data-table td small { display: block; color: #64748b; margin-top: 4px; max-width: 340px; overflow-wrap: anywhere; }
 .data-table a { color: #2563eb; overflow-wrap: anywhere; }
+.platform-validation-table input,
+.platform-validation-table textarea,
+.platform-validation-table select { width: 100%; min-width: 150px; }
+.platform-validation-table textarea { min-height: 74px; resize: vertical; }
 .graph-root { display: grid; gap: 5px; justify-items: center; max-width: 420px; margin: 10px auto 18px; padding: 18px; border: 1px solid #99f6e4; border-radius: 12px; background: #f0fdfa; text-align: center; }
 .graph-root strong { font-size: 18px; color: #115e59; }
 .graph-root span, .graph-root small { color: #475569; }

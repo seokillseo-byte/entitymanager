@@ -8,6 +8,7 @@ export type EntityModule =
   | "Entity Graph"
   | "Evidence Bank"
   | "Platform Library"
+  | "Platform Validation"
   | "Selector Recipes"
   | "API Integrations"
   | "Reports"
@@ -47,6 +48,7 @@ export type AutomationQueueStatus = "queued" | "waiting" | "resolved" | "failed"
 export type IntegrationType = "ai" | "captcha" | "email" | "proxy" | "indexing";
 export type ProviderKeyStatus = "missing" | "stored" | "masked" | "secure";
 export type IntegrationCapability = "generate_text" | "solve_captcha" | "send_email" | "receive_email" | "proxy" | "index_url";
+export type PlatformValidationStatus = "not_tested" | "dry_run_ok" | "text_saved" | "media_uploaded" | "needs_recipe_fix";
 
 export interface MoneySiteProfile {
   id: string;
@@ -260,6 +262,18 @@ export interface DryRunHistoryRecord {
   missingChecks: string[];
   currentUrl: string;
   createdAt: string;
+}
+
+export interface PlatformValidationRecord {
+  platformId: string;
+  platformName: string;
+  status: PlatformValidationStatus;
+  dryRunCheckedAt: string;
+  textSavedAt: string;
+  mediaUploadedAt: string;
+  lastTestedUrl: string;
+  notes: string;
+  updatedAt: string;
 }
 
 export interface LocalIntegrationSetting {
