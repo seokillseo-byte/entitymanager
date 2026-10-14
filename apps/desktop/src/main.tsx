@@ -178,6 +178,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshPlatformValidation(false);
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases?per_page=20", {
       headers: { Accept: "application/vnd.github+json" },
@@ -430,6 +437,16 @@ function App() {
     } catch {
       setPlatformValidation((current) => upsertByPlatformId(current, nextRecord));
       setStatusMessage("Preview mode: Validation status is local only");
+    }
+  }
+
+  async function refreshPlatformValidation(showStatus = true) {
+    try {
+      const records = await invoke<PlatformValidationRecord[]>("get_platform_validation_records");
+      setPlatformValidation(records);
+      if (showStatus) setStatusMessage("Platform validation checklist refreshed from SQLite");
+    } catch {
+      if (showStatus) setStatusMessage("Could not refresh platform validation checklist.");
     }
   }
 
@@ -1305,9 +1322,12 @@ function App() {
                   <p className="eyebrow">Platform Validation Pack</p>
                   <h2>Checklist test từng platform</h2>
                 </div>
-                <span className="badge">{validationStats.mediaUploaded}/{validationStats.total} media uploaded</span>
+                <div className="queue-actions">
+                  <span className="badge">{validationStats.mediaUploaded}/{validationStats.total} media uploaded</span>
+                  <button className="secondary-action" type="button" onClick={() => void refreshPlatformValidation()}>Refresh</button>
+                </div>
               </div>
-              <p className="muted-text">Dùng màn này để ghi nhận anh đã test tới đâu: chạy dry-run, lưu text, upload avatar/banner, hoặc đánh dấu cần sửa recipe. Đây là sổ kiểm soát riêng, không tự xóa lịch sử dry-run và không bấm gì trên website.</p>
+              <p className="muted-text">Dùng màn này để ghi nhận anh đã test tới đâu: chạy dry-run, lưu text, upload avatar/banner, hoặc đánh dấu cần sửa recipe. Extension build mới sẽ tự đồng bộ kết quả về Desktop; màn này tự refresh mỗi 5 giây và vẫn cho phép anh sửa tay khi cần.</p>
 
               <div className="data-table-wrap">
                 <table className="data-table platform-validation-table">

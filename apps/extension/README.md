@@ -26,6 +26,8 @@ Phase 1.18 hardens platform execution into three safe operator steps:
 
 Desktop payloads may include `executionSteps`, `saveTextSelector`, and `mediaConfirmSelector` so each platform can document the intended flow without scattering platform-specific behavior through the extension.
 
+Phase 1.20 adds validation auto-sync. After `Chạy thử Selector Recipe`, `Điền thử an toàn`, or `Cập nhật avatar/banner`, the extension posts a compact status event to `http://127.0.0.1:17321/platform-validation/sync`. Desktop stores it in the Platform Validation checklist so operators do not have to update `dry-run ok`, `text saved`, `media uploaded`, or `needs recipe fix` by hand.
+
 ## Form fill and safety checks
 
 Before clicking submit/verify, the extension attempts to fill:

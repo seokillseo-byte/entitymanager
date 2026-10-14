@@ -276,6 +276,17 @@ export interface PlatformValidationRecord {
   updatedAt: string;
 }
 
+export interface PlatformValidationSyncReport {
+  platformId: string;
+  platformName: string;
+  status: PlatformValidationStatus;
+  step: "dry_run" | "fill_text" | "upload_media" | "submit_verify";
+  currentUrl: string;
+  message: string;
+  missingChecks: string[];
+  createdAt: string;
+}
+
 export interface LocalIntegrationSetting {
   type: IntegrationType;
   provider: string;

@@ -1,4 +1,4 @@
-import type { DryRunHistoryReport, InjectionReport, SubmitVerifyReport } from "./types";
+import type { DryRunHistoryReport, InjectionReport, PlatformValidationSyncReport, SubmitVerifyReport } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -15,12 +15,19 @@ declare const chrome: {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const typedMessage = message as { type?: string; report?: InjectionReport | SubmitVerifyReport; dryRunReport?: DryRunHistoryReport; callbackUrl?: string };
+  const typedMessage = message as { type?: string; report?: InjectionReport | SubmitVerifyReport; dryRunReport?: DryRunHistoryReport; validationReport?: PlatformValidationSyncReport; callbackUrl?: string };
 
   if (typedMessage.type === "ENTITYMANAGER_REPORT_DRY_RUN" && typedMessage.dryRunReport) {
     void postDryRunHistory(typedMessage.dryRunReport, typedMessage.callbackUrl)
       .then((messageText) => sendResponse({ success: true, message: messageText }))
       .catch((error: unknown) => sendResponse({ success: false, message: error instanceof Error ? error.message : "Dry-run history callback failed" }));
+    return true;
+  }
+
+  if (typedMessage.type === "ENTITYMANAGER_REPORT_PLATFORM_VALIDATION" && typedMessage.validationReport) {
+    void postPlatformValidation(typedMessage.validationReport, typedMessage.callbackUrl)
+      .then((messageText) => sendResponse({ success: true, message: messageText }))
+      .catch((error: unknown) => sendResponse({ success: false, message: error instanceof Error ? error.message : "Platform validation callback failed" }));
     return true;
   }
 
@@ -79,4 +86,15 @@ async function postDryRunHistory(report: DryRunHistoryReport, callbackUrl: strin
   });
   if (!response.ok) throw new Error(`Desktop dry-run history callback returned HTTP ${response.status}`);
   return "Dry-run history saved to Desktop.";
+}
+
+async function postPlatformValidation(report: PlatformValidationSyncReport, callbackUrl: string | undefined): Promise<string> {
+  if (!callbackUrl?.trim()) throw new Error("Desktop platform validation callback URL is not configured.");
+  const response = await fetch(callbackUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(report)
+  });
+  if (!response.ok) throw new Error(`Desktop platform validation callback returned HTTP ${response.status}`);
+  return "Platform validation auto-synced to Desktop.";
 }
