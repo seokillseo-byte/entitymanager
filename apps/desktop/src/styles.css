@@ -1162,6 +1162,60 @@ textarea {
 .entity-builder-vn .builder-guide {
   border-top: 4px solid #0f766e;
 }
+.entity-builder-vn .campaign-runner-panel {
+  border-top: 4px solid #2563eb;
+}
+.entity-builder-vn .campaign-runner-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.15fr);
+  gap: 18px;
+  align-items: start;
+}
+.entity-builder-vn .campaign-actions {
+  margin-bottom: 12px;
+}
+.entity-builder-vn .campaign-platform-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+.entity-builder-vn .campaign-platform-option {
+  justify-content: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.entity-builder-vn .campaign-platform-option span {
+  min-width: 120px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.entity-builder-vn .campaign-platform-option em {
+  color: #64748b;
+  font-style: normal;
+  font-size: 12px;
+}
+.entity-builder-vn .campaign-data-preview {
+  min-width: 0;
+}
+.entity-builder-vn .campaign-data-preview > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #0f172a;
+}
+.entity-builder-vn .campaign-data-preview .data-table-wrap {
+  margin-top: 0;
+}
+.entity-builder-vn .campaign-data-preview td:first-child {
+  width: 190px;
+}
+.entity-builder-vn .campaign-step-list {
+  margin-top: 16px;
+}
 .entity-builder-vn .builder-guide-steps {
   display: grid;
   gap: 10px;
@@ -1229,6 +1283,9 @@ textarea {
   min-height: 42px;
 }
 @media (max-width: 900px) {
+  .entity-builder-vn .campaign-runner-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .entity-builder-vn .saved-account-row {
     grid-template-columns: minmax(0, 1fr);
   }
