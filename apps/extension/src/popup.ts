@@ -1,4 +1,4 @@
-import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
+import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, PlatformValidationStatus, PlatformValidationSyncReport, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -44,6 +44,7 @@ const defaultSubmitFetchUrl = "http://127.0.0.1:17321/account/submit-verify/next
 const defaultDryRunPreviewUrl = "http://127.0.0.1:17321/account/submit-verify/preview";
 const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
 const defaultDryRunHistoryCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/dry-run-history";
+const defaultPlatformValidationCallbackUrl = "http://127.0.0.1:17321/platform-validation/sync";
 type ExecutionStep = "dry_run" | "fill_text" | "upload_media" | "submit_verify";
 
 void loadState();
@@ -201,12 +202,14 @@ async function fillPreviewActiveTab(): Promise<void> {
     const payload = await prepareSafeFillPayload(await fetchDryRunPreviewPayload(currentUrl), currentUrl, { includeGithubAvatar: false });
     const tabId = await getActiveTabId();
     const response = await runSafeFillInPage(tabId, payload);
+    const validation = await syncPlatformValidation(payload, "fill_text", response, currentUrl);
 
     setStatus([
       formatExecutionSummary(payload, "fill_text", response),
       `Filled: ${response.filledFields.join(", ") || "none"}`,
       `Not submitted: yes`,
-      `Needs attention: ${response.missingFields.join(", ") || "none"}`
+      `Needs attention: ${response.missingFields.join(", ") || "none"}`,
+      validation.message
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Safe fill preview failed.");
@@ -236,11 +239,13 @@ async function uploadMediaOnlyActiveTab(): Promise<void> {
     };
     const tabId = await getActiveTabId();
     const response = await runSafeFillInPage(tabId, avatarPayload);
+    const validation = await syncPlatformValidation(payload, "upload_media", response, currentUrl);
 
     setStatus([
       formatExecutionSummary(avatarPayload, "upload_media", response),
       `Filled: ${response.filledFields.join(", ") || "none"}`,
-      `Needs attention: ${response.missingFields.join(", ") || "none"}`
+      `Needs attention: ${response.missingFields.join(", ") || "none"}`,
+      validation.message
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Media update failed.");
@@ -674,6 +679,7 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
     // Dry-run reads the page directly through Chrome's scripting API. This avoids
     // depending on a content-script message listener, which may be missing on older tabs.
     const response = await runDryRunInPage(tabId, payload);
+    const createdAt = new Date().toISOString();
     const report: DryRunHistoryReport = {
       id: `dryrun-${payload.accountId}-${Date.now()}`,
       platformId: payload.platformId,
@@ -683,19 +689,21 @@ async function previewSubmitVerifyActiveTab(): Promise<void> {
       plannedSelector: response.plannedSelector,
       missingChecks: response.missingFields,
       currentUrl: currentUrl || response.evidenceUrl,
-      createdAt: new Date().toISOString()
+      createdAt
     };
     const callback = await sendRuntimeMessage<{ success: boolean; message: string }>({
       type: "ENTITYMANAGER_REPORT_DRY_RUN",
       dryRunReport: report,
       callbackUrl: defaultDryRunHistoryCallbackUrl
     });
+    const validation = await syncPlatformValidation(payload, "dry_run", response, currentUrl || response.evidenceUrl, createdAt);
     setStatus([
       response.message,
       `Planned fill: ${response.plannedFields.join(", ") || "none"}`,
       `Planned click: ${response.plannedSelector || "none"}`,
       `Missing: ${response.missingFields.join(", ") || "none"}`,
-      callback.message
+      callback.message,
+      validation.message
     ].join("\n"));
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Dry-run preview failed.");
@@ -1006,6 +1014,59 @@ function formatExecutionSummary(payload: AccountSubmitVerifyPayload, step: Execu
   };
   const expectedSteps = payload.executionSteps?.length ? payload.executionSteps.join(" → ") : "dry_run → fill_text → upload_media → submit_verify";
   return `${labels[step]} cho ${payload.platformName}: ${response.success ? "thành công" : "cần kiểm tra"}. Workflow: ${expectedSteps}. ${response.message}`;
+}
+
+async function syncPlatformValidation(
+  payload: AccountSubmitVerifyPayload,
+  step: ExecutionStep,
+  response: SubmitVerifyResponse,
+  currentUrl: string,
+  createdAt = new Date().toISOString()
+): Promise<{ success: boolean; message: string }> {
+  const status = validationStatusForResponse(step, response);
+  const report: PlatformValidationSyncReport = {
+    platformId: payload.platformId,
+    platformName: payload.platformName,
+    status,
+    step,
+    currentUrl: currentUrl || response.evidenceUrl,
+    message: response.message,
+    missingChecks: response.missingFields,
+    createdAt
+  };
+
+  return sendRuntimeMessage<{ success: boolean; message: string }>({
+    type: "ENTITYMANAGER_REPORT_PLATFORM_VALIDATION",
+    validationReport: report,
+    callbackUrl: defaultPlatformValidationCallbackUrl
+  }).catch((error: unknown) => ({
+    success: false,
+    message: error instanceof Error ? `Platform validation auto-sync failed: ${error.message}` : "Platform validation auto-sync failed."
+  }));
+}
+
+function validationStatusForResponse(step: ExecutionStep, response: SubmitVerifyResponse): PlatformValidationStatus {
+  if (!response.success || response.missingFields.length > 0) {
+    return "needs_recipe_fix";
+  }
+
+  if (step === "dry_run") {
+    return "dry_run_ok";
+  }
+
+  if (step === "upload_media") {
+    return response.filledFields.some((field) => field.includes("avatar") || field.includes("profileImage") || field.includes("banner"))
+      ? "media_uploaded"
+      : "needs_recipe_fix";
+  }
+
+  if (step === "fill_text") {
+    return response.filledFields.some((field) => field.endsWith(":textSaved"))
+      ? "text_saved"
+      : "needs_recipe_fix";
+  }
+
+  return "text_saved";
 }
 
 function getActiveTabUrl(): Promise<string> {

@@ -438,6 +438,19 @@ struct PlatformValidationRecord {
     updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformValidationSyncReport {
+    platform_id: String,
+    platform_name: String,
+    status: String,
+    step: String,
+    current_url: String,
+    message: String,
+    missing_checks: Vec<String>,
+    created_at: String,
+}
+
 #[tauri::command]
 fn local_config_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let path = app_handle
@@ -936,6 +949,63 @@ fn save_platform_validation_record(
     ensure_schema(&connection)?;
     save_platform_validation_record_to_db(&connection, &record)?;
     Ok(record)
+}
+
+fn sync_platform_validation_record(
+    app_handle: &tauri::AppHandle,
+    report: PlatformValidationSyncReport,
+) -> Result<PlatformValidationRecord, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_platforms(&connection)?;
+    ensure_default_platform_validation(&connection)?;
+    let now = if report.created_at.trim().is_empty() { now_string() } else { report.created_at.clone() };
+    let existing = get_platform_validation_record(&connection, &report.platform_id).unwrap_or_else(|_| PlatformValidationRecord {
+        platform_id: report.platform_id.clone(),
+        platform_name: report.platform_name.clone(),
+        status: "not_tested".to_string(),
+        dry_run_checked_at: "".to_string(),
+        text_saved_at: "".to_string(),
+        media_uploaded_at: "".to_string(),
+        last_tested_url: "".to_string(),
+        notes: "".to_string(),
+        updated_at: "".to_string(),
+    });
+
+    let mut next = PlatformValidationRecord {
+        platform_id: report.platform_id,
+        platform_name: if report.platform_name.trim().is_empty() { existing.platform_name } else { report.platform_name },
+        status: normalize_platform_validation_status(&report.status),
+        dry_run_checked_at: existing.dry_run_checked_at,
+        text_saved_at: existing.text_saved_at,
+        media_uploaded_at: existing.media_uploaded_at,
+        last_tested_url: if report.current_url.trim().is_empty() { existing.last_tested_url } else { report.current_url },
+        notes: platform_validation_note(&report),
+        updated_at: now.clone(),
+    };
+
+    match report.step.as_str() {
+        "dry_run" => next.dry_run_checked_at = now.clone(),
+        "fill_text" => {
+            if next.status == "text_saved" {
+                next.text_saved_at = now.clone();
+            }
+        },
+        "upload_media" => {
+            if next.status == "media_uploaded" {
+                next.media_uploaded_at = now.clone();
+            }
+        },
+        "submit_verify" => {},
+        _ => {}
+    }
+
+    if next.status == "needs_recipe_fix" && report.step == "dry_run" {
+        next.dry_run_checked_at = now;
+    }
+
+    save_platform_validation_record_to_db(&connection, &next)?;
+    Ok(next)
 }
 
 #[tauri::command]
@@ -2409,6 +2479,47 @@ fn ensure_default_platform_validation(connection: &Connection) -> Result<(), Str
     Ok(())
 }
 
+fn get_platform_validation_record(connection: &Connection, platform_id: &str) -> Result<PlatformValidationRecord, String> {
+    connection
+        .query_row(
+            "SELECT platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
+                    media_uploaded_at, last_tested_url, notes, updated_at
+             FROM platform_validation
+             WHERE platform_id = ?1",
+            params![platform_id],
+            |row| {
+                Ok(PlatformValidationRecord {
+                    platform_id: row.get(0)?,
+                    platform_name: row.get(1)?,
+                    status: row.get(2)?,
+                    dry_run_checked_at: row.get(3)?,
+                    text_saved_at: row.get(4)?,
+                    media_uploaded_at: row.get(5)?,
+                    last_tested_url: row.get(6)?,
+                    notes: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn normalize_platform_validation_status(status: &str) -> String {
+    match status {
+        "dry_run_ok" | "text_saved" | "media_uploaded" | "needs_recipe_fix" => status.to_string(),
+        _ => "not_tested".to_string(),
+    }
+}
+
+fn platform_validation_note(report: &PlatformValidationSyncReport) -> String {
+    let missing = if report.missing_checks.is_empty() {
+        "none".to_string()
+    } else {
+        report.missing_checks.join(", ")
+    };
+    format!("Auto-sync {}: {} Missing: {}", report.step, report.message, missing)
+}
+
 fn save_platform_validation_record_to_db(connection: &Connection, record: &PlatformValidationRecord) -> Result<(), String> {
     connection
         .execute(
@@ -2873,6 +2984,28 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
                 }
             },
             Err(error) => { let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string()); return; }
+        };
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("POST /platform-validation/sync ") {
+        let Some(body) = request.split("\r\n\r\n").nth(1) else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"missing body\"}");
+            return;
+        };
+        let response = match serde_json::from_str::<PlatformValidationSyncReport>(body) {
+            Ok(report) => match sync_platform_validation_record(&app_handle, report) {
+                Ok(record) => serde_json::to_string(&record).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+                Err(error) => {
+                    let _ = write_http_response(&mut stream, 400, &json!({ "error": error }).to_string());
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string());
+                return;
+            }
         };
         let _ = write_http_response(&mut stream, 200, &response);
         return;

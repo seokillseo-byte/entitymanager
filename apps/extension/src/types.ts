@@ -62,6 +62,19 @@ export interface BridgeStorage {
   submitCallbackUrl?: string;
 }
 
+export type PlatformValidationStatus = "not_tested" | "dry_run_ok" | "text_saved" | "media_uploaded" | "needs_recipe_fix";
+
+export interface PlatformValidationSyncReport {
+  platformId: string;
+  platformName: string;
+  status: PlatformValidationStatus;
+  step: "dry_run" | "fill_text" | "upload_media" | "submit_verify";
+  currentUrl: string;
+  message: string;
+  missingChecks: string[];
+  createdAt: string;
+}
+
 export interface InjectCaptchaMessage {
   type: "ENTITYMANAGER_INJECT_CAPTCHA";
   payload: CaptchaInjectionPayload;
