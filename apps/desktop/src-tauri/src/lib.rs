@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
 const SECRET_SERVICE: &str = "EntityManager";
+const BUILTIN_SELECTOR_RECIPE_VERSION: i64 = 1_797_000_000;
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn image_asset_value_to_bridge_value(value: &str) -> String {
@@ -1572,7 +1573,7 @@ fn complete_captcha_injection_record(
                     "bio": field_selectors.bio,
                     "websiteUrl": field_selectors.website_url
                 },
-                "requiredFields": ["username", "email", "displayName", "bio", "websiteUrl"],
+                "requiredFields": required_fields_for_platform(&account.platform_id, &account.platform_name),
                 "requiresCaptchaToken": true,
                 "submitSelectors": selectors.0,
                 "verifySelectors": selectors.1,
@@ -1659,22 +1660,10 @@ fn get_dry_run_preview_payload_record(
         .join("\n");
     let avatar_image_value = image_asset_value_to_bridge_value(&profile.avatar_image_url);
     let banner_image_value = image_asset_value_to_bridge_value(&profile.banner_image_url);
-    // GitHub's /settings/profile page edits profile fields, not account credentials.
-    // Keep the dry-run requirements aligned with fields that actually exist on that page.
-    let required_fields = if platform.id.eq_ignore_ascii_case("github") {
-        vec![
-            "displayName".to_string(),
-            "bio".to_string(),
-            "websiteUrl".to_string(),
-            "company".to_string(),
-            "location".to_string(),
-        ]
-    } else {
-        recipe.as_ref()
-            .map(|item| lines_to_strings(&item.required_fields))
-            .filter(|items| !items.is_empty())
-            .unwrap_or_else(|| vec!["username".to_string(), "email".to_string(), "displayName".to_string(), "bio".to_string(), "websiteUrl".to_string()])
-    };
+    let required_fields = recipe.as_ref()
+        .map(|item| lines_to_strings(&item.required_fields))
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| required_fields_for_platform(&platform.id, &platform.name));
     let submit_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.submit_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.0.clone());
     let verify_selectors = recipe.as_ref().map(|item| lines_to_strings(&item.verify_selectors)).filter(|items| !items.is_empty()).unwrap_or_else(|| fallback_selectors.1.clone());
 
@@ -1826,17 +1815,7 @@ fn get_next_submit_verify_payload_record(
             avatar_image_url: json_array_to_strings(&recipe_field_selectors["avatarImageUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["avatarImageUrl"])).chain(fallback_field_selectors.avatar_image_url).collect(),
             banner_image_url: json_array_to_strings(&recipe_field_selectors["bannerImageUrl"]).into_iter().chain(json_array_to_strings(&payload["fieldSelectors"]["bannerImageUrl"])).chain(fallback_field_selectors.banner_image_url).collect(),
         },
-        required_fields: if required_fields.is_empty() {
-            vec![
-                "username".to_string(),
-                "email".to_string(),
-                "displayName".to_string(),
-                "bio".to_string(),
-                "websiteUrl".to_string(),
-            ]
-        } else {
-            required_fields
-        },
+        required_fields: if required_fields.is_empty() { required_fields_for_platform(&account.platform_id, &account.platform_name) } else { required_fields },
         requires_captcha_token: recipe
             .as_ref()
             .map(|item| item.requires_captcha_token)
@@ -2182,6 +2161,7 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
     for platform in platforms {
         let field_selectors = submit_verify_field_selectors(&platform.id, &platform.name);
         let submit_verify = submit_verify_selectors(&platform.id, &platform.name);
+        let required_fields = required_fields_for_platform(&platform.id, &platform.name).join("\n");
         let recipe = SelectorRecipeRecord {
             platform_id: platform.id,
             platform_name: platform.name,
@@ -2201,30 +2181,47 @@ fn ensure_default_selector_recipes(connection: &Connection) -> Result<(), String
             .unwrap_or_else(|_| "{}".to_string()),
             submit_selectors: submit_verify.0.join("\n"),
             verify_selectors: submit_verify.1.join("\n"),
-            required_fields: "username\nemail\ndisplayName\nbio\nwebsiteUrl".to_string(),
+            required_fields,
             requires_captcha_token: platform.requires_captcha,
-            updated_at: now_string(),
+            updated_at: BUILTIN_SELECTOR_RECIPE_VERSION.to_string(),
         };
 
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO selector_recipes (
-                    platform_id, platform_name, field_selectors_json, submit_selectors,
-                    verify_selectors, required_fields, requires_captcha_token, updated_at
-                 )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    recipe.platform_id,
-                    recipe.platform_name,
-                    recipe.field_selectors_json,
-                    recipe.submit_selectors,
-                    recipe.verify_selectors,
-                    recipe.required_fields,
-                    if recipe.requires_captcha_token { 1 } else { 0 },
-                    recipe.updated_at
-                ],
+        let existing_updated_at = connection
+            .query_row(
+                "SELECT updated_at FROM selector_recipes WHERE platform_id = ?1",
+                params![&recipe.platform_id],
+                |row| row.get::<_, String>(0),
             )
-            .map_err(|error| error.to_string())?;
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        let should_upgrade_builtin_recipe = matches!(recipe.platform_id.as_str(), "github" | "medium" | "aboutme" | "tumblr")
+            && existing_updated_at > 0
+            && existing_updated_at < BUILTIN_SELECTOR_RECIPE_VERSION;
+
+        if should_upgrade_builtin_recipe {
+            save_selector_recipe_record(connection, &recipe)?;
+        } else {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO selector_recipes (
+                        platform_id, platform_name, field_selectors_json, submit_selectors,
+                        verify_selectors, required_fields, requires_captcha_token, updated_at
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        recipe.platform_id,
+                        recipe.platform_name,
+                        recipe.field_selectors_json,
+                        recipe.submit_selectors,
+                        recipe.verify_selectors,
+                        recipe.required_fields,
+                        if recipe.requires_captcha_token { 1 } else { 0 },
+                        recipe.updated_at
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+        }
     }
 
     Ok(())
@@ -2611,6 +2608,25 @@ fn get_selector_recipe_record(connection: &Connection, platform_id: &str) -> Res
         .map_err(|error| error.to_string())
 }
 
+fn required_fields_for_platform(platform_id: &str, platform_name: &str) -> Vec<String> {
+    let key = platform_id.to_lowercase();
+    let name = platform_name.to_lowercase();
+
+    let fields = if key == "github" || name.contains("github") {
+        vec!["displayName", "bio", "websiteUrl", "company", "location", "socialLinks"]
+    } else if key == "medium" || name.contains("medium") {
+        vec!["displayName", "bio", "websiteUrl", "avatarImageUrl"]
+    } else if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
+        vec!["displayName", "bio", "websiteUrl", "socialLinks", "avatarImageUrl"]
+    } else if key == "tumblr" || name.contains("tumblr") {
+        vec!["username", "displayName", "bio", "websiteUrl", "avatarImageUrl", "bannerImageUrl"]
+    } else {
+        vec!["username", "email", "displayName", "bio", "websiteUrl"]
+    };
+
+    fields.into_iter().map(str::to_string).collect()
+}
+
 fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> SubmitVerifyFieldSelectors {
     let mut selectors = SubmitVerifyFieldSelectors {
         username: vec![
@@ -2700,38 +2716,74 @@ fn submit_verify_field_selectors(platform_id: &str, platform_name: &str) -> Subm
 
     if key == "medium" || name.contains("medium") {
         selectors.email.insert(0, "input[name='email']".to_string());
+        selectors.username.insert(0, "input[name='username']".to_string());
+        selectors.username.insert(1, "input[aria-label*='username' i]".to_string());
         selectors.display_name.insert(0, "input[name='name']".to_string());
         selectors.display_name.insert(1, "input[aria-label*='name' i]".to_string());
+        selectors.display_name.insert(2, "input[placeholder*='name' i]".to_string());
+        selectors.display_name.insert(3, "input[data-testid*='name' i]".to_string());
         selectors.bio.insert(0, "textarea[aria-label*='bio' i]".to_string());
         selectors.bio.insert(1, "textarea[placeholder*='bio' i]".to_string());
-        selectors.website_url.insert(0, "input[aria-label*='website' i]".to_string());
-        selectors.website_url.insert(1, "input[placeholder*='website' i]".to_string());
+        selectors.bio.insert(2, "textarea[name*='bio' i]".to_string());
+        selectors.website_url.insert(0, "input[name*='url' i]".to_string());
+        selectors.website_url.insert(1, "input[aria-label*='website' i]".to_string());
+        selectors.website_url.insert(2, "input[placeholder*='website' i]".to_string());
+        selectors.website_url.insert(3, "input[aria-label*='url' i]".to_string());
+        selectors.website_url.insert(4, "input[placeholder*='url' i]".to_string());
+        selectors.social_links.insert(0, "input[aria-label*='twitter' i]".to_string());
+        selectors.social_links.insert(1, "input[aria-label*='x.com' i]".to_string());
         selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.avatar_image_url.insert(1, "input[type='file'][name*='image' i]".to_string());
         selectors.profile_image.insert(0, "input[type='file'][accept*='image' i]".to_string());
     }
 
     if key == "tumblr" || name.contains("tumblr") {
         selectors.email.insert(0, "input[name='email']".to_string());
         selectors.username.insert(0, "input[name='tumblelog[name]']".to_string());
-        selectors.display_name.insert(0, "input[name*='title' i]".to_string());
-        selectors.display_name.insert(1, "input[aria-label*='title' i]".to_string());
-        selectors.bio.insert(0, "textarea[name*='description' i]".to_string());
-        selectors.bio.insert(1, "textarea[aria-label*='description' i]".to_string());
-        selectors.website_url.insert(0, "input[name*='url' i]".to_string());
+        selectors.username.insert(1, "input[name='blogName']".to_string());
+        selectors.username.insert(2, "input[aria-label*='username' i]".to_string());
+        selectors.display_name.insert(0, "input[name='title']".to_string());
+        selectors.display_name.insert(1, "input[name*='title' i]".to_string());
+        selectors.display_name.insert(2, "input[aria-label*='title' i]".to_string());
+        selectors.display_name.insert(3, "input[placeholder*='title' i]".to_string());
+        selectors.bio.insert(0, "textarea[name='description']".to_string());
+        selectors.bio.insert(1, "textarea[name*='description' i]".to_string());
+        selectors.bio.insert(2, "textarea[aria-label*='description' i]".to_string());
+        selectors.bio.insert(3, "textarea[placeholder*='description' i]".to_string());
+        selectors.website_url.insert(0, "input[name='url']".to_string());
+        selectors.website_url.insert(1, "input[name*='url' i]".to_string());
+        selectors.website_url.insert(2, "input[aria-label*='website' i]".to_string());
+        selectors.social_links.insert(0, "input[name*='link' i]".to_string());
         selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
-        selectors.banner_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.avatar_image_url.insert(1, "input[type='file'][name*='avatar' i]".to_string());
+        selectors.banner_image_url.insert(0, "input[type='file'][name*='header' i]".to_string());
+        selectors.banner_image_url.insert(1, "input[type='file'][name*='banner' i]".to_string());
+        selectors.banner_image_url.insert(2, "input[type='file'][name*='cover' i]".to_string());
+        selectors.banner_image_url.insert(3, "input[type='file'][accept*='image' i]".to_string());
     }
 
     if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
-        selectors.display_name.insert(0, "input[name*='name' i]".to_string());
-        selectors.display_name.insert(1, "input[aria-label*='name' i]".to_string());
-        selectors.bio.insert(0, "textarea[name*='bio' i]".to_string());
-        selectors.bio.insert(1, "textarea[aria-label*='bio' i]".to_string());
-        selectors.bio.insert(2, "textarea[placeholder*='about' i]".to_string());
-        selectors.website_url.insert(0, "input[name*='website' i]".to_string());
-        selectors.website_url.insert(1, "input[aria-label*='website' i]".to_string());
+        selectors.username.insert(0, "input[name*='slug' i]".to_string());
+        selectors.username.insert(1, "input[name*='username' i]".to_string());
+        selectors.email.insert(0, "input[type='email']".to_string());
+        selectors.display_name.insert(0, "input[name='name']".to_string());
+        selectors.display_name.insert(1, "input[name*='display' i]".to_string());
+        selectors.display_name.insert(2, "input[name*='name' i]".to_string());
+        selectors.display_name.insert(3, "input[aria-label*='name' i]".to_string());
+        selectors.bio.insert(0, "textarea[name='bio']".to_string());
+        selectors.bio.insert(1, "textarea[name*='bio' i]".to_string());
+        selectors.bio.insert(2, "textarea[aria-label*='bio' i]".to_string());
+        selectors.bio.insert(3, "textarea[placeholder*='about' i]".to_string());
+        selectors.website_url.insert(0, "input[name='website']".to_string());
+        selectors.website_url.insert(1, "input[name*='website' i]".to_string());
+        selectors.website_url.insert(2, "input[aria-label*='website' i]".to_string());
+        selectors.website_url.insert(3, "input[placeholder*='website' i]".to_string());
         selectors.social_links.insert(0, "input[name*='link' i]".to_string());
+        selectors.social_links.insert(1, "input[aria-label*='link' i]".to_string());
+        selectors.social_links.insert(2, "input[placeholder*='link' i]".to_string());
         selectors.avatar_image_url.insert(0, "input[type='file'][accept*='image' i]".to_string());
+        selectors.avatar_image_url.insert(1, "input[type='file'][name*='avatar' i]".to_string());
+        selectors.avatar_image_url.insert(2, "input[type='file'][name*='photo' i]".to_string());
         selectors.profile_image.insert(0, "input[type='file'][accept*='image' i]".to_string());
     }
 
@@ -2780,6 +2832,9 @@ fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<Strin
     if key == "medium" || name.contains("medium") {
         return (
             vec![
+                "button[data-testid*='save' i]".to_string(),
+                "button[aria-label*='save' i]".to_string(),
+                "button[data-action='save']".to_string(),
                 "button[data-testid='headerSignUpButton']".to_string(),
                 "button[data-testid*='submit' i]".to_string(),
                 "button[type='submit']".to_string(),
@@ -2791,6 +2846,9 @@ fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<Strin
     if key == "tumblr" || name.contains("tumblr") {
         return (
             vec![
+                "button[aria-label*='save' i]".to_string(),
+                "button[data-testid*='save' i]".to_string(),
+                "button[data-test-id*='save' i]".to_string(),
                 "button[aria-label*='sign up' i]".to_string(),
                 "button[data-testid*='signup' i]".to_string(),
                 "button[type='submit']".to_string(),
@@ -2802,10 +2860,10 @@ fn submit_verify_selectors(platform_id: &str, platform_name: &str) -> (Vec<Strin
     if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
         return (
             vec![
-                "button[type='submit']".to_string(),
                 "button[aria-label*='save' i]".to_string(),
                 "button[data-testid*='save' i]".to_string(),
                 "button[data-test*='save' i]".to_string(),
+                "button[type='submit']".to_string(),
             ],
             generic_verify,
         );
@@ -2852,15 +2910,15 @@ fn save_text_selector_for_platform(platform_id: &str, platform_name: &str) -> St
     }
 
     if key == "medium" || name.contains("medium") {
-        return "button[type='submit'], button[data-testid*='save' i], button[aria-label*='save' i]".to_string();
+        return "button[data-testid*='save' i], button[aria-label*='save' i], button[data-action='save'], button[type='submit']".to_string();
     }
 
     if key == "aboutme" || name.contains("about.me") || name.contains("about me") {
-        return "button[type='submit'], button[aria-label*='save' i], button[data-testid*='save' i]".to_string();
+        return "button[aria-label*='save' i], button[data-testid*='save' i], button[data-test*='save' i], button[type='submit']".to_string();
     }
 
     if key == "tumblr" || name.contains("tumblr") {
-        return "button[type='submit'], button[aria-label*='save' i], button[data-testid*='save' i]".to_string();
+        return "button[aria-label*='save' i], button[data-testid*='save' i], button[data-test-id*='save' i], button[type='submit']".to_string();
     }
 
     String::new()
@@ -2875,7 +2933,7 @@ fn media_confirm_selector_for_platform(platform_id: &str, platform_name: &str) -
     }
 
     if key == "medium" || name.contains("medium") || key == "aboutme" || name.contains("about.me") || key == "tumblr" || name.contains("tumblr") {
-        return "button[type='submit'], button[aria-label*='save' i], button[aria-label*='apply' i], button[data-testid*='save' i]".to_string();
+        return "button[aria-label*='save' i], button[aria-label*='apply' i], button[aria-label*='done' i], button[data-testid*='save' i], button[data-test-id*='save' i], button[type='submit']".to_string();
     }
 
     String::new()
