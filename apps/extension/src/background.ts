@@ -121,12 +121,13 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
     const job = await jobResponse.json() as { stage?: string; profileUrl?: string };
     const payloadResponse = await fetch("http://127.0.0.1:17321/account/submit-verify/platform?platformId=medium");
     if (!payloadResponse.ok) return;
-    const payload = await payloadResponse.json() as { formValues?: { email?: string }; [key: string]: unknown };
+    const payload = await payloadResponse.json() as { formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
     const authPage = /\/(?:signin|signup|login|register)(?:[/?#]|$)/i.test(currentUrl) || /operation=(?:register|login)/i.test(currentUrl);
     if (authPage) {
       const result = await sendTabMessage<{ success: boolean; waitingForVerification: boolean; message: string }>(tabId, {
         type: "ENTITYMANAGER_MEDIUM_SIGNUP",
-        email: payload.formValues?.email || ""
+        email: payload.formValues?.email || "",
+        displayName: payload.formValues?.displayName || ""
       });
       await postProvisioningCheckpoint("medium", result.waitingForVerification ? "email_verification" : "signup", result.waitingForVerification ? "waiting_user" : "running", result.message, "");
       return;
