@@ -1404,6 +1404,27 @@ textarea {
   background: #fef2f2;
   color: #991b1b;
 }
+.entity-builder-vn .one-click-orchestrator-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 15px;
+  border: 1px solid #6ee7b7;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+}
+.entity-builder-vn .one-click-orchestrator-card > div {
+  display: grid;
+  gap: 5px;
+}
+.entity-builder-vn .one-click-orchestrator-card strong { color: #065f46; }
+.entity-builder-vn .one-click-orchestrator-card span {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.entity-builder-vn .one-click-orchestrator-card button:disabled { cursor: wait; opacity: .65; }
 .entity-builder-vn .workspace-disclosure {
   display: block;
   padding: 0;
@@ -1718,6 +1739,7 @@ textarea {
   .entity-builder-vn .builder-active-platform {
     min-width: 0;
   }
+  .entity-builder-vn .one-click-orchestrator-card { grid-template-columns: minmax(0, 1fr); }
   .entity-builder-vn .campaign-runner-grid {
     grid-template-columns: minmax(0, 1fr);
   }
