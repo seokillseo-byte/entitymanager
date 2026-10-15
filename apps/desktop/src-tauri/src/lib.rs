@@ -1215,30 +1215,6 @@ fn save_account(app_handle: tauri::AppHandle, account: AccountRecord) -> Result<
     ensure_schema(&connection)?;
     save_account_record(&connection, &account)?;
 
-    if request.success && (account.evidence_url.starts_with("https://") || account.evidence_url.starts_with("http://")) {
-        connection
-            .execute(
-                "INSERT INTO indexing_queue (
-                    id, url, source_platform, account_id, status, attempt_count,
-                    last_error, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, 'queued', 0, '', ?5, ?5)
-                 ON CONFLICT(id) DO UPDATE SET
-                    url = excluded.url,
-                    source_platform = excluded.source_platform,
-                    account_id = excluded.account_id,
-                    status = CASE WHEN indexing_queue.status = 'indexed' THEN 'indexed' ELSE 'queued' END,
-                    updated_at = excluded.updated_at",
-                params![
-                    format!("index-{}", account.id),
-                    account.evidence_url,
-                    account.platform_name,
-                    account.id,
-                    timestamp
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-    }
-
     Ok(account)
 }
 
@@ -2035,6 +2011,30 @@ fn complete_account_submit_verify_record(
         .to_string();
     account.updated_at = timestamp.clone();
     save_account_record(&connection, &account)?;
+
+    if request.success && (account.evidence_url.starts_with("https://") || account.evidence_url.starts_with("http://")) {
+        connection
+            .execute(
+                "INSERT INTO indexing_queue (
+                    id, url, source_platform, account_id, status, attempt_count,
+                    last_error, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, 'queued', 0, '', ?5, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                    url = excluded.url,
+                    source_platform = excluded.source_platform,
+                    account_id = excluded.account_id,
+                    status = CASE WHEN indexing_queue.status = 'indexed' THEN 'indexed' ELSE 'queued' END,
+                    updated_at = excluded.updated_at",
+                params![
+                    format!("index-{}", account.id),
+                    account.evidence_url,
+                    account.platform_name,
+                    account.id,
+                    timestamp
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
 
     let workflow_run = WorkflowRunRecord {
         id: format!("run-{}-submit-verify-{}", account.id, timestamp),
