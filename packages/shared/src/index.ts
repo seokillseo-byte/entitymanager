@@ -271,6 +271,8 @@ export interface PlatformValidationRecord {
   dryRunCheckedAt: string;
   textSavedAt: string;
   mediaUploadedAt: string;
+  evidenceSavedAt: string;
+  certifiedAt: string;
   lastTestedUrl: string;
   notes: string;
   updatedAt: string;
