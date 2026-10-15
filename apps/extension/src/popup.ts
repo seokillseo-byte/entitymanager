@@ -192,7 +192,7 @@ async function runOneClickOrchestrator(): Promise<void> {
     const tabId = await getActiveTabId();
     if (authGate) {
       const registration = platformId === "medium"
-        ? await runMediumRegistrationGate(tabId, payload.formValues.email)
+        ? await runMediumRegistrationGate(tabId, payload.formValues.email, payload.formValues.displayName)
         : { attempted: false, message: authGate };
       await reportProvisioningCheckpoint(platformId, "email_verification", "waiting_user", registration.message, "");
       setStatus(`ORCHESTRATOR TẠM DỪNG\n${registration.message}\nSau khi đăng nhập hoặc xác minh email, giữ nguyên tab này và bấm “Tiếp tục sau đăng nhập/xác minh”.`);
@@ -280,15 +280,18 @@ function detectAuthenticationGate(currentUrl: string, platformId: string): strin
   return `${label} đang ở cổng tạo tài khoản/đăng nhập. Hãy hoàn tất đăng ký, CAPTCHA, email/OTP hoặc OAuth nếu website yêu cầu. Khi đã vào được tài khoản, mở lại extension và bấm “Chạy tự động toàn bộ”; Desktop giữ nguyên checkpoint hiện tại.`;
 }
 
-async function runMediumRegistrationGate(tabId: number, email: string): Promise<{ attempted: boolean; message: string }> {
+async function runMediumRegistrationGate(tabId: number, email: string, displayName: string): Promise<{ attempted: boolean; message: string }> {
   if (!email.trim()) {
     return { attempted: false, message: "Medium cần email nhưng Entity Profile chưa có email. Hãy bổ sung email rồi chạy lại." };
+  }
+  if (!displayName.trim()) {
+    return { attempted: false, message: "Medium cần Full name nhưng Entity Profile chưa có Display Name. Hãy bổ sung rồi chạy lại." };
   }
   const result = await new Promise<{ attempted: boolean; message: string }>((resolve, reject) => {
     chrome.scripting.executeScript({
       target: { tabId },
-      args: [email],
-      func: async (accountEmail: string) => {
+      args: [email, displayName],
+      func: async (accountEmail: string, accountName: string) => {
         const visible = (element: Element) => {
           const node = element as HTMLElement;
           const style = window.getComputedStyle(node);
@@ -300,22 +303,37 @@ async function runMediumRegistrationGate(tabId: number, email: string): Promise<
           emailChoice.click();
           await new Promise((done) => setTimeout(done, 800));
         }
-        const input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
-        if (!input) {
+        const emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+        if (!emailInput) {
           return { attempted: false, message: "Medium chưa hiển thị ô email. Hãy chọn “Sign up with email” hoặc phương thức đăng nhập mong muốn rồi bấm Tiếp tục." };
         }
+        const nameCandidates = Array.from(document.querySelectorAll<HTMLInputElement>("input[name='name'], input[name='fullName'], input[name='fullname'], input[autocomplete='name'], input[type='text']")).filter(visible);
+        const nameInput = nameCandidates.find((candidate) => {
+          const label = candidate.labels?.[0]?.textContent || "";
+          return /full\s*name|your\s*name|display\s*name|^name$/i.test([candidate.name, candidate.id, candidate.placeholder, candidate.getAttribute("aria-label"), label].filter(Boolean).join(" ").trim());
+        }) || nameCandidates.find((candidate) => candidate.type === "text");
+        if (!nameInput) return { attempted: false, message: "Không tìm thấy ô Your full name của Medium; chưa bấm Create account." };
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setter?.call(input, accountEmail);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        input.focus();
+        const fill = (input: HTMLInputElement, value: string) => {
+          input.focus();
+          if (setter) setter.call(input, value); else input.value = value;
+          input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+        };
+        fill(nameInput, accountName);
+        fill(emailInput, accountEmail);
+        await new Promise((done) => setTimeout(done, 250));
+        if (!nameInput.value.trim() || !emailInput.value.trim()) {
+          return { attempted: false, message: "Medium chưa ghi nhận đủ Full name và Email; chưa bấm Create account." };
+        }
         const submit = Array.from(document.querySelectorAll<HTMLButtonElement>("button[type='submit'], button")).filter(visible)
           .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
         if (submit) {
           submit.click();
-          return { attempted: true, message: `Đã điền ${accountEmail} và gửi yêu cầu. Hãy mở email Medium để xác minh; sau đó quay lại và bấm Tiếp tục.` };
+          return { attempted: true, message: `Đã điền Full name (${accountName}), email (${accountEmail}) và bấm Create account. Hãy mở email Medium để xác minh.` };
         }
-        return { attempted: true, message: `Đã điền ${accountEmail}. Medium chưa có nút gửi phù hợp; kiểm tra ô email rồi bấm Continue/Sign up một lần.` };
+        return { attempted: false, message: `Đã điền ${accountName} và ${accountEmail}, nhưng chưa tìm thấy nút Create account; chưa gửi biểu mẫu.` };
       }
     }, (results) => {
       if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message || "Không thao tác được form Medium."));
