@@ -1425,6 +1425,32 @@ textarea {
   line-height: 1.5;
 }
 .entity-builder-vn .one-click-orchestrator-card button:disabled { cursor: wait; opacity: .65; }
+.entity-builder-vn .provisioning-launch-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #86efac;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdf4, #ecfeff);
+}
+.entity-builder-vn .provisioning-launch-card > div { display: grid; gap: 6px; }
+.entity-builder-vn .provisioning-launch-card strong { color: #065f46; }
+.entity-builder-vn .provisioning-launch-card span { color: #475569; line-height: 1.55; }
+.entity-builder-vn .provisioning-progress { margin-bottom: 18px; padding: 16px; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; }
+.entity-builder-vn .provisioning-progress-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.entity-builder-vn .provisioning-progress-head span { color: #0f766e; font-weight: 700; }
+.entity-builder-vn .provisioning-job-list { display: grid; gap: 8px; }
+.entity-builder-vn .provisioning-job { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 9px; background: #f8fafc; }
+.entity-builder-vn .provisioning-job > b { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #e2e8f0; }
+.entity-builder-vn .provisioning-job > div { display: grid; gap: 3px; }
+.entity-builder-vn .provisioning-job span { color: #64748b; font-size: 12px; }
+.entity-builder-vn .provisioning-job em { font-size: 12px; font-style: normal; font-weight: 700; text-transform: uppercase; color: #64748b; }
+.entity-builder-vn .provisioning-job.running { background: #ecfeff; }
+.entity-builder-vn .provisioning-job.waiting_user { background: #fff7ed; }
+.entity-builder-vn .provisioning-job.completed { background: #f0fdf4; }
 .entity-builder-vn .workspace-disclosure {
   display: block;
   padding: 0;
@@ -1740,6 +1766,7 @@ textarea {
     min-width: 0;
   }
   .entity-builder-vn .one-click-orchestrator-card { grid-template-columns: minmax(0, 1fr); }
+  .entity-builder-vn .provisioning-launch-card { grid-template-columns: minmax(0, 1fr); }
   .entity-builder-vn .campaign-runner-grid {
     grid-template-columns: minmax(0, 1fr);
   }

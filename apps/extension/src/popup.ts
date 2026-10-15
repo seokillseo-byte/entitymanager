@@ -181,6 +181,8 @@ async function runOneClickOrchestrator(): Promise<void> {
     const currentUrl = await getActiveTabUrl();
     const platformId = platformIdForUrl(currentUrl);
     if (!platformId) throw new Error("Tab hiện tại chưa thuộc platform được hỗ trợ. Hãy mở đúng trang profile/settings từ Desktop.");
+    const authGate = detectAuthenticationGate(currentUrl, platformId);
+    if (authGate) throw new Error(authGate);
     const payload = await fetchPlatformOrchestratorPayload(platformId);
     const tabId = await getActiveTabId();
 
@@ -240,6 +242,16 @@ async function runOneClickOrchestrator(): Promise<void> {
     oneClickOrchestratorButton.disabled = false;
     oneClickOrchestratorButton.textContent = "Chạy tự động toàn bộ";
   }
+}
+
+function detectAuthenticationGate(currentUrl: string, platformId: string): string {
+  const url = currentUrl.toLowerCase();
+  const isAuthPage = /\/(signin|sign-in|login|log-in|signup|sign-up|register|join)(?:[/?#]|$)/.test(url)
+    || url.includes("operation=register")
+    || url.includes("operation=login");
+  if (!isAuthPage) return "";
+  const label = platformId === "aboutme" ? "About.me" : platformId.charAt(0).toUpperCase() + platformId.slice(1);
+  return `${label} đang ở cổng tạo tài khoản/đăng nhập. Hãy hoàn tất đăng ký, CAPTCHA, email/OTP hoặc OAuth nếu website yêu cầu. Khi đã vào được tài khoản, mở lại extension và bấm “Chạy tự động toàn bộ”; Desktop giữ nguyên checkpoint hiện tại.`;
 }
 
 async function fetchPlatformOrchestratorPayload(platformId: string): Promise<AccountSubmitVerifyPayload> {
