@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
@@ -75,6 +76,29 @@ fn image_asset_value_to_bridge_value(value: &str) -> String {
 #[tauri::command]
 fn app_health() -> &'static str {
     "EntityManager desktop shell is ready"
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<String, String> {
+    let target = url.trim();
+    if !(target.starts_with("https://") || target.starts_with("http://")) {
+        return Err("Chỉ cho phép mở URL http:// hoặc https://".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    let result = Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", target])
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(target).spawn();
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let result = Command::new("xdg-open").arg(target).spawn();
+
+    result
+        .map(|_| format!("Đã mở {target}"))
+        .map_err(|error| format!("Không thể mở trình duyệt: {error}"))
 }
 
 #[tauri::command]
@@ -3895,6 +3919,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             app_health,
+            open_external_url,
             open_extension_download,
             open_latest_release_download,
             open_release_asset_download,
