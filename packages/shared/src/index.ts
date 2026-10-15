@@ -52,6 +52,10 @@ export type PlatformValidationStatus = "not_tested" | "dry_run_ok" | "text_saved
 export type ProvisioningCampaignStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
 export type ProvisioningJobStatus = "queued" | "running" | "waiting_user" | "completed" | "failed" | "skipped";
 export type ProvisioningStage = "signup" | "captcha" | "email_verification" | "login" | "profile_text" | "profile_media" | "evidence" | "indexing" | "completed";
+export type ProxyProtocol = "http" | "https" | "socks5";
+export type ProxyStatus = "untested" | "healthy" | "failed" | "disabled";
+export type BrowserSessionStatus = "queued" | "launching" | "running" | "paused" | "waiting_user" | "stopped" | "failed";
+export type BrowserVisibility = "hidden" | "visible";
 
 export interface MoneySiteProfile {
   id: string;
@@ -165,6 +169,46 @@ export interface ProvisioningJobRecord {
   evidenceUrl: string;
   lastMessage: string;
   attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProxyRecord {
+  id: string;
+  name: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+  countryCode: string;
+  status: ProxyStatus;
+  latencyMs: number;
+  exitIp: string;
+  lastError: string;
+  lastCheckedAt: string;
+  isEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProxyInput extends Omit<ProxyRecord, "hasPassword" | "status" | "latencyMs" | "exitIp" | "lastError" | "lastCheckedAt" | "createdAt" | "updatedAt"> {
+  password: string;
+}
+
+export interface BrowserSessionRecord {
+  id: string;
+  campaignId: string;
+  jobId: string;
+  accountId: string;
+  platformId: string;
+  profileDirectory: string;
+  proxyId: string;
+  processId: number;
+  status: BrowserSessionStatus;
+  visibility: BrowserVisibility;
+  currentUrl: string;
+  lastMessage: string;
   createdAt: string;
   updatedAt: string;
 }

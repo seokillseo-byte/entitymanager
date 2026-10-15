@@ -1207,6 +1207,17 @@ textarea {
 .selector-recipes-panel .selector-recipe-card .secondary-action {
   width: 100%;
 }
+.entity-builder-vn .managed-browser-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+.entity-builder-vn .managed-browser-card { border: 1px solid #dbe5ee; border-radius: 16px; padding: 18px; background: #f8fafc; }
+.entity-builder-vn .managed-browser-card label { display: grid; gap: 7px; margin: 10px 0; color: #334155; }
+.entity-builder-vn .managed-browser-card input, .entity-builder-vn .managed-browser-card select { width: 100%; }
+.entity-builder-vn .proxy-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.entity-builder-vn .browser-session-list { display: grid; gap: 9px; margin-top: 14px; max-height: 270px; overflow: auto; }
+.entity-builder-vn .browser-session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 11px; background: #fff; }
+.entity-builder-vn .browser-session-row > div { display: grid; gap: 3px; min-width: 0; }
+.entity-builder-vn .browser-session-row span, .entity-builder-vn .browser-session-row small { color: #64748b; overflow-wrap: anywhere; }
+.entity-builder-vn .session-actions { display: flex; gap: 7px; }
+
 @media (max-width: 900px) {
   .selector-recipes-panel {
     padding: 16px;
@@ -1767,6 +1778,7 @@ textarea {
   }
   .entity-builder-vn .one-click-orchestrator-card { grid-template-columns: minmax(0, 1fr); }
   .entity-builder-vn .provisioning-launch-card { grid-template-columns: minmax(0, 1fr); }
+  .entity-builder-vn .managed-browser-grid, .entity-builder-vn .proxy-form-grid { grid-template-columns: minmax(0, 1fr); }
   .entity-builder-vn .campaign-runner-grid {
     grid-template-columns: minmax(0, 1fr);
   }

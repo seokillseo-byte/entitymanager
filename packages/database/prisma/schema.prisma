@@ -227,3 +227,38 @@ model IntegrationSetting {
 
   project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
+
+model ProxyRecord {
+  id            String   @id
+  name          String
+  protocol      String
+  host          String
+  port          Int
+  username      String   @default("")
+  countryCode   String   @default("")
+  status        String   @default("untested")
+  latencyMs     Int      @default(0)
+  exitIp        String   @default("")
+  lastError     String   @default("")
+  lastCheckedAt String   @default("")
+  isEnabled     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model BrowserSession {
+  id               String   @id
+  campaignId       String
+  jobId            String
+  accountId        String
+  platformId       String
+  profileDirectory String
+  proxyId          String   @default("")
+  processId        Int      @default(0)
+  status           String   @default("queued")
+  visibility       String   @default("hidden")
+  currentUrl       String   @default("")
+  lastMessage      String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

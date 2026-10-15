@@ -329,6 +329,60 @@ struct ProvisioningCheckpointResult {
     next_job: Option<ProvisioningJobRecord>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProxyRecord {
+    id: String,
+    name: String,
+    protocol: String,
+    host: String,
+    port: i64,
+    username: String,
+    password: String,
+    has_password: bool,
+    country_code: String,
+    status: String,
+    latency_ms: i64,
+    exit_ip: String,
+    last_error: String,
+    last_checked_at: String,
+    is_enabled: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserLaunchRequest {
+    session_id: String,
+    campaign_id: String,
+    job_id: String,
+    account_id: String,
+    platform_id: String,
+    url: String,
+    proxy_id: String,
+    visible: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserSessionRecord {
+    id: String,
+    campaign_id: String,
+    job_id: String,
+    account_id: String,
+    platform_id: String,
+    profile_directory: String,
+    proxy_id: String,
+    process_id: i64,
+    status: String,
+    visibility: String,
+    current_url: String,
+    last_message: String,
+    created_at: String,
+    updated_at: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkflowRunRecord {
@@ -2243,6 +2297,159 @@ fn complete_account_submit_verify_record(
     })
 }
 
+fn proxy_secret_account(proxy_id: &str) -> String {
+    format!("proxy:{proxy_id}")
+}
+
+fn browser_executable() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
+            if let Ok(root) = std::env::var(variable) {
+                candidates.push(PathBuf::from(&root).join("Google/Chrome/Application/chrome.exe"));
+                candidates.push(PathBuf::from(&root).join("Microsoft/Edge/Application/msedge.exe"));
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    candidates.push(PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"));
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        candidates.push(PathBuf::from("/usr/bin/google-chrome"));
+        candidates.push(PathBuf::from("/usr/bin/chromium"));
+        candidates.push(PathBuf::from("/usr/bin/chromium-browser"));
+    }
+    candidates.into_iter().find(|path| path.is_file()).ok_or_else(|| {
+        "Không tìm thấy Chrome/Edge Chromium. Managed Browser cần một trình duyệt Chromium đã cài trên máy.".to_string()
+    })
+}
+
+fn proxy_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProxyRecord> {
+    let id: String = row.get(0)?;
+    Ok(ProxyRecord {
+        has_password: keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&id))
+            .ok().and_then(|entry| entry.get_password().ok()).map(|value| !value.is_empty()).unwrap_or(false),
+        id,
+        name: row.get(1)?, protocol: row.get(2)?, host: row.get(3)?, port: row.get(4)?, username: row.get(5)?,
+        password: String::new(), country_code: row.get(6)?, status: row.get(7)?, latency_ms: row.get(8)?, exit_ip: row.get(9)?,
+        last_error: row.get(10)?, last_checked_at: row.get(11)?, is_enabled: row.get::<_, i64>(12)? != 0,
+        created_at: row.get(13)?, updated_at: row.get(14)?,
+    })
+}
+
+#[tauri::command]
+fn get_proxy_records(app_handle: tauri::AppHandle) -> Result<Vec<ProxyRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare("SELECT id,name,protocol,host,port,username,country_code,status,latency_ms,exit_ip,last_error,last_checked_at,is_enabled,created_at,updated_at FROM proxy_records ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], proxy_from_row).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_proxy_record(app_handle: tauri::AppHandle, proxy: ProxyRecord) -> Result<ProxyRecord, String> {
+    if proxy.host.trim().is_empty() || !(1..=65535).contains(&proxy.port) { return Err("Proxy cần host và port hợp lệ.".to_string()); }
+    if !["http", "https", "socks5"].contains(&proxy.protocol.as_str()) { return Err("Proxy protocol phải là http, https hoặc socks5.".to_string()); }
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    if !proxy.password.trim().is_empty() {
+        keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&proxy.id)).map_err(|e| e.to_string())?
+            .set_password(proxy.password.trim()).map_err(|e| format!("Không lưu được mật khẩu proxy an toàn: {e}"))?;
+    }
+    connection.execute("INSERT INTO proxy_records (id,name,protocol,host,port,username,country_code,status,latency_ms,exit_ip,last_error,last_checked_at,is_enabled,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'untested',0,'','','',?8,?9,?9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,host=excluded.host,port=excluded.port,username=excluded.username,country_code=excluded.country_code,is_enabled=excluded.is_enabled,updated_at=excluded.updated_at",
+        params![proxy.id,proxy.name,proxy.protocol,proxy.host,proxy.port,proxy.username,proxy.country_code,proxy.is_enabled as i64,timestamp]).map_err(|e| e.to_string())?;
+    get_proxy_records(app_handle)?.into_iter().find(|item| item.id == proxy.id).ok_or_else(|| "Không đọc lại được proxy vừa lưu.".to_string())
+}
+
+#[tauri::command]
+fn test_proxy_record(app_handle: tauri::AppHandle, proxy_id: String) -> Result<ProxyRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == proxy_id).ok_or_else(|| "Không tìm thấy proxy.".to_string())?;
+    let address = format!("{}://{}:{}", proxy.protocol, proxy.host, proxy.port);
+    let mut reqwest_proxy = reqwest::Proxy::all(&address).map_err(|e| e.to_string())?;
+    if !proxy.username.is_empty() {
+        let password = keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&proxy.id)).ok().and_then(|entry| entry.get_password().ok()).unwrap_or_default();
+        reqwest_proxy = reqwest_proxy.basic_auth(&proxy.username, &password);
+    }
+    let started = std::time::Instant::now();
+    let result = reqwest::blocking::Client::builder().proxy(reqwest_proxy).timeout(std::time::Duration::from_secs(12)).build().and_then(|client| client.get("https://api.ipify.org?format=json").send()).and_then(|response| response.error_for_status()).and_then(|response| response.json::<serde_json::Value>());
+    let timestamp = now_string();
+    let (status, exit_ip, error) = match result { Ok(value) => ("healthy", value["ip"].as_str().unwrap_or("").to_string(), String::new()), Err(error) => ("failed", String::new(), error.to_string()) };
+    connection.execute("UPDATE proxy_records SET status=?1,latency_ms=?2,exit_ip=?3,last_error=?4,last_checked_at=?5,updated_at=?5 WHERE id=?6", params![status,started.elapsed().as_millis() as i64,exit_ip,error,timestamp,proxy.id]).map_err(|e| e.to_string())?;
+    get_proxy_records(app_handle)?.into_iter().find(|item| item.id == proxy.id).ok_or_else(|| "Không đọc được kết quả proxy.".to_string())
+}
+
+fn browser_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSessionRecord> {
+    Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)? })
+}
+
+#[tauri::command]
+fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessionRecord>, String> {
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    let mut statement = connection.prepare("SELECT id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at FROM browser_sessions ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], browser_session_from_row).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
+    if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Managed Browser chỉ mở URL http/https.".to_string()); }
+    let executable = browser_executable()?;
+    let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let mut command = Command::new(executable);
+    command.arg(format!("--user-data-dir={}", root.display())).arg("--no-first-run").arg("--no-default-browser-check").arg("--remote-debugging-port=0");
+    if !request.visible { command.arg("--start-minimized"); }
+    if !request.proxy_id.is_empty() {
+        let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == request.proxy_id).ok_or_else(|| "Proxy được chọn không tồn tại.".to_string())?;
+        if proxy.status != "healthy" || !proxy.is_enabled { return Err("Proxy phải được bật và kiểm tra Healthy trước khi chạy browser.".to_string()); }
+        command.arg(format!("--proxy-server={}://{}:{}", proxy.protocol, proxy.host, proxy.port));
+    }
+    let child = command.arg(&request.url).spawn().map_err(|e| format!("Không khởi chạy được Managed Browser: {e}"))?;
+    let timestamp = now_string();
+    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent profile.".to_string(), created_at: timestamp.clone(), updated_at: timestamp };
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at]).map_err(|e| e.to_string())?;
+    Ok(session)
+}
+
+#[tauri::command]
+fn stop_managed_browser(app_handle: tauri::AppHandle, session_id: String) -> Result<BrowserSessionRecord, String> {
+    let session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("taskkill").args(["/PID", &session.process_id.to_string(), "/T", "/F"]).output();
+    #[cfg(not(target_os = "windows"))]
+    let _ = Command::new("kill").arg(session.process_id.to_string()).output();
+    let connection = open_database(&app_handle)?; let timestamp = now_string();
+    connection.execute("UPDATE browser_sessions SET status='stopped',last_message='Managed Browser đã dừng.',updated_at=?1 WHERE id=?2", params![timestamp,session_id]).map_err(|e| e.to_string())?;
+    get_browser_sessions(app_handle)?.into_iter().find(|item| item.id == session.id).ok_or_else(|| "Không đọc được browser session.".to_string())
+}
+
+#[tauri::command]
+fn set_managed_browser_visibility(app_handle: tauri::AppHandle, session_id: String, visible: bool) -> Result<BrowserSessionRecord, String> {
+    let session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        let show_code = if visible { 5 } else { 0 };
+        let script = format!("$signature='[DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'; Add-Type -MemberDefinition $signature -Name Win32ShowWindow -Namespace EntityManager; $p=Get-Process -Id {} -ErrorAction Stop; [EntityManager.Win32ShowWindow]::ShowWindowAsync($p.MainWindowHandle,{}) | Out-Null", session.process_id, show_code);
+        let output = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("Không đổi được trạng thái cửa sổ browser: {e}"))?;
+        if !output.status.success() { return Err("Chrome chưa tạo cửa sổ có thể ẩn/hiện; hãy thử lại sau vài giây.".to_string()); }
+    }
+    #[cfg(not(target_os = "windows"))]
+    return Err("Ẩn/hiện Managed Browser hiện được tối ưu cho Windows.".to_string());
+
+    #[cfg(target_os = "windows")]
+    {
+        let connection = open_database(&app_handle)?; let timestamp = now_string();
+        let visibility = if visible { "visible" } else { "hidden" };
+        connection.execute("UPDATE browser_sessions SET visibility=?1,last_message=?2,updated_at=?3 WHERE id=?4", params![visibility, if visible { "Đã hiển thị browser để thao tác." } else { "Browser đang chạy ẩn." },timestamp,session_id]).map_err(|e| e.to_string())?;
+        get_browser_sessions(app_handle)?.into_iter().find(|item| item.id == session.id).ok_or_else(|| "Không đọc được browser session.".to_string())
+    }
+}
+
 fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     let database_path = database_path(app_handle)?;
     Connection::open(database_path).map_err(|error| error.to_string())
@@ -2441,6 +2648,42 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS proxy_records (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                username TEXT NOT NULL DEFAULT '',
+                country_code TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'untested',
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                exit_ip TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                last_checked_at TEXT NOT NULL DEFAULT '',
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS browser_sessions (
+                id TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                platform_id TEXT NOT NULL,
+                profile_directory TEXT NOT NULL,
+                proxy_id TEXT NOT NULL DEFAULT '',
+                process_id INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'queued',
+                visibility TEXT NOT NULL DEFAULT 'hidden',
+                current_url TEXT NOT NULL DEFAULT '',
+                last_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_browser_sessions_job ON browser_sessions(job_id, updated_at);
             ",
         )
         .map_err(|error| error.to_string())?;
@@ -4304,7 +4547,14 @@ pub fn run() {
             poll_captcha_queue_item,
             get_captcha_injection_payload,
             complete_captcha_injection,
-            complete_account_submit_verify
+            complete_account_submit_verify,
+            get_proxy_records,
+            save_proxy_record,
+            test_proxy_record,
+            get_browser_sessions,
+            launch_managed_browser,
+            stop_managed_browser,
+            set_managed_browser_visibility
         ])
         .run(tauri::generate_context!())
         .expect("error while running EntityManager");
