@@ -15,10 +15,10 @@ declare const chrome: {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string };
+  const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string; displayName?: string };
 
   if (typedMessage.type === "ENTITYMANAGER_MEDIUM_SIGNUP") {
-    void automateMediumEmailSignup(typedMessage.email || "").then(sendResponse);
+    void automateMediumEmailSignup(typedMessage.email || "", typedMessage.displayName || "").then(sendResponse);
     return true;
   }
 
@@ -43,32 +43,58 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-async function automateMediumEmailSignup(email: string): Promise<{ success: boolean; waitingForVerification: boolean; message: string }> {
+async function automateMediumEmailSignup(email: string, displayName: string): Promise<{ success: boolean; waitingForVerification: boolean; message: string }> {
   if (!email.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có email để đăng ký Medium." };
+  if (!displayName.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có Display Name để điền ô Your full name của Medium." };
   const visible = (element: Element) => {
     const node = element as HTMLElement;
     const style = window.getComputedStyle(node);
     const rect = node.getBoundingClientRect();
     return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
   };
-  let input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
-  if (!input) {
+  let emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+  if (!emailInput) {
     const choice = Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button']")).filter(visible)
       .find((element) => /sign up with email|continue with email|email/i.test((element.innerText || element.textContent || "").trim()));
     choice?.click();
     if (choice) await new Promise((resolve) => setTimeout(resolve, 900));
-    input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+    emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
   }
-  if (!input) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô email Medium sau khi mở phương thức đăng ký email." };
+  if (!emailInput) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô email Medium sau khi mở phương thức đăng ký email." };
+  const nameInput = findMediumFullNameInput(visible);
+  if (!nameInput) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô Your full name của Medium; chưa bấm Create account." };
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(input, email);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
+  setControlledInputValue(nameInput, displayName, setter);
+  setControlledInputValue(emailInput, email, setter);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  if (!nameInput.value.trim() || !emailInput.value.trim()) {
+    return { success: false, waitingForVerification: false, message: "Medium chưa ghi nhận đủ Full name và Email; chưa bấm Create account." };
+  }
   const submit = Array.from(document.querySelectorAll<HTMLButtonElement>("button[type='submit'], button")).filter(visible)
     .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
-  if (!submit) return { success: true, waitingForVerification: false, message: `Đã điền ${email}, nhưng chưa tìm thấy nút gửi phù hợp.` };
+  if (!submit) return { success: false, waitingForVerification: false, message: `Đã điền ${displayName} và ${email}, nhưng chưa tìm thấy nút Create account phù hợp.` };
   submit.click();
-  return { success: true, waitingForVerification: true, message: `Đã gửi yêu cầu đăng ký Medium tới ${email}; đang chờ xác minh email.` };
+  return { success: true, waitingForVerification: true, message: `Đã điền Full name (${displayName}), email (${email}) và bấm Create account; đang chờ Medium xác minh email.` };
+}
+
+function findMediumFullNameInput(visible: (element: Element) => boolean): HTMLInputElement | undefined {
+  const candidates = Array.from(document.querySelectorAll<HTMLInputElement>(
+    "input[name='name'], input[name='fullName'], input[name='fullname'], input[autocomplete='name'], input[type='text']"
+  )).filter(visible);
+  return candidates.find((input) => {
+    const label = input.labels?.[0]?.textContent || "";
+    const descriptor = [input.name, input.id, input.placeholder, input.getAttribute("aria-label"), label].filter(Boolean).join(" ");
+    return /full\s*name|your\s*name|display\s*name|^name$/i.test(descriptor.trim());
+  }) || candidates.find((input) => input.type === "text");
+}
+
+function setControlledInputValue(input: HTMLInputElement, value: string, setter?: (this: HTMLInputElement, value: string) => void): void {
+  input.focus();
+  if (setter) setter.call(input, value);
+  else input.value = value;
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
 }
 
 function injectCaptchaToken(payload: CaptchaInjectionPayload): InjectionResponse {
