@@ -66,6 +66,18 @@ textarea {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.actions .primary-orchestrator {
+  grid-column: 1 / -1;
+  padding: 12px;
+  border-color: #047857;
+  background: linear-gradient(135deg, #059669, #0f766e);
+  color: #fff;
+  font-weight: 800;
+}
+.actions .primary-orchestrator:disabled {
+  cursor: wait;
+  opacity: .7;
+}
 
 button {
   border: 0;

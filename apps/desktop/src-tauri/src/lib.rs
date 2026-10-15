@@ -79,6 +79,15 @@ fn app_health() -> &'static str {
 }
 
 #[tauri::command]
+fn get_indexing_queue_count(app_handle: tauri::AppHandle) -> Result<i64, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    connection
+        .query_row("SELECT COUNT(*) FROM indexing_queue WHERE status IN ('queued', 'retry')", [], |row| row.get(0))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<String, String> {
     let target = url.trim();
     if !(target.starts_with("https://") || target.starts_with("http://")) {
@@ -1803,6 +1812,7 @@ fn get_dry_run_preview_payload_record(
 
 fn get_next_submit_verify_payload_record(
     app_handle: &tauri::AppHandle,
+    requested_platform_id: Option<&str>,
 ) -> Result<AccountSubmitVerifyPayload, String> {
     let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
@@ -1817,7 +1827,7 @@ fn get_next_submit_verify_payload_record(
         )
         .map_err(|error| error.to_string())?;
 
-    let mut items = statement
+    let items = statement
         .query_map([], |row| {
             Ok(AutomationQueueItem {
                 id: row.get(0)?,
@@ -1830,12 +1840,22 @@ fn get_next_submit_verify_payload_record(
                 updated_at: row.get(7)?,
             })
         })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
 
-    let item = match items.next() {
-        Some(result) => result.map_err(|error| error.to_string())?,
-        None => return Err("No submit/verify queue item is ready.".to_string()),
-    };
+    let item = if let Some(platform_id) = requested_platform_id {
+        items.into_iter().find(|candidate| {
+            get_account_record(&connection, &candidate.account_id)
+                .map(|account| account.platform_id.eq_ignore_ascii_case(platform_id))
+                .unwrap_or(false)
+        })
+    } else {
+        items.into_iter().next()
+    }
+    .ok_or_else(|| requested_platform_id
+        .map(|platform_id| format!("No submit/verify queue item is ready for {platform_id}."))
+        .unwrap_or_else(|| "No submit/verify queue item is ready.".to_string()))?;
     let account = get_account_record(&connection, &item.account_id)?;
     let profile = get_entity_profile_record(&connection).unwrap_or_else(|_| default_entity_profile());
     let money_site = get_money_site_record(&connection).unwrap_or_else(|_| default_money_site());
@@ -1991,6 +2011,30 @@ fn complete_account_submit_verify_record(
         .to_string();
     account.updated_at = timestamp.clone();
     save_account_record(&connection, &account)?;
+
+    if request.success && (account.evidence_url.starts_with("https://") || account.evidence_url.starts_with("http://")) {
+        connection
+            .execute(
+                "INSERT INTO indexing_queue (
+                    id, url, source_platform, account_id, status, attempt_count,
+                    last_error, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, 'queued', 0, '', ?5, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                    url = excluded.url,
+                    source_platform = excluded.source_platform,
+                    account_id = excluded.account_id,
+                    status = CASE WHEN indexing_queue.status = 'indexed' THEN 'indexed' ELSE 'queued' END,
+                    updated_at = excluded.updated_at",
+                params![
+                    format!("index-{}", account.id),
+                    account.evidence_url,
+                    account.platform_name,
+                    account.id,
+                    timestamp
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
 
     let workflow_run = WorkflowRunRecord {
         id: format!("run-{}-submit-verify-{}", account.id, timestamp),
@@ -2164,6 +2208,18 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 certified_at TEXT NOT NULL DEFAULT '',
                 last_tested_url TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS indexing_queue (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL UNIQUE,
+                source_platform TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
             ",
@@ -3093,7 +3149,7 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
     }
 
     if request.starts_with("GET /account/submit-verify/next ") {
-        let response = match get_next_submit_verify_payload_record(&app_handle) {
+        let response = match get_next_submit_verify_payload_record(&app_handle, None) {
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
@@ -3101,6 +3157,27 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
             }
         };
 
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("GET ") && request_path == "/account/submit-verify/platform" {
+        let requested_platform_id = request_target.split_once('?')
+            .and_then(|(_, query)| query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "platformId").then_some(value)
+            }));
+        let Some(platform_id) = requested_platform_id else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"platformId is required\"}");
+            return;
+        };
+        let response = match get_next_submit_verify_payload_record(&app_handle, Some(platform_id)) {
+            Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
         let _ = write_http_response(&mut stream, 200, &response);
         return;
     }
@@ -3919,6 +3996,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             app_health,
+            get_indexing_queue_count,
             open_external_url,
             open_extension_download,
             open_latest_release_download,
