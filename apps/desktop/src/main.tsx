@@ -769,12 +769,16 @@ function App() {
 
   async function refreshPlatformValidation(showStatus = true) {
     try {
-      const [records, queueCount] = await Promise.all([
+      const [records, queueCount, campaigns, jobs] = await Promise.all([
         invoke<PlatformValidationRecord[]>("get_platform_validation_records"),
-        invoke<number>("get_indexing_queue_count")
+        invoke<number>("get_indexing_queue_count"),
+        invoke<ProvisioningCampaignRecord[]>("get_provisioning_campaigns"),
+        invoke<ProvisioningJobRecord[]>("get_provisioning_jobs")
       ]);
       setPlatformValidation(records);
       setIndexingQueueCount(queueCount);
+      setProvisioningCampaigns(campaigns);
+      setProvisioningJobs(jobs);
       if (showStatus) setStatusMessage("Platform validation checklist refreshed from SQLite");
     } catch {
       if (showStatus) setStatusMessage("Could not refresh platform validation checklist.");

@@ -62,6 +62,29 @@ export interface BridgeStorage {
   submitCallbackUrl?: string;
 }
 
+export interface ProvisioningJobRecord {
+  id: string;
+  campaignId: string;
+  accountId: string;
+  platformId: string;
+  platformName: string;
+  position: number;
+  stage: string;
+  status: string;
+  signupUrl: string;
+  profileUrl: string;
+  evidenceUrl: string;
+  lastMessage: string;
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProvisioningCheckpointResult {
+  job: ProvisioningJobRecord;
+  nextJob?: ProvisioningJobRecord | null;
+}
+
 export type PlatformValidationStatus = "not_tested" | "dry_run_ok" | "text_saved" | "media_uploaded" | "needs_recipe_fix";
 
 export interface PlatformValidationSyncReport {
