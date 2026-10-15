@@ -11,23 +11,62 @@ declare const chrome: {
         ) => boolean | void
       ): void;
     };
+    onInstalled: { addListener(callback: () => void): void };
+    onStartup: { addListener(callback: () => void): void };
     lastError?: { message?: string };
   };
   tabs: {
     onUpdated: { addListener(callback: (tabId: number, changeInfo: { status?: string; url?: string }, tab: { url?: string }) => void): void };
+    onActivated: { addListener(callback: (activeInfo: { tabId: number }) => void): void };
+    get(tabId: number, callback: (tab: { id?: number; url?: string }) => void): void;
+    query(queryInfo: { url?: string[] }, callback: (tabs: Array<{ id?: number; url?: string }>) => void): void;
     sendMessage(tabId: number, message: unknown, callback?: (response: unknown) => void): void;
     update(tabId: number, updateProperties: { url: string }, callback?: () => void): void;
   };
 };
 
 const activeAutomation = new Set<number>();
+const retryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const retryDelays = [0, 1200, 3000, 6000, 10000];
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url || !/^https:\/\/(?:www\.)?medium\.com\//i.test(tab.url)) return;
-  if (activeAutomation.has(tabId)) return;
-  activeAutomation.add(tabId);
-  void runMediumBackgroundStep(tabId, tab.url).finally(() => activeAutomation.delete(tabId));
+  scheduleMediumAutomation(tabId, tab.url);
 });
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId, (tab) => {
+    if (tab.url && /^https:\/\/(?:www\.)?medium\.com\//i.test(tab.url)) scheduleMediumAutomation(tabId, tab.url);
+  });
+});
+
+chrome.runtime.onInstalled.addListener(scanOpenMediumTabs);
+chrome.runtime.onStartup.addListener(scanOpenMediumTabs);
+
+function scanOpenMediumTabs(): void {
+  chrome.tabs.query({ url: ["https://medium.com/*", "https://www.medium.com/*"] }, (tabs) => {
+    for (const tab of tabs) if (tab.id && tab.url) scheduleMediumAutomation(tab.id, tab.url);
+  });
+}
+
+function scheduleMediumAutomation(tabId: number, currentUrl: string, attempt = 0): void {
+  const previous = retryTimers.get(tabId);
+  if (attempt === 0 && previous) clearTimeout(previous);
+  const timer = setTimeout(() => {
+    retryTimers.delete(tabId);
+    if (activeAutomation.has(tabId)) {
+      scheduleMediumAutomation(tabId, currentUrl, Math.min(attempt + 1, retryDelays.length - 1));
+      return;
+    }
+    activeAutomation.add(tabId);
+    void runMediumBackgroundStep(tabId, currentUrl)
+      .then((completed) => {
+        if (!completed && attempt + 1 < retryDelays.length) scheduleMediumAutomation(tabId, currentUrl, attempt + 1);
+      })
+      .finally(() => activeAutomation.delete(tabId));
+  }, retryDelays[attempt] ?? retryDelays[retryDelays.length - 1]);
+  retryTimers.set(tabId, timer);
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const typedMessage = message as { type?: string; report?: InjectionReport | SubmitVerifyReport; dryRunReport?: DryRunHistoryReport; validationReport?: PlatformValidationSyncReport; callbackUrl?: string };
@@ -114,13 +153,13 @@ async function postPlatformValidation(report: PlatformValidationSyncReport, call
   return "Platform validation auto-synced to Desktop.";
 }
 
-async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promise<void> {
+async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promise<boolean> {
   try {
     const jobResponse = await fetch("http://127.0.0.1:17321/provisioning/job/platform?platformId=medium");
-    if (!jobResponse.ok) return;
+    if (!jobResponse.ok) return false;
     const job = await jobResponse.json() as { stage?: string; profileUrl?: string };
     const payloadResponse = await fetch("http://127.0.0.1:17321/account/submit-verify/platform?platformId=medium");
-    if (!payloadResponse.ok) return;
+    if (!payloadResponse.ok) return false;
     const payload = await payloadResponse.json() as { formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
     const authPage = /\/(?:signin|signup|login|register)(?:[/?#]|$)/i.test(currentUrl) || /operation=(?:register|login)/i.test(currentUrl);
     if (authPage) {
@@ -130,13 +169,13 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
         displayName: payload.formValues?.displayName || ""
       });
       await postProvisioningCheckpoint("medium", result.waitingForVerification ? "email_verification" : "signup", result.waitingForVerification ? "waiting_user" : "running", result.message, "");
-      return;
+      return result.waitingForVerification;
     }
 
     if (!/medium\.com\/me\/(?:settings|about)/i.test(currentUrl) && job.profileUrl) {
       await postProvisioningCheckpoint("medium", "profile_text", "running", "Đã xác minh đăng nhập; background worker đang mở trang profile Medium.", "");
       chrome.tabs.update(tabId, { url: job.profileUrl });
-      return;
+      return true;
     }
 
     if (/medium\.com\/me\/(?:settings|about)/i.test(currentUrl)) {
@@ -146,9 +185,12 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
         fillOnly: false
       });
       await postProvisioningCheckpoint("medium", result.success ? "profile_media" : "profile_text", result.success ? "running" : "waiting_user", result.message, result.evidenceUrl || "");
+      return result.success;
     }
+    return false;
   } catch {
-    // Desktop may be closed or Medium may still be rendering. A later navigation retries safely.
+    // Desktop/content may still be starting. The bounded retry scheduler will try again.
+    return false;
   }
 }
 
