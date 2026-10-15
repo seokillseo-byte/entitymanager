@@ -13,7 +13,7 @@ declare const chrome: {
     executeScript<T = unknown>(details: {
       target: { tabId: number };
       files?: string[];
-      func?: (payload: AccountSubmitVerifyPayload) => T | Promise<T>;
+      func?: (...args: any[]) => T | Promise<T>;
       args?: unknown[];
     }, callback?: (results?: Array<{ result?: T }>) => void): void;
   };
@@ -37,6 +37,7 @@ const fillPreviewButton = document.querySelector<HTMLButtonElement>("#fillPrevie
 const mediaOnlyButton = document.querySelector<HTMLButtonElement>("#mediaOnlyButton");
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
+const oneClickOrchestratorButton = document.querySelector<HTMLButtonElement>("#oneClickOrchestratorButton");
 
 const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
@@ -48,6 +49,10 @@ const defaultPlatformValidationCallbackUrl = "http://127.0.0.1:17321/platform-va
 type ExecutionStep = "dry_run" | "fill_text" | "upload_media" | "submit_verify";
 
 void loadState();
+
+oneClickOrchestratorButton?.addEventListener("click", () => {
+  void runOneClickOrchestrator();
+});
 
 fetchPayloadButton?.addEventListener("click", () => {
   void fetchNextPayload();
@@ -166,6 +171,151 @@ async function injectActiveTab(): Promise<void> {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "CAPTCHA injection failed.");
   }
+}
+
+async function runOneClickOrchestrator(): Promise<void> {
+  if (!oneClickOrchestratorButton) return;
+  oneClickOrchestratorButton.disabled = true;
+  oneClickOrchestratorButton.textContent = "Đang chạy tự động...";
+  try {
+    const currentUrl = await getActiveTabUrl();
+    const platformId = platformIdForUrl(currentUrl);
+    if (!platformId) throw new Error("Tab hiện tại chưa thuộc platform được hỗ trợ. Hãy mở đúng trang profile/settings từ Desktop.");
+    const payload = await fetchPlatformOrchestratorPayload(platformId);
+    const tabId = await getActiveTabId();
+
+    setStatus(`1/4 ${payload.platformName}: đang kiểm tra selector...`);
+    const dryRun = await runDryRunInPage(tabId, payload);
+    await reportDryRun(payload, dryRun, currentUrl);
+    await syncPlatformValidation(payload, "dry_run", dryRun, currentUrl);
+    if (!dryRun.success || dryRun.missingFields.length) {
+      throw new Error(`Dừng an toàn tại dry-run. Missing: ${dryRun.missingFields.join(", ") || "selector không hợp lệ"}.`);
+    }
+
+    setStatus(`2/4 ${payload.platformName}: đang điền và lưu NAP/EEAT...`);
+    const textPayload = await prepareSafeFillPayload(buildTextOnlyPayload(payload), currentUrl, { includeGithubAvatar: false });
+    const textResult = await runSafeFillInPage(tabId, textPayload);
+    await syncPlatformValidation(payload, "fill_text", textResult, currentUrl);
+    if (validationStatusForResponse("fill_text", textResult) !== "text_saved") {
+      throw new Error(`Dừng an toàn tại lưu text. Needs attention: ${textResult.missingFields.join(", ") || "không xác nhận được nút Save"}.`);
+    }
+
+    setStatus(`3/4 ${payload.platformName}: đang upload avatar/banner...`);
+    const mediaPayload = await prepareSafeFillPayload(buildMediaOnlyPayload(payload), currentUrl, { includeGithubAvatar: true });
+    if (!mediaPayload.formValues.avatarImageUrl.trim() && !mediaPayload.formValues.profileImage.trim() && !mediaPayload.formValues.bannerImageUrl.trim()) {
+      throw new Error("Dừng tại media: Entity Profile chưa có logo/avatar hoặc banner. Hãy bổ sung media trước khi chạy lại.");
+    }
+    const mediaResult = await runSafeFillInPage(tabId, mediaPayload);
+    await syncPlatformValidation(payload, "upload_media", mediaResult, await getActiveTabUrl());
+    if (validationStatusForResponse("upload_media", mediaResult) !== "media_uploaded") {
+      throw new Error(`Dừng an toàn tại media. Needs attention: ${mediaResult.missingFields.join(", ") || "chưa xác nhận upload"}.`);
+    }
+
+    setStatus(`4/4 ${payload.platformName}: đang tìm URL profile công khai và lưu evidence...`);
+    const evidenceUrl = await discoverPublicEvidenceUrl(tabId, payload.platformId);
+    if (!evidenceUrl) {
+      throw new Error("Đã lưu text và media nhưng chưa tìm được URL profile công khai. Hãy mở profile public rồi hoàn tất evidence trong Desktop.");
+    }
+    const callbackResponse = await sendRuntimeMessage<{ success: boolean; message: string }>({
+      type: "ENTITYMANAGER_REPORT_SUBMIT_VERIFY",
+      report: {
+        queueId: payload.queueId,
+        accountId: payload.accountId,
+        success: true,
+        evidenceUrl,
+        message: "One-click orchestration completed after dry-run, saved text, uploaded media and public evidence discovery."
+      } satisfies SubmitVerifyReport,
+      callbackUrl: defaultSubmitCallbackUrl
+    });
+    setStatus([
+      `HOÀN TẤT ${payload.platformName}`,
+      `Text: ${textResult.filledFields.join(", ") || "none"}`,
+      `Media: ${mediaResult.filledFields.join(", ") || "none"}`,
+      `Evidence: ${evidenceUrl}`,
+      callbackResponse.message
+    ].join("\n"));
+  } catch (error) {
+    setStatus(`ORCHESTRATOR TẠM DỪNG\n${error instanceof Error ? error.message : "Không thể hoàn tất phiên tự động."}\nDesktop vẫn giữ các bước đã hoàn thành; sửa checkpoint rồi chạy lại.`);
+  } finally {
+    oneClickOrchestratorButton.disabled = false;
+    oneClickOrchestratorButton.textContent = "Chạy tự động toàn bộ";
+  }
+}
+
+async function fetchPlatformOrchestratorPayload(platformId: string): Promise<AccountSubmitVerifyPayload> {
+  const response = await fetch(`http://127.0.0.1:17321/account/submit-verify/platform?platformId=${encodeURIComponent(platformId)}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Desktop chưa chuẩn bị queue cho ${platformId}. Hãy bấm “Chạy tự động” trong Desktop trước.`);
+  return validateSubmitVerifyPayload(data as Partial<AccountSubmitVerifyPayload>);
+}
+
+async function reportDryRun(payload: AccountSubmitVerifyPayload, response: SubmitVerifyResponse, currentUrl: string): Promise<void> {
+  const createdAt = new Date().toISOString();
+  await sendRuntimeMessage({
+    type: "ENTITYMANAGER_REPORT_DRY_RUN",
+    dryRunReport: {
+      id: `dryrun-${payload.accountId}-${Date.now()}`,
+      platformId: payload.platformId,
+      platformName: payload.platformName,
+      accountId: payload.accountId,
+      plannedFields: response.plannedFields,
+      plannedSelector: response.plannedSelector,
+      missingChecks: response.missingFields,
+      currentUrl,
+      createdAt
+    } satisfies DryRunHistoryReport,
+    callbackUrl: defaultDryRunHistoryCallbackUrl
+  });
+}
+
+function buildTextOnlyPayload(payload: AccountSubmitVerifyPayload): AccountSubmitVerifyPayload {
+  return {
+    ...payload,
+    formValues: { ...payload.formValues, profileImage: "", avatarImageUrl: "", bannerImageUrl: "" },
+    requiredFields: payload.requiredFields.filter((field) => !["profileImage", "avatarImageUrl", "bannerImageUrl"].includes(field))
+  };
+}
+
+function buildMediaOnlyPayload(payload: AccountSubmitVerifyPayload): AccountSubmitVerifyPayload {
+  return {
+    ...payload,
+    formValues: {
+      username: "", email: "", displayName: "", bio: "", websiteUrl: "", company: "", location: "", socialLinks: "",
+      profileImage: payload.formValues.avatarImageUrl.trim() ? "" : payload.formValues.profileImage,
+      avatarImageUrl: payload.formValues.avatarImageUrl,
+      bannerImageUrl: payload.formValues.bannerImageUrl
+    },
+    requiredFields: []
+  };
+}
+
+async function discoverPublicEvidenceUrl(tabId: number, platformId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript<string>({
+      target: { tabId },
+      args: [platformId],
+      func: (id) => {
+        const urls = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"))
+          .map((anchor) => anchor.href)
+          .filter((href) => href.startsWith("http"));
+        const matchers: Record<string, RegExp> = {
+          medium: /^https:\/\/(?:www\.)?medium\.com\/@[^/?#]+\/?$/i,
+          aboutme: /^https:\/\/(?:www\.)?about\.me\/[^/?#]+\/?$/i,
+          tumblr: /^https:\/\/(?:www\.)?(?:[a-z0-9-]+\.tumblr\.com|tumblr\.com\/[a-z0-9-]+)\/?$/i,
+          github: /^https:\/\/github\.com\/[^/?#]+\/?$/i
+        };
+        const reserved = /\/(?:settings|account|me|customize)(?:\/|$)/i;
+        const matcher = matchers[id];
+        return matcher ? urls.find((url) => matcher.test(url) && !reserved.test(new URL(url).pathname)) || "" : "";
+      }
+    }, (results) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message || "Không đọc được URL evidence trên trang."));
+        return;
+      }
+      resolve(results?.[0]?.result || "");
+    });
+  });
 }
 
 async function submitVerifyActiveTab(): Promise<void> {
