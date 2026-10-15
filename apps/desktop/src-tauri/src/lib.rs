@@ -434,6 +434,8 @@ struct PlatformValidationRecord {
     dry_run_checked_at: String,
     text_saved_at: String,
     media_uploaded_at: String,
+    evidence_saved_at: String,
+    certified_at: String,
     last_tested_url: String,
     notes: String,
     updated_at: String,
@@ -910,7 +912,7 @@ fn get_platform_validation_records(app_handle: tauri::AppHandle) -> Result<Vec<P
     let mut statement = connection
         .prepare(
             "SELECT platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
-                    media_uploaded_at, last_tested_url, notes, updated_at
+                    media_uploaded_at, evidence_saved_at, certified_at, last_tested_url, notes, updated_at
              FROM platform_validation
              ORDER BY CASE platform_id
                 WHEN 'github' THEN 1
@@ -930,9 +932,11 @@ fn get_platform_validation_records(app_handle: tauri::AppHandle) -> Result<Vec<P
                 dry_run_checked_at: row.get(3)?,
                 text_saved_at: row.get(4)?,
                 media_uploaded_at: row.get(5)?,
-                last_tested_url: row.get(6)?,
-                notes: row.get(7)?,
-                updated_at: row.get(8)?,
+                evidence_saved_at: row.get(6)?,
+                certified_at: row.get(7)?,
+                last_tested_url: row.get(8)?,
+                notes: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -970,6 +974,8 @@ fn sync_platform_validation_record(
         dry_run_checked_at: "".to_string(),
         text_saved_at: "".to_string(),
         media_uploaded_at: "".to_string(),
+        evidence_saved_at: "".to_string(),
+        certified_at: "".to_string(),
         last_tested_url: "".to_string(),
         notes: "".to_string(),
         updated_at: "".to_string(),
@@ -982,13 +988,19 @@ fn sync_platform_validation_record(
         dry_run_checked_at: existing.dry_run_checked_at,
         text_saved_at: existing.text_saved_at,
         media_uploaded_at: existing.media_uploaded_at,
+        evidence_saved_at: existing.evidence_saved_at,
+        certified_at: existing.certified_at,
         last_tested_url: if last_tested_url.is_empty() { existing.last_tested_url } else { last_tested_url },
         notes: note,
         updated_at: now.clone(),
     };
 
     match report.step.as_str() {
-        "dry_run" => next.dry_run_checked_at = now.clone(),
+        "dry_run" => {
+            if next.status == "dry_run_ok" {
+                next.dry_run_checked_at = now.clone();
+            }
+        },
         "fill_text" => {
             if next.status == "text_saved" {
                 next.text_saved_at = now.clone();
@@ -1003,12 +1015,66 @@ fn sync_platform_validation_record(
         _ => {}
     }
 
-    if next.status == "needs_recipe_fix" && report.step == "dry_run" {
-        next.dry_run_checked_at = now;
+    if next.status == "needs_recipe_fix" {
+        if report.step == "dry_run" {
+            next.dry_run_checked_at = "".to_string();
+        }
+        next.certified_at = "".to_string();
+        next.evidence_saved_at = "".to_string();
     }
 
     save_platform_validation_record_to_db(&connection, &next)?;
     Ok(next)
+}
+
+#[tauri::command]
+fn certify_platform(
+    app_handle: tauri::AppHandle,
+    platform_id: String,
+) -> Result<PlatformValidationRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    ensure_default_platforms(&connection)?;
+    ensure_default_platform_validation(&connection)?;
+
+    let mut record = get_platform_validation_record(&connection, &platform_id)?;
+    let mut missing = Vec::new();
+    if record.dry_run_checked_at.trim().is_empty() {
+        missing.push("dry-run chưa đạt");
+    }
+    if record.text_saved_at.trim().is_empty() {
+        missing.push("text/NAP/EEAT chưa được lưu");
+    }
+    if record.media_uploaded_at.trim().is_empty() {
+        missing.push("avatar/banner chưa được upload");
+    }
+    if record.status != "media_uploaded" {
+        missing.push("trạng thái hiện tại chưa xác nhận bước media cuối cùng");
+    }
+
+    let evidence_url = connection
+        .query_row(
+            "SELECT evidence_url FROM accounts WHERE platform_id = ?1 AND status = 'verified' ORDER BY updated_at DESC LIMIT 1",
+            params![&platform_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default();
+    if !(evidence_url.starts_with("https://") || evidence_url.starts_with("http://")) {
+        missing.push("chưa có evidence URL hợp lệ trên account đã verified");
+    }
+
+    if !missing.is_empty() {
+        return Err(format!("Chưa thể chứng nhận {}: {}.", record.platform_name, missing.join(", ")));
+    }
+
+    let now = now_string();
+    record.evidence_saved_at = now.clone();
+    record.certified_at = now.clone();
+    record.last_tested_url = evidence_url;
+    record.notes = "Certified end-to-end: dry-run, text/NAP/EEAT, media, verified account and evidence passed.".to_string();
+    record.updated_at = now;
+    save_platform_validation_record_to_db(&connection, &record)?;
+    Ok(record)
 }
 
 #[tauri::command]
@@ -2070,6 +2136,8 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 dry_run_checked_at TEXT NOT NULL DEFAULT '',
                 text_saved_at TEXT NOT NULL DEFAULT '',
                 media_uploaded_at TEXT NOT NULL DEFAULT '',
+                evidence_saved_at TEXT NOT NULL DEFAULT '',
+                certified_at TEXT NOT NULL DEFAULT '',
                 last_tested_url TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
@@ -2082,6 +2150,8 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "integration_settings", "last_test_at", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "entity_profiles", "avatar_image_url", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "entity_profiles", "banner_image_url", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "platform_validation", "evidence_saved_at", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "platform_validation", "certified_at", "TEXT NOT NULL DEFAULT ''")?;
 
     Ok(())
 }
@@ -2449,6 +2519,8 @@ fn ensure_default_platform_validation(connection: &Connection) -> Result<(), Str
             dry_run_checked_at: "".to_string(),
             text_saved_at: "".to_string(),
             media_uploaded_at: "".to_string(),
+            evidence_saved_at: "".to_string(),
+            certified_at: "".to_string(),
             last_tested_url: "".to_string(),
             notes: "".to_string(),
             updated_at: timestamp.clone(),
@@ -2457,9 +2529,9 @@ fn ensure_default_platform_validation(connection: &Connection) -> Result<(), Str
             .execute(
                 "INSERT OR IGNORE INTO platform_validation (
                     platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
-                    media_uploaded_at, last_tested_url, notes, updated_at
+                    media_uploaded_at, evidence_saved_at, certified_at, last_tested_url, notes, updated_at
                  )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     record.platform_id,
                     record.platform_name,
@@ -2467,6 +2539,8 @@ fn ensure_default_platform_validation(connection: &Connection) -> Result<(), Str
                     record.dry_run_checked_at,
                     record.text_saved_at,
                     record.media_uploaded_at,
+                    record.evidence_saved_at,
+                    record.certified_at,
                     record.last_tested_url,
                     record.notes,
                     record.updated_at
@@ -2482,7 +2556,7 @@ fn get_platform_validation_record(connection: &Connection, platform_id: &str) ->
     connection
         .query_row(
             "SELECT platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
-                    media_uploaded_at, last_tested_url, notes, updated_at
+                    media_uploaded_at, evidence_saved_at, certified_at, last_tested_url, notes, updated_at
              FROM platform_validation
              WHERE platform_id = ?1",
             params![platform_id],
@@ -2494,9 +2568,11 @@ fn get_platform_validation_record(connection: &Connection, platform_id: &str) ->
                     dry_run_checked_at: row.get(3)?,
                     text_saved_at: row.get(4)?,
                     media_uploaded_at: row.get(5)?,
-                    last_tested_url: row.get(6)?,
-                    notes: row.get(7)?,
-                    updated_at: row.get(8)?,
+                    evidence_saved_at: row.get(6)?,
+                    certified_at: row.get(7)?,
+                    last_tested_url: row.get(8)?,
+                    notes: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             },
         )
@@ -2524,15 +2600,17 @@ fn save_platform_validation_record_to_db(connection: &Connection, record: &Platf
         .execute(
             "INSERT INTO platform_validation (
                 platform_id, platform_name, status, dry_run_checked_at, text_saved_at,
-                media_uploaded_at, last_tested_url, notes, updated_at
+                media_uploaded_at, evidence_saved_at, certified_at, last_tested_url, notes, updated_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(platform_id)
              DO UPDATE SET platform_name = excluded.platform_name,
                            status = excluded.status,
                            dry_run_checked_at = excluded.dry_run_checked_at,
                            text_saved_at = excluded.text_saved_at,
                            media_uploaded_at = excluded.media_uploaded_at,
+                           evidence_saved_at = excluded.evidence_saved_at,
+                           certified_at = excluded.certified_at,
                            last_tested_url = excluded.last_tested_url,
                            notes = excluded.notes,
                            updated_at = excluded.updated_at",
@@ -2543,6 +2621,8 @@ fn save_platform_validation_record_to_db(connection: &Connection, record: &Platf
                 record.dry_run_checked_at,
                 record.text_saved_at,
                 record.media_uploaded_at,
+                record.evidence_saved_at,
+                record.certified_at,
                 record.last_tested_url,
                 record.notes,
                 record.updated_at
@@ -3837,6 +3917,7 @@ pub fn run() {
             save_dry_run_history,
             get_platform_validation_records,
             save_platform_validation_record,
+            certify_platform,
             get_evidence_records,
             save_evidence_record,
             get_entity_profile,
