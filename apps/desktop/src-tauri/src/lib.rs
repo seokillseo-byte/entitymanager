@@ -2011,7 +2011,7 @@ fn get_next_submit_verify_payload_record(
             "SELECT id, account_id, platform_name, gate_type, status, payload, created_at, updated_at
              FROM automation_queue
              WHERE gate_type = 'submit_verify'
-               AND status = 'waiting'
+               AND status IN ('waiting', 'queued')
              ORDER BY updated_at ASC",
         )
         .map_err(|error| error.to_string())?;
