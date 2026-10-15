@@ -1,4 +1,4 @@
-import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, PlatformValidationStatus, PlatformValidationSyncReport, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
+import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, PlatformValidationStatus, PlatformValidationSyncReport, ProvisioningCheckpointResult, ProvisioningJobRecord, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
 
 declare const chrome: {
   runtime: {
@@ -8,6 +8,7 @@ declare const chrome: {
   tabs: {
     query(queryInfo: { active: boolean; currentWindow: boolean }, callback: (tabs: Array<{ id?: number; url?: string }>) => void): void;
     sendMessage(tabId: number, message: unknown, callback?: (response: unknown) => void): void;
+    update(tabId: number, updateProperties: { url: string }, callback?: () => void): void;
   };
   scripting: {
     executeScript<T = unknown>(details: {
@@ -38,6 +39,7 @@ const mediaOnlyButton = document.querySelector<HTMLButtonElement>("#mediaOnlyBut
 const submitVerifyButton = document.querySelector<HTMLButtonElement>("#submitVerifyButton");
 const statusOutput = document.querySelector<HTMLPreElement>("#statusOutput");
 const oneClickOrchestratorButton = document.querySelector<HTMLButtonElement>("#oneClickOrchestratorButton");
+const resumeProvisioningButton = document.querySelector<HTMLButtonElement>("#resumeProvisioningButton");
 
 const defaultFetchUrl = "http://127.0.0.1:17321/captcha/injection/next";
 const defaultCallbackUrl = "http://127.0.0.1:17321/captcha/injection/complete";
@@ -46,11 +48,15 @@ const defaultDryRunPreviewUrl = "http://127.0.0.1:17321/account/submit-verify/pr
 const defaultSubmitCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/complete";
 const defaultDryRunHistoryCallbackUrl = "http://127.0.0.1:17321/account/submit-verify/dry-run-history";
 const defaultPlatformValidationCallbackUrl = "http://127.0.0.1:17321/platform-validation/sync";
+const defaultProvisioningCheckpointUrl = "http://127.0.0.1:17321/provisioning/job/checkpoint";
 type ExecutionStep = "dry_run" | "fill_text" | "upload_media" | "submit_verify";
 
 void loadState();
 
 oneClickOrchestratorButton?.addEventListener("click", () => {
+  void runOneClickOrchestrator();
+});
+resumeProvisioningButton?.addEventListener("click", () => {
   void runOneClickOrchestrator();
 });
 
@@ -181,10 +187,25 @@ async function runOneClickOrchestrator(): Promise<void> {
     const currentUrl = await getActiveTabUrl();
     const platformId = platformIdForUrl(currentUrl);
     if (!platformId) throw new Error("Tab hiện tại chưa thuộc platform được hỗ trợ. Hãy mở đúng trang profile/settings từ Desktop.");
-    const authGate = detectAuthenticationGate(currentUrl, platformId);
-    if (authGate) throw new Error(authGate);
     const payload = await fetchPlatformOrchestratorPayload(platformId);
+    const authGate = detectAuthenticationGate(currentUrl, platformId);
     const tabId = await getActiveTabId();
+    if (authGate) {
+      const registration = platformId === "medium"
+        ? await runMediumRegistrationGate(tabId, payload.formValues.email)
+        : { attempted: false, message: authGate };
+      await reportProvisioningCheckpoint(platformId, "email_verification", "waiting_user", registration.message, "");
+      setStatus(`ORCHESTRATOR TẠM DỪNG\n${registration.message}\nSau khi đăng nhập hoặc xác minh email, giữ nguyên tab này và bấm “Tiếp tục sau đăng nhập/xác minh”.`);
+      return;
+    }
+    const provisioningJob = await fetchProvisioningJob(platformId);
+    if (platformId === "medium" && !/medium\.com\/me\/(?:settings|about)/i.test(currentUrl) && provisioningJob.profileUrl) {
+      await reportProvisioningCheckpoint(platformId, "profile_text", "running", "Đã đăng nhập Medium; đang chuyển tới trang chỉnh sửa profile.", "");
+      setStatus("Đã xác nhận đăng nhập Medium. Đang mở trang profile; khi trang tải xong hãy mở extension và bấm Tiếp tục một lần nữa.");
+      await updateActiveTabUrl(tabId, provisioningJob.profileUrl);
+      return;
+    }
+    await reportProvisioningCheckpoint(platformId, "profile_text", "running", "Đã qua cổng đăng nhập; đang xử lý profile NAP/EEAT.", "");
 
     setStatus(`1/4 ${payload.platformName}: đang kiểm tra selector...`);
     const dryRun = await runDryRunInPage(tabId, payload);
@@ -229,13 +250,18 @@ async function runOneClickOrchestrator(): Promise<void> {
       } satisfies SubmitVerifyReport,
       callbackUrl: defaultSubmitCallbackUrl
     });
+    const checkpoint = await reportProvisioningCheckpoint(payload.platformId, "completed", "completed", "Profile đã lưu, evidence đã ghi nhận và URL đã đưa vào Indexing Queue.", evidenceUrl);
     setStatus([
       `HOÀN TẤT ${payload.platformName}`,
       `Text: ${textResult.filledFields.join(", ") || "none"}`,
       `Media: ${mediaResult.filledFields.join(", ") || "none"}`,
       `Evidence: ${evidenceUrl}`,
-      callbackResponse.message
+      callbackResponse.message,
+      checkpoint.nextJob ? `Platform tiếp theo: ${checkpoint.nextJob.platformName}` : "Campaign đã hoàn tất."
     ].join("\n"));
+    if (checkpoint.nextJob) {
+      await updateActiveTabUrl(tabId, checkpoint.nextJob.signupUrl || checkpoint.nextJob.profileUrl);
+    }
   } catch (error) {
     setStatus(`ORCHESTRATOR TẠM DỪNG\n${error instanceof Error ? error.message : "Không thể hoàn tất phiên tự động."}\nDesktop vẫn giữ các bước đã hoàn thành; sửa checkpoint rồi chạy lại.`);
   } finally {
@@ -252,6 +278,79 @@ function detectAuthenticationGate(currentUrl: string, platformId: string): strin
   if (!isAuthPage) return "";
   const label = platformId === "aboutme" ? "About.me" : platformId.charAt(0).toUpperCase() + platformId.slice(1);
   return `${label} đang ở cổng tạo tài khoản/đăng nhập. Hãy hoàn tất đăng ký, CAPTCHA, email/OTP hoặc OAuth nếu website yêu cầu. Khi đã vào được tài khoản, mở lại extension và bấm “Chạy tự động toàn bộ”; Desktop giữ nguyên checkpoint hiện tại.`;
+}
+
+async function runMediumRegistrationGate(tabId: number, email: string): Promise<{ attempted: boolean; message: string }> {
+  if (!email.trim()) {
+    return { attempted: false, message: "Medium cần email nhưng Entity Profile chưa có email. Hãy bổ sung email rồi chạy lại." };
+  }
+  const result = await new Promise<{ attempted: boolean; message: string }>((resolve, reject) => {
+    chrome.scripting.executeScript({
+      target: { tabId },
+      args: [email],
+      func: async (accountEmail: string) => {
+        const visible = (element: Element) => {
+          const node = element as HTMLElement;
+          const style = window.getComputedStyle(node);
+          return style.display !== "none" && style.visibility !== "hidden" && node.getBoundingClientRect().height > 0;
+        };
+        const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button']")).filter(visible);
+        const emailChoice = buttons.find((element) => /(?:sign up|sign in|continue|create).{0,20}email|email.{0,20}(?:sign up|sign in)/i.test((element.innerText || element.textContent || "").trim()));
+        if (emailChoice && !document.querySelector("input[type='email']")) {
+          emailChoice.click();
+          await new Promise((done) => setTimeout(done, 800));
+        }
+        const input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+        if (!input) {
+          return { attempted: false, message: "Medium chưa hiển thị ô email. Hãy chọn “Sign up with email” hoặc phương thức đăng nhập mong muốn rồi bấm Tiếp tục." };
+        }
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, accountEmail);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.focus();
+        const submit = Array.from(document.querySelectorAll<HTMLButtonElement>("button[type='submit'], button")).filter(visible)
+          .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
+        if (submit) {
+          submit.click();
+          return { attempted: true, message: `Đã điền ${accountEmail} và gửi yêu cầu. Hãy mở email Medium để xác minh; sau đó quay lại và bấm Tiếp tục.` };
+        }
+        return { attempted: true, message: `Đã điền ${accountEmail}. Medium chưa có nút gửi phù hợp; kiểm tra ô email rồi bấm Continue/Sign up một lần.` };
+      }
+    }, (results) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message || "Không thao tác được form Medium."));
+      resolve(results?.[0]?.result || { attempted: false, message: "Không đọc được kết quả form Medium." });
+    });
+  });
+  return result;
+}
+
+async function reportProvisioningCheckpoint(platformId: string, stage: string, status: string, message: string, evidenceUrl: string): Promise<ProvisioningCheckpointResult> {
+  const response = await fetch(defaultProvisioningCheckpointUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platformId, stage, status, message, evidenceUrl })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Desktop không lưu được provisioning checkpoint.");
+  return data as ProvisioningCheckpointResult;
+}
+
+async function fetchProvisioningJob(platformId: string): Promise<ProvisioningJobRecord> {
+  const response = await fetch(`http://127.0.0.1:17321/provisioning/job/platform?platformId=${encodeURIComponent(platformId)}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Desktop chưa có provisioning job cho ${platformId}.`);
+  return data as ProvisioningJobRecord;
+}
+
+function updateActiveTabUrl(tabId: number, url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!url) return resolve();
+    chrome.tabs.update(tabId, { url }, () => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message || "Không mở được platform tiếp theo."));
+      resolve();
+    });
+  });
 }
 
 async function fetchPlatformOrchestratorPayload(platformId: string): Promise<AccountSubmitVerifyPayload> {

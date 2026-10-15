@@ -314,6 +314,23 @@ struct ProvisioningJobRecord {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProvisioningCheckpointRequest {
+    platform_id: String,
+    stage: String,
+    status: String,
+    message: String,
+    evidence_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisioningCheckpointResult {
+    job: ProvisioningJobRecord,
+    next_job: Option<ProvisioningJobRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkflowRunRecord {
     id: String,
     account_id: String,
@@ -1313,6 +1330,81 @@ fn save_provisioning_job(app_handle: tauri::AppHandle, job: ProvisioningJobRecor
           job.created_at, job.updated_at],
     ).map_err(|error| error.to_string())?;
     Ok(job)
+}
+
+fn get_active_provisioning_job_record(connection: &Connection, platform_id: &str) -> Result<ProvisioningJobRecord, String> {
+    connection.query_row(
+        "SELECT id, campaign_id, account_id, platform_id, platform_name, position, stage, status,
+                signup_url, profile_url, evidence_url, last_message, attempt_count, created_at, updated_at
+         FROM provisioning_jobs
+         WHERE platform_id = ?1 AND status IN ('running', 'waiting_user', 'queued')
+         ORDER BY CASE status WHEN 'running' THEN 1 WHEN 'waiting_user' THEN 2 ELSE 3 END, created_at DESC LIMIT 1",
+        params![platform_id],
+        |row| Ok(ProvisioningJobRecord {
+            id: row.get(0)?, campaign_id: row.get(1)?, account_id: row.get(2)?, platform_id: row.get(3)?,
+            platform_name: row.get(4)?, position: row.get(5)?, stage: row.get(6)?, status: row.get(7)?,
+            signup_url: row.get(8)?, profile_url: row.get(9)?, evidence_url: row.get(10)?, last_message: row.get(11)?,
+            attempt_count: row.get(12)?, created_at: row.get(13)?, updated_at: row.get(14)?,
+        }),
+    ).map_err(|error| error.to_string())
+}
+
+fn update_provisioning_checkpoint_record(
+    app_handle: &tauri::AppHandle,
+    request: ProvisioningCheckpointRequest,
+) -> Result<ProvisioningCheckpointResult, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let mut job = get_active_provisioning_job_record(&connection, &request.platform_id)?;
+    let timestamp = now_string();
+    job.stage = request.stage;
+    job.status = request.status;
+    job.last_message = request.message;
+    job.attempt_count += 1;
+    job.updated_at = timestamp.clone();
+    if !request.evidence_url.trim().is_empty() {
+        job.evidence_url = request.evidence_url.trim().to_string();
+    }
+    connection.execute(
+        "UPDATE provisioning_jobs SET stage=?2, status=?3, evidence_url=?4, last_message=?5,
+                attempt_count=?6, updated_at=?7 WHERE id=?1",
+        params![job.id, job.stage, job.status, job.evidence_url, job.last_message, job.attempt_count, job.updated_at],
+    ).map_err(|error| error.to_string())?;
+
+    let mut next_job = None;
+    if job.status == "completed" {
+        if let Ok(mut candidate) = connection.query_row(
+            "SELECT id, campaign_id, account_id, platform_id, platform_name, position, stage, status,
+                    signup_url, profile_url, evidence_url, last_message, attempt_count, created_at, updated_at
+             FROM provisioning_jobs WHERE campaign_id=?1 AND position>?2 AND status='queued' ORDER BY position ASC LIMIT 1",
+            params![job.campaign_id, job.position],
+            |row| Ok(ProvisioningJobRecord {
+                id: row.get(0)?, campaign_id: row.get(1)?, account_id: row.get(2)?, platform_id: row.get(3)?,
+                platform_name: row.get(4)?, position: row.get(5)?, stage: row.get(6)?, status: row.get(7)?,
+                signup_url: row.get(8)?, profile_url: row.get(9)?, evidence_url: row.get(10)?, last_message: row.get(11)?,
+                attempt_count: row.get(12)?, created_at: row.get(13)?, updated_at: row.get(14)?,
+            }),
+        ) {
+            candidate.status = "running".to_string();
+            candidate.last_message = "Platform trước đã hoàn tất. Sẵn sàng tạo tài khoản.".to_string();
+            candidate.updated_at = timestamp.clone();
+            connection.execute(
+                "UPDATE provisioning_jobs SET status='running', last_message=?2, updated_at=?3 WHERE id=?1",
+                params![candidate.id, candidate.last_message, candidate.updated_at],
+            ).map_err(|error| error.to_string())?;
+            connection.execute(
+                "UPDATE provisioning_campaigns SET current_position=?2, updated_at=?3 WHERE id=?1",
+                params![job.campaign_id, candidate.position, timestamp],
+            ).map_err(|error| error.to_string())?;
+            next_job = Some(candidate);
+        } else {
+            connection.execute(
+                "UPDATE provisioning_campaigns SET status='completed', current_position=total_jobs, updated_at=?2 WHERE id=?1",
+                params![job.campaign_id, timestamp],
+            ).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(ProvisioningCheckpointResult { job, next_job })
 }
 
 #[tauri::command]
@@ -3302,6 +3394,52 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
             Err(error) => {
                 let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("GET ") && request_path == "/provisioning/job/platform" {
+        let requested_platform_id = request_target.split_once('?')
+            .and_then(|(_, query)| query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "platformId").then_some(value)
+            }));
+        let Some(platform_id) = requested_platform_id else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"platformId is required\"}");
+            return;
+        };
+        let response = match open_database(&app_handle).and_then(|connection| {
+            ensure_schema(&connection)?;
+            get_active_provisioning_job_record(&connection, platform_id)
+        }) {
+            Ok(job) => serde_json::to_string(&job).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 404, &json!({ "error": error }).to_string());
+                return;
+            }
+        };
+        let _ = write_http_response(&mut stream, 200, &response);
+        return;
+    }
+
+    if request.starts_with("POST /provisioning/job/checkpoint ") {
+        let Some(body) = request.split("\r\n\r\n").nth(1) else {
+            let _ = write_http_response(&mut stream, 400, "{\"error\":\"missing body\"}");
+            return;
+        };
+        let response = match serde_json::from_str::<ProvisioningCheckpointRequest>(body) {
+            Ok(payload) => match update_provisioning_checkpoint_record(&app_handle, payload) {
+                Ok(result) => serde_json::to_string(&result).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
+                Err(error) => {
+                    let _ = write_http_response(&mut stream, 400, &json!({ "error": error }).to_string());
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = write_http_response(&mut stream, 400, &json!({ "error": error.to_string() }).to_string());
                 return;
             }
         };
