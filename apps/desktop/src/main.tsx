@@ -1243,7 +1243,8 @@ function App() {
     gates.push("evidence");
 
     for (const gate of gates) {
-      await saveQueueItem(buildQueueItem(account, gate, gate === "evidence" ? "waiting" : "queued", `${gate.replace("_", " ")} gate prepared for ${account.platformName}.`));
+      const queueStatus: AutomationQueueStatus = gate === "evidence" || gate === "submit_verify" ? "waiting" : "queued";
+      await saveQueueItem(buildQueueItem(account, gate, queueStatus, `${gate.replace("_", " ")} gate prepared for ${account.platformName}.`));
     }
   }
 

@@ -15,7 +15,12 @@ declare const chrome: {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const typedMessage = message as Partial<InjectCaptchaMessage | SubmitVerifyMessage>;
+  const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string };
+
+  if (typedMessage.type === "ENTITYMANAGER_MEDIUM_SIGNUP") {
+    void automateMediumEmailSignup(typedMessage.email || "").then(sendResponse);
+    return true;
+  }
 
   if (typedMessage.type === "ENTITYMANAGER_INJECT_CAPTCHA" && typedMessage.payload) {
     const result = injectCaptchaToken(typedMessage.payload as CaptchaInjectionPayload);
@@ -37,6 +42,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
 });
+
+async function automateMediumEmailSignup(email: string): Promise<{ success: boolean; waitingForVerification: boolean; message: string }> {
+  if (!email.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có email để đăng ký Medium." };
+  const visible = (element: Element) => {
+    const node = element as HTMLElement;
+    const style = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+  };
+  let input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+  if (!input) {
+    const choice = Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button']")).filter(visible)
+      .find((element) => /sign up with email|continue with email|email/i.test((element.innerText || element.textContent || "").trim()));
+    choice?.click();
+    if (choice) await new Promise((resolve) => setTimeout(resolve, 900));
+    input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+  }
+  if (!input) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô email Medium sau khi mở phương thức đăng ký email." };
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, email);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  const submit = Array.from(document.querySelectorAll<HTMLButtonElement>("button[type='submit'], button")).filter(visible)
+    .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
+  if (!submit) return { success: true, waitingForVerification: false, message: `Đã điền ${email}, nhưng chưa tìm thấy nút gửi phù hợp.` };
+  submit.click();
+  return { success: true, waitingForVerification: true, message: `Đã gửi yêu cầu đăng ký Medium tới ${email}; đang chờ xác minh email.` };
+}
 
 function injectCaptchaToken(payload: CaptchaInjectionPayload): InjectionResponse {
   const tokenField = payload.tokenField || "g-recaptcha-response";
