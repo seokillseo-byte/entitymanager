@@ -83,6 +83,7 @@ type AutomationModeFilter = "all" | AutomationMode;
 type DifficultyFilter = "all" | PlatformDifficulty;
 interface EvidenceRecord { id: string; title: string; evidenceType: string; url: string; relatedPlatformId: string; notes: string; status: string; createdAt: string; }
 type PlatformViewMode = "compact" | "table";
+type BuilderPanelId = "guide" | "campaign" | "accounts" | "plans" | "activity";
 
 const fallbackMoneySite: MoneySiteForm = {
   domain: demoProjectSeed.moneySite.domain,
@@ -355,6 +356,15 @@ function App() {
   const [platformViewMode, setPlatformViewMode] = useState<PlatformViewMode>("compact");
   const [statusMessage, setStatusMessage] = useState("SQLite local data ready");
   const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null);
+  const [builderPanels, setBuilderPanels] = useState<Record<BuilderPanelId, boolean>>({
+    guide: false,
+    campaign: false,
+    accounts: false,
+    plans: false,
+    activity: false
+  });
+  const [openingPlatformUrl, setOpeningPlatformUrl] = useState(false);
+  const [externalOpenMessage, setExternalOpenMessage] = useState("");
 
   useEffect(() => {
     void loadLocalData();
@@ -947,6 +957,27 @@ function App() {
     const account = accounts.find((item) => item.platformId === platformId);
     const validation = platformValidation.find((item) => item.platformId === platformId);
     setExecutionEvidenceUrl(account?.evidenceUrl || validation?.lastTestedUrl || "");
+  }
+
+  function toggleBuilderPanel(panel: BuilderPanelId) {
+    setBuilderPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  }
+
+  async function openExternalPlatformUrl(url: string, label: string) {
+    if (openingPlatformUrl) return;
+    setOpeningPlatformUrl(true);
+    setExternalOpenMessage(`Đang mở ${label} trong trình duyệt...`);
+    try {
+      await invoke<string>("open_external_url", { url });
+      setExternalOpenMessage(`Đã gửi lệnh mở ${label}. Hãy kiểm tra trình duyệt Chrome/Edge trên thanh taskbar.`);
+      setStatusMessage(`${label}: trang thao tác đã được mở trong trình duyệt mặc định.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setExternalOpenMessage(`Không mở được trang: ${message}`);
+      setStatusMessage(`Không mở được ${label}: ${message}`);
+    } finally {
+      setOpeningPlatformUrl(false);
+    }
   }
 
   async function prepareExtensionPayload(plan: AccountCreationPlanItem) {
@@ -2059,6 +2090,36 @@ function App() {
 
         {activeModule === "Entity Builder" && (
           <section className="single-panel entity-builder-vn">
+            <article className="panel builder-control-center">
+              <div className="builder-control-heading">
+                <div>
+                  <p className="eyebrow">ENTITY BUILDER CONTROL CENTER</p>
+                  <h2>Theo dõi chiến dịch gọn trên một màn hình</h2>
+                  <p className="muted-text">Workspace platform luôn hiển thị. Tick thêm đúng khu vực anh muốn xem; các phần còn lại sẽ được thu gọn để trang không còn quá dài.</p>
+                </div>
+                <div className="builder-active-platform">
+                  <span>Đang theo dõi</span>
+                  <strong>{activeExecutionPlan?.platformName ?? "Chưa chọn platform"}</strong>
+                  <em>{activeExecutionValidation?.certifiedAt ? "CERTIFIED" : activeExecutionValidation ? validationStatusLabels[activeExecutionValidation.status] : "Chưa test"}</em>
+                </div>
+              </div>
+              <div className="builder-panel-toggles">
+                {([
+                  ["guide", "Hướng dẫn bắt đầu"],
+                  ["campaign", "Thiết lập campaign"],
+                  ["accounts", `Tài khoản đã lưu (${accounts.length})`],
+                  ["plans", "Toàn bộ kế hoạch platform"],
+                  ["activity", `Queue & lịch sử (${automationQueue.length})`]
+                ] as Array<[BuilderPanelId, string]>).map(([panel, label]) => (
+                  <label className={builderPanels[panel] ? "builder-panel-toggle active" : "builder-panel-toggle"} key={panel}>
+                    <input type="checkbox" checked={builderPanels[panel]} onChange={() => toggleBuilderPanel(panel)} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </article>
+
+            {builderPanels.guide && (
             <article className="panel builder-guide">
               <div className="panel-header">
                 <div>
@@ -2075,6 +2136,7 @@ function App() {
               </ol>
               <p className="muted-text">Khuyến nghị: hãy thử với website do bạn quản lý hoặc môi trường thử nghiệm. Không nhập mật khẩu hay mã CAPTCHA vào ghi chú.</p>
             </article>
+            )}
 
             <section className="metrics-grid">
               <article className="metric-card good">
@@ -2095,6 +2157,7 @@ function App() {
               </article>
             </section>
 
+            {builderPanels.campaign && (
             <article className="panel campaign-runner-panel">
               <div className="panel-header">
                 <div>
@@ -2154,6 +2217,7 @@ function App() {
                 <span>7. Capture evidence URL</span>
               </div>
             </article>
+            )}
 
             <article className="panel campaign-workspace-panel">
               <div className="panel-header">
@@ -2196,12 +2260,27 @@ function App() {
                         <span className="muted-text">@{activeExecutionPlan.recommendedUsername} · authority {activeExecutionPlan.authorityScore}</span>
                       </div>
                       {activePlatformGuide?.primaryUrl && (
-                        <a className="secondary-action" href={activePlatformGuide.primaryUrl} target="_blank" rel="noreferrer">Mở trang cần thao tác</a>
+                        <button
+                          className="primary-action open-platform-action"
+                          type="button"
+                          disabled={openingPlatformUrl}
+                          onClick={() => void openExternalPlatformUrl(activePlatformGuide.primaryUrl, activeExecutionPlan.platformName)}
+                        >
+                          {openingPlatformUrl ? "Đang mở trình duyệt..." : "Mở trang cần thao tác"}
+                        </button>
                       )}
                     </div>
 
+                    {externalOpenMessage && (
+                      <div className={externalOpenMessage.startsWith("Không") ? "external-open-feedback error" : "external-open-feedback"} role="status">
+                        <strong>{openingPlatformUrl ? "ĐANG XỬ LÝ" : "TRẠNG THÁI MỞ TRANG"}</strong>
+                        <span>{externalOpenMessage}</span>
+                      </div>
+                    )}
+
                     {activePlatformGuide && (
-                      <div className="platform-guided-runner">
+                      <details className="workspace-disclosure platform-guided-runner">
+                        <summary>Hướng dẫn thao tác riêng cho {activeExecutionPlan.platformName}</summary>
                         <div className="guided-runner-header">
                           <div>
                             <p className="eyebrow">PLATFORM-SPECIFIC GUIDED RUNNER</p>
@@ -2212,7 +2291,7 @@ function App() {
                         <div className="guided-url-list">
                           <span>URL nên mở:</span>
                           {activePlatformGuide.secondaryUrls.map((url) => (
-                            <a href={url} key={url} target="_blank" rel="noreferrer">{url}</a>
+                            <button className="guided-url-button" type="button" key={url} onClick={() => void openExternalPlatformUrl(url, activeExecutionPlan.platformName)}>{url}</button>
                           ))}
                         </div>
                         <ol className="guided-step-list">
@@ -2227,7 +2306,7 @@ function App() {
                             <span key={warning}>{warning}</span>
                           ))}
                         </div>
-                      </div>
+                      </details>
                     )}
 
                     <div className={activeExecutionValidation?.certifiedAt ? "platform-certification-card certified" : "platform-certification-card"}>
@@ -2257,6 +2336,8 @@ function App() {
                       </button>
                     </div>
 
+                    <details className="workspace-disclosure" open>
+                      <summary>Việc cần làm ngay — checklist của {activeExecutionPlan.platformName}</summary>
                     <div className="workspace-task-list">
                       {[
                         ["Account record", Boolean(activeExecutionAccount), "Tạo/lưu account record trước khi thao tác."],
@@ -2273,7 +2354,10 @@ function App() {
                         </div>
                       ))}
                     </div>
+                    </details>
 
+                    <details className="workspace-disclosure">
+                      <summary>Công cụ extension và trạng thái kỹ thuật</summary>
                     <div className="workspace-endpoint-box">
                       <strong>Payload cho extension</strong>
                       <code>Preview: http://127.0.0.1:17321/account/submit-verify/preview?platformId={activeExecutionPlan.platformId}</code>
@@ -2288,6 +2372,7 @@ function App() {
                       <small>{activeExecutionValidation?.lastTestedUrl || "Chưa có URL test gần nhất"}</small>
                       {activeExecutionValidation?.notes && <p>{activeExecutionValidation.notes}</p>}
                     </div>
+                    </details>
 
                     <div className="workspace-evidence-actions">
                       <label>
@@ -2314,6 +2399,7 @@ function App() {
               )}
             </article>
 
+            {builderPanels.accounts && (
             <article className="panel saved-account-panel">
               <div className="panel-header">
                 <div>
@@ -2346,7 +2432,9 @@ function App() {
                 </div>
               )}
             </article>
+            )}
 
+            {builderPanels.plans && (
             <article className="panel">
               <div className="panel-header">
                 <div>
@@ -2423,7 +2511,9 @@ function App() {
                 })}
               </div>
             </article>
+            )}
 
+            {builderPanels.activity && (
             <section className="entity-builder-grid">
               <article className="panel">
                 <div className="panel-header">
@@ -2508,6 +2598,7 @@ function App() {
                 )}
               </article>
             </section>
+            )}
           </section>
         )}
 
