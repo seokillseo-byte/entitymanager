@@ -504,6 +504,8 @@ function App() {
         dryRunCheckedAt: "",
         textSavedAt: "",
         mediaUploadedAt: "",
+        evidenceSavedAt: "",
+        certifiedAt: "",
         lastTestedUrl: "",
         notes: "",
         updatedAt: ""
@@ -617,6 +619,14 @@ function App() {
   const activePlatformGuide = activeExecutionPlan
     ? guidedRunnerForPlatform(activeExecutionPlan.platformId, activeExecutionPlatform?.homepageUrl ?? "")
     : null;
+  const activeCertificationGates = activeExecutionValidation ? [
+    { label: "Dry-run đạt", passed: Boolean(activeExecutionValidation.dryRunCheckedAt) },
+    { label: "Text/NAP/EEAT đã lưu", passed: Boolean(activeExecutionValidation.textSavedAt) },
+    { label: "Avatar/banner đã upload", passed: Boolean(activeExecutionValidation.mediaUploadedAt && activeExecutionValidation.status === "media_uploaded") },
+    { label: "Evidence URL hợp lệ", passed: Boolean(activeExecutionAccount?.status === "verified" && /^https?:\/\//.test(activeExecutionAccount.evidenceUrl)) },
+    { label: "Platform certified", passed: Boolean(activeExecutionValidation.certifiedAt) }
+  ] : [];
+  const activeCertificationReady = activeCertificationGates.slice(0, 4).every((gate) => gate.passed);
 
   async function loadLocalData() {
     try {
@@ -990,6 +1000,18 @@ function App() {
     }
 
     setStatusMessage(`${activeExecutionPlan.platformName}: đã đánh dấu hoàn tất và lưu evidence cho entity campaign.`);
+  }
+
+  async function certifyActivePlatform() {
+    if (!activeExecutionPlan) return;
+    try {
+      const certified = await invoke<PlatformValidationRecord>("certify_platform", { platformId: activeExecutionPlan.platformId });
+      setPlatformValidation((current) => upsertByPlatformId(current, certified));
+      setExecutionEvidenceUrl(certified.lastTestedUrl);
+      setStatusMessage(`${certified.platformName}: CERTIFIED — đã vượt đủ dry-run, text/NAP/EEAT, media, verified account và evidence.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function updateAccount(id: string, patch: Partial<AccountRecord>) {
@@ -2160,7 +2182,7 @@ function App() {
                         >
                           <strong>{plan.platformName}</strong>
                           <span>{account ? ({ planned: "Đã lên kế hoạch", created: "Đã tạo", needs_manual_review: "Cần kiểm tra", failed: "Thất bại", verified: "Đã xác minh" } as Record<AccountStatus, string>)[account.status] : "Chưa có record"}</span>
-                          <em>{validation ? validationStatusLabels[validation.status] : "Chưa test"}</em>
+                          <em>{validation?.certifiedAt ? "CERTIFIED" : validation ? validationStatusLabels[validation.status] : "Chưa test"}</em>
                         </button>
                       );
                     })}
@@ -2207,6 +2229,33 @@ function App() {
                         </div>
                       </div>
                     )}
+
+                    <div className={activeExecutionValidation?.certifiedAt ? "platform-certification-card certified" : "platform-certification-card"}>
+                      <div className="certification-card-header">
+                        <div>
+                          <p className="eyebrow">FIRST END-TO-END PLATFORM CERTIFICATION</p>
+                          <strong>{activeExecutionValidation?.certifiedAt ? "CERTIFIED" : activeCertificationReady ? "Sẵn sàng chứng nhận" : "Đang kiểm thử thực tế"}</strong>
+                        </div>
+                        <span>{activeExecutionValidation?.certifiedAt ? new Date(activeExecutionValidation.certifiedAt).toLocaleString("vi-VN") : "Thứ tự: Medium → About.me → Tumblr"}</span>
+                      </div>
+                      <div className="certification-gate-list">
+                        {activeCertificationGates.map((gate, index) => (
+                          <div className={gate.passed ? "certification-gate passed" : "certification-gate"} key={gate.label}>
+                            <b>{gate.passed ? "✓" : index + 1}</b>
+                            <span>{gate.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="muted-text">Desktop chỉ cho phép chứng nhận khi SQLite xác nhận đủ các bước và account đã verified có evidence URL bắt đầu bằng http:// hoặc https://.</p>
+                      <button
+                        className="primary-action"
+                        type="button"
+                        disabled={!activeCertificationReady || Boolean(activeExecutionValidation?.certifiedAt)}
+                        onClick={() => void certifyActivePlatform()}
+                      >
+                        {activeExecutionValidation?.certifiedAt ? "Platform đã certified" : "Chứng nhận platform"}
+                      </button>
+                    </div>
 
                     <div className="workspace-task-list">
                       {[
