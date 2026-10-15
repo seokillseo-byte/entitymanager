@@ -365,6 +365,8 @@ function App() {
   });
   const [openingPlatformUrl, setOpeningPlatformUrl] = useState(false);
   const [externalOpenMessage, setExternalOpenMessage] = useState("");
+  const [orchestratorStarting, setOrchestratorStarting] = useState(false);
+  const [indexingQueueCount, setIndexingQueueCount] = useState(0);
 
   useEffect(() => {
     void loadLocalData();
@@ -640,7 +642,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -652,7 +654,8 @@ function App() {
         invoke<DryRunHistoryRecord[]>("get_dry_run_history"),
         invoke<DryRunHistoryAudit>("get_dry_run_history_audit"),
         invoke<EvidenceRecord[]>("get_evidence_records"),
-        invoke<PlatformValidationRecord[]>("get_platform_validation_records")
+        invoke<PlatformValidationRecord[]>("get_platform_validation_records"),
+        invoke<number>("get_indexing_queue_count")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -667,6 +670,7 @@ function App() {
       setDryRunSourceAudit(storedDryRunAudit);
       setEvidenceRecords(storedEvidence);
       setPlatformValidation(storedValidation);
+      setIndexingQueueCount(storedIndexingQueueCount);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -748,8 +752,12 @@ function App() {
 
   async function refreshPlatformValidation(showStatus = true) {
     try {
-      const records = await invoke<PlatformValidationRecord[]>("get_platform_validation_records");
+      const [records, queueCount] = await Promise.all([
+        invoke<PlatformValidationRecord[]>("get_platform_validation_records"),
+        invoke<number>("get_indexing_queue_count")
+      ]);
       setPlatformValidation(records);
+      setIndexingQueueCount(queueCount);
       if (showStatus) setStatusMessage("Platform validation checklist refreshed from SQLite");
     } catch {
       if (showStatus) setStatusMessage("Could not refresh platform validation checklist.");
@@ -910,7 +918,7 @@ function App() {
     setEntityProfile((current) => ({ ...current, ...patch }));
   }
 
-  async function saveAccountFromPlan(plan: AccountCreationPlanItem) {
+  async function saveAccountFromPlan(plan: AccountCreationPlanItem): Promise<AccountRecord> {
     const existing = accounts.find((account) => account.platformId === plan.platformId);
     const timestamp = new Date().toISOString();
     const account: AccountRecord = {
@@ -929,6 +937,7 @@ function App() {
 
     await persistAccount(account, `${plan.platformName} account saved`, "save_account", "Account record created from generated plan");
     await enqueueAutomationGates(account, plan);
+    return account;
   }
 
   async function startEntityCampaign() {
@@ -977,6 +986,34 @@ function App() {
       setStatusMessage(`Không mở được ${label}: ${message}`);
     } finally {
       setOpeningPlatformUrl(false);
+    }
+  }
+
+  async function startOneClickOrchestrator() {
+    if (!activeExecutionPlan || !activePlatformGuide?.primaryUrl || orchestratorStarting) return;
+    setOrchestratorStarting(true);
+    try {
+      const account = await saveAccountFromPlan(activeExecutionPlan);
+      const queueItem = buildQueueItem(
+        account,
+        "submit_verify",
+        "waiting",
+        JSON.stringify({
+          action: "one_click_profile_orchestration",
+          platformId: activeExecutionPlan.platformId,
+          requiresCaptchaToken: false,
+          executionSteps: ["dry_run", "fill_text", "upload_media", "submit_verify"],
+          evidenceCapture: "current_url",
+          message: `One-click run prepared for ${activeExecutionPlan.platformName}.`
+        })
+      );
+      await saveQueueItem(queueItem);
+      await openExternalPlatformUrl(activePlatformGuide.primaryUrl, activeExecutionPlan.platformName);
+      setStatusMessage(`${activeExecutionPlan.platformName}: phiên chạy tự động đã sẵn sàng. Khi trang mở, bấm biểu tượng EntityManager Bridge rồi chọn “Chạy tự động toàn bộ”.`);
+    } catch (error) {
+      setStatusMessage(`Không thể khởi tạo phiên tự động: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOrchestratorStarting(false);
     }
   }
 
@@ -2277,6 +2314,18 @@ function App() {
                         <span>{externalOpenMessage}</span>
                       </div>
                     )}
+
+                    <div className="one-click-orchestrator-card">
+                      <div>
+                        <p className="eyebrow">ONE-CLICK AUTOMATION ORCHESTRATOR</p>
+                        <strong>Tự chạy dry-run → lưu NAP/EEAT → upload media → xác minh evidence</strong>
+                        <span>Desktop chuẩn bị đúng queue và mở website. Do giới hạn bảo mật của Chrome, anh mở extension trên tab đó và bấm “Chạy tự động toàn bộ” một lần để cấp quyền thao tác.</span>
+                        <span><b>{indexingQueueCount}</b> URL đang chờ trong Indexing Queue. Evidence công khai mới sẽ được tự đưa vào queue sau khi xác minh.</span>
+                      </div>
+                      <button className="primary-action" type="button" disabled={orchestratorStarting} onClick={() => void startOneClickOrchestrator()}>
+                        {orchestratorStarting ? "Đang chuẩn bị phiên chạy..." : `Chạy tự động ${activeExecutionPlan.platformName}`}
+                      </button>
+                    </div>
 
                     {activePlatformGuide && (
                       <details className="workspace-disclosure platform-guided-runner">
