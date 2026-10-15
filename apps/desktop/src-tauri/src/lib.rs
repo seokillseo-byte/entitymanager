@@ -282,6 +282,38 @@ struct AccountRecord {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProvisioningCampaignRecord {
+    id: String,
+    name: String,
+    status: String,
+    total_jobs: i64,
+    current_position: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisioningJobRecord {
+    id: String,
+    campaign_id: String,
+    account_id: String,
+    platform_id: String,
+    platform_name: String,
+    position: i64,
+    stage: String,
+    status: String,
+    signup_url: String,
+    profile_url: String,
+    evidence_url: String,
+    last_message: String,
+    attempt_count: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkflowRunRecord {
     id: String,
     account_id: String,
@@ -1219,6 +1251,71 @@ fn save_account(app_handle: tauri::AppHandle, account: AccountRecord) -> Result<
 }
 
 #[tauri::command]
+fn get_provisioning_campaigns(app_handle: tauri::AppHandle) -> Result<Vec<ProvisioningCampaignRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT id, name, status, total_jobs, current_position, created_at, updated_at
+         FROM provisioning_campaigns ORDER BY updated_at DESC"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok(ProvisioningCampaignRecord {
+        id: row.get(0)?, name: row.get(1)?, status: row.get(2)?, total_jobs: row.get(3)?,
+        current_position: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
+    })).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_provisioning_campaign(app_handle: tauri::AppHandle, campaign: ProvisioningCampaignRecord) -> Result<ProvisioningCampaignRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    connection.execute(
+        "INSERT INTO provisioning_campaigns (id, name, status, total_jobs, current_position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(id) DO UPDATE SET name=excluded.name, status=excluded.status,
+         total_jobs=excluded.total_jobs, current_position=excluded.current_position, updated_at=excluded.updated_at",
+        params![campaign.id, campaign.name, campaign.status, campaign.total_jobs, campaign.current_position, campaign.created_at, campaign.updated_at],
+    ).map_err(|error| error.to_string())?;
+    Ok(campaign)
+}
+
+#[tauri::command]
+fn get_provisioning_jobs(app_handle: tauri::AppHandle) -> Result<Vec<ProvisioningJobRecord>, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT id, campaign_id, account_id, platform_id, platform_name, position, stage, status,
+                signup_url, profile_url, evidence_url, last_message, attempt_count, created_at, updated_at
+         FROM provisioning_jobs ORDER BY campaign_id DESC, position ASC"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok(ProvisioningJobRecord {
+        id: row.get(0)?, campaign_id: row.get(1)?, account_id: row.get(2)?, platform_id: row.get(3)?,
+        platform_name: row.get(4)?, position: row.get(5)?, stage: row.get(6)?, status: row.get(7)?,
+        signup_url: row.get(8)?, profile_url: row.get(9)?, evidence_url: row.get(10)?, last_message: row.get(11)?,
+        attempt_count: row.get(12)?, created_at: row.get(13)?, updated_at: row.get(14)?,
+    })).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_provisioning_job(app_handle: tauri::AppHandle, job: ProvisioningJobRecord) -> Result<ProvisioningJobRecord, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    connection.execute(
+        "INSERT INTO provisioning_jobs (id, campaign_id, account_id, platform_id, platform_name, position, stage, status,
+          signup_url, profile_url, evidence_url, last_message, attempt_count, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ON CONFLICT(id) DO UPDATE SET stage=excluded.stage, status=excluded.status, signup_url=excluded.signup_url,
+          profile_url=excluded.profile_url, evidence_url=excluded.evidence_url, last_message=excluded.last_message,
+          attempt_count=excluded.attempt_count, updated_at=excluded.updated_at",
+        params![job.id, job.campaign_id, job.account_id, job.platform_id, job.platform_name, job.position, job.stage,
+          job.status, job.signup_url, job.profile_url, job.evidence_url, job.last_message, job.attempt_count,
+          job.created_at, job.updated_at],
+    ).map_err(|error| error.to_string())?;
+    Ok(job)
+}
+
+#[tauri::command]
 fn get_workflow_runs(app_handle: tauri::AppHandle) -> Result<Vec<WorkflowRunRecord>, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -2141,6 +2238,36 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS provisioning_campaigns (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                total_jobs INTEGER NOT NULL DEFAULT 0,
+                current_position INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS provisioning_jobs (
+                id TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                platform_id TEXT NOT NULL,
+                platform_name TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                stage TEXT NOT NULL DEFAULT 'signup',
+                status TEXT NOT NULL DEFAULT 'queued',
+                signup_url TEXT NOT NULL DEFAULT '',
+                profile_url TEXT NOT NULL DEFAULT '',
+                evidence_url TEXT NOT NULL DEFAULT '',
+                last_message TEXT NOT NULL DEFAULT '',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_campaign_position
+                ON provisioning_jobs(campaign_id, position);
 
             CREATE TABLE IF NOT EXISTS workflow_runs (
                 id TEXT PRIMARY KEY,
@@ -4027,6 +4154,10 @@ pub fn run() {
             save_entity_profile,
             get_accounts,
             save_account,
+            get_provisioning_campaigns,
+            save_provisioning_campaign,
+            get_provisioning_jobs,
+            save_provisioning_job,
             get_workflow_runs,
             save_workflow_run,
             get_automation_queue,

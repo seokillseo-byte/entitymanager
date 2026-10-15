@@ -49,6 +49,9 @@ export type IntegrationType = "ai" | "captcha" | "email" | "proxy" | "indexing";
 export type ProviderKeyStatus = "missing" | "stored" | "masked" | "secure";
 export type IntegrationCapability = "generate_text" | "solve_captcha" | "send_email" | "receive_email" | "proxy" | "index_url";
 export type PlatformValidationStatus = "not_tested" | "dry_run_ok" | "text_saved" | "media_uploaded" | "needs_recipe_fix";
+export type ProvisioningCampaignStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
+export type ProvisioningJobStatus = "queued" | "running" | "waiting_user" | "completed" | "failed" | "skipped";
+export type ProvisioningStage = "signup" | "captcha" | "email_verification" | "login" | "profile_text" | "profile_media" | "evidence" | "indexing" | "completed";
 
 export interface MoneySiteProfile {
   id: string;
@@ -134,6 +137,34 @@ export interface AccountRecord {
   automationMode: AutomationMode;
   evidenceUrl: string;
   notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProvisioningCampaignRecord {
+  id: string;
+  name: string;
+  status: ProvisioningCampaignStatus;
+  totalJobs: number;
+  currentPosition: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProvisioningJobRecord {
+  id: string;
+  campaignId: string;
+  accountId: string;
+  platformId: string;
+  platformName: string;
+  position: number;
+  stage: ProvisioningStage;
+  status: ProvisioningJobStatus;
+  signupUrl: string;
+  profileUrl: string;
+  evidenceUrl: string;
+  lastMessage: string;
+  attemptCount: number;
   createdAt: string;
   updatedAt: string;
 }

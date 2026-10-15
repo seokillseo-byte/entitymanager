@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitB
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
@@ -324,6 +324,16 @@ function guidedRunnerForPlatform(platformId: string, fallbackUrl = ""): Platform
   };
 }
 
+function signupUrlForPlatform(platformId: string, fallbackUrl = "") {
+  const urls: Record<string, string> = {
+    medium: "https://medium.com/m/signin?operation=register",
+    aboutme: "https://about.me/signup",
+    tumblr: "https://www.tumblr.com/register",
+    github: "https://github.com/signup"
+  };
+  return urls[platformId] ?? fallbackUrl;
+}
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
@@ -367,6 +377,9 @@ function App() {
   const [externalOpenMessage, setExternalOpenMessage] = useState("");
   const [orchestratorStarting, setOrchestratorStarting] = useState(false);
   const [indexingQueueCount, setIndexingQueueCount] = useState(0);
+  const [provisioningCampaigns, setProvisioningCampaigns] = useState<ProvisioningCampaignRecord[]>([]);
+  const [provisioningJobs, setProvisioningJobs] = useState<ProvisioningJobRecord[]>([]);
+  const [campaignLaunching, setCampaignLaunching] = useState(false);
 
   useEffect(() => {
     void loadLocalData();
@@ -642,7 +655,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -655,7 +668,9 @@ function App() {
         invoke<DryRunHistoryAudit>("get_dry_run_history_audit"),
         invoke<EvidenceRecord[]>("get_evidence_records"),
         invoke<PlatformValidationRecord[]>("get_platform_validation_records"),
-        invoke<number>("get_indexing_queue_count")
+        invoke<number>("get_indexing_queue_count"),
+        invoke<ProvisioningCampaignRecord[]>("get_provisioning_campaigns"),
+        invoke<ProvisioningJobRecord[]>("get_provisioning_jobs")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -671,6 +686,8 @@ function App() {
       setEvidenceRecords(storedEvidence);
       setPlatformValidation(storedValidation);
       setIndexingQueueCount(storedIndexingQueueCount);
+      setProvisioningCampaigns(storedProvisioningCampaigns);
+      setProvisioningJobs(storedProvisioningJobs);
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -951,6 +968,61 @@ function App() {
     }
 
     setStatusMessage(`Entity campaign prepared for ${campaignPlans.length} platform(s). Open each platform, run dry-run, fill profile, upload media, then capture evidence URL.`);
+  }
+
+  async function startFullProvisioningCampaign() {
+    if (!campaignPlans.length || campaignLaunching) {
+      if (!campaignPlans.length) setStatusMessage("Hãy chọn ít nhất một platform trước khi chạy chiến dịch.");
+      return;
+    }
+    setCampaignLaunching(true);
+    try {
+      const timestamp = new Date().toISOString();
+      const campaignId = `provisioning-${Date.now()}`;
+      const campaign: ProvisioningCampaignRecord = {
+        id: campaignId,
+        name: `${entityProfile.brandName || moneySite.domain || "Entity"} · ${new Date().toLocaleString("vi-VN")}`,
+        status: "running",
+        totalJobs: campaignPlans.length,
+        currentPosition: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const savedCampaign = await invoke<ProvisioningCampaignRecord>("save_provisioning_campaign", { campaign });
+      const jobs: ProvisioningJobRecord[] = [];
+      for (const [position, plan] of campaignPlans.entries()) {
+        const account = await saveAccountFromPlan(plan);
+        const platform = platforms.find((item) => item.id === plan.platformId);
+        const guide = guidedRunnerForPlatform(plan.platformId, platform?.homepageUrl ?? "");
+        const job: ProvisioningJobRecord = {
+          id: `${campaignId}-${plan.platformId}`,
+          campaignId,
+          accountId: account.id,
+          platformId: plan.platformId,
+          platformName: plan.platformName,
+          position,
+          stage: "signup",
+          status: position === 0 ? "running" : "queued",
+          signupUrl: signupUrlForPlatform(plan.platformId, platform?.homepageUrl ?? ""),
+          profileUrl: guide.primaryUrl,
+          evidenceUrl: "",
+          lastMessage: position === 0 ? "Đang mở trang đăng ký. Extension sẽ tiếp tục sau các cổng xác minh." : "Đang chờ platform trước hoàn tất.",
+          attemptCount: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        jobs.push(await invoke<ProvisioningJobRecord>("save_provisioning_job", { job }));
+      }
+      setProvisioningCampaigns((current) => [savedCampaign, ...current]);
+      setProvisioningJobs((current) => [...jobs, ...current.filter((item) => item.campaignId !== campaignId)]);
+      const first = jobs[0];
+      await openExternalPlatformUrl(first.signupUrl || first.profileUrl, `${first.platformName} — tạo tài khoản`);
+      setStatusMessage(`Đã bắt đầu chiến dịch ${campaignPlans.length} platform. ${first.platformName} đang ở bước tạo tài khoản; đăng nhập/xác minh nếu website yêu cầu rồi bấm “Chạy tự động toàn bộ”.`);
+    } catch (error) {
+      setStatusMessage(`Không thể khởi tạo chiến dịch: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCampaignLaunching(false);
+    }
   }
 
   function toggleCampaignPlatform(platformId: string) {
@@ -2167,9 +2239,9 @@ function App() {
               </div>
               <ol className="builder-guide-steps">
                 <li><strong>Kiểm tra hồ sơ thương hiệu:</strong> mở mục <b>Entity Profile</b> ở thanh bên và điền tên thương hiệu, tên người đại diện/chuyên gia cùng thông tin chứng minh uy tín; sau đó lưu hồ sơ.</li>
-                <li><strong>Chọn một nền tảng trong kế hoạch bên dưới:</strong> bắt đầu bằng nền tảng bạn sở hữu hoặc được phép sử dụng. Tên tài khoản hiển thị chỉ là gợi ý, chưa có tài khoản nào được tạo trên website.</li>
-                <li><strong>Nhấn “Lưu bản ghi tài khoản”:</strong> thao tác này chỉ lưu một bản ghi theo dõi vào SQLite trên máy, không đăng ký tài khoản thật và không gửi biểu mẫu lên website.</li>
-                <li><strong>Kiểm tra bản ghi đã lưu:</strong> xem khu vực “Tài khoản đã lưu” bên dưới. Khi có tài khoản thật, bạn có thể bổ sung URL bằng chứng và cập nhật trạng thái tại thẻ nền tảng tương ứng.</li>
+                <li><strong>Chọn các nền tảng trong campaign:</strong> tick đúng bộ platform muốn tạo cho Money Site và sắp xếp theo mức ưu tiên.</li>
+                <li><strong>Nhấn “Tạo toàn bộ Entity”:</strong> Desktop tạo job tuần tự, mở platform đầu tiên và lưu checkpoint vào SQLite.</li>
+                <li><strong>Xử lý cổng bảo mật nếu xuất hiện:</strong> hoàn tất CAPTCHA/email/OTP/OAuth, sau đó mở extension và bấm Chạy tự động toàn bộ để tiếp tục profile, media, evidence và indexing.</li>
               </ol>
               <p className="muted-text">Khuyến nghị: hãy thử với website do bạn quản lý hoặc môi trường thử nghiệm. Không nhập mật khẩu hay mã CAPTCHA vào ghi chú.</p>
             </article>
@@ -2204,6 +2276,35 @@ function App() {
                 </div>
                 <span className="badge">{campaignPlans.length} platform selected</span>
               </div>
+
+              <div className="provisioning-launch-card">
+                <div>
+                  <p className="eyebrow">FULL ACCOUNT PROVISIONING</p>
+                  <strong>Một nút: tạo tài khoản → profile NAP/EEAT → media → evidence → indexing</strong>
+                  <span>Mỗi platform được lưu thành một job có checkpoint. CAPTCHA, email/OTP hoặc OAuth sẽ tạm dừng đúng bước và tiếp tục sau khi được xác minh.</span>
+                </div>
+                <button className="primary-action" type="button" disabled={campaignLaunching} onClick={() => void startFullProvisioningCampaign()}>
+                  {campaignLaunching ? "Đang tạo hàng đợi..." : `Tạo toàn bộ Entity (${campaignPlans.length})`}
+                </button>
+              </div>
+
+              {provisioningCampaigns[0] && (
+                <div className="provisioning-progress">
+                  <div className="provisioning-progress-head">
+                    <strong>{provisioningCampaigns[0].name}</strong>
+                    <span>{provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id && job.status === "completed").length}/{provisioningCampaigns[0].totalJobs} hoàn thành</span>
+                  </div>
+                  <div className="provisioning-job-list">
+                    {provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id).map((job) => (
+                      <div className={`provisioning-job ${job.status}`} key={job.id}>
+                        <b>{job.position + 1}</b>
+                        <div><strong>{job.platformName}</strong><span>{job.stage.replace(/_/g, " ")} · {job.lastMessage}</span></div>
+                        <em>{job.status}</em>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="campaign-runner-grid">
                 <div>
