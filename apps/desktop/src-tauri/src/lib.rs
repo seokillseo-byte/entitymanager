@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
@@ -2399,13 +2399,15 @@ fn get_proxy_records(app_handle: tauri::AppHandle) -> Result<Vec<ProxyRecord>, S
 
 fn gmail_oauth_status_record(connection: &Connection) -> Result<GmailOAuthStatus, String> {
     connection.query_row(
-        "SELECT client_id,account_email,status,last_message,last_checked_at,current_auth_url FROM gmail_oauth_state WHERE id=1",
+        "SELECT client_id,account_email,status,last_message,last_checked_at,current_auth_url,client_secret_protected,refresh_token_protected FROM gmail_oauth_state WHERE id=1",
         [],
         |row| {
             let client_id: String = row.get(0)?;
             let stored_status: String = row.get(2)?;
-            let configured = !client_id.trim().is_empty() && has_secret(GMAIL_CLIENT_SECRET_KEY);
-            let connected = stored_status == "connected" && has_secret(GMAIL_REFRESH_TOKEN_KEY);
+            let protected_secret: String = row.get(6)?;
+            let protected_refresh_token: String = row.get(7)?;
+            let configured = !client_id.trim().is_empty() && (has_secret(GMAIL_CLIENT_SECRET_KEY) || !protected_secret.trim().is_empty());
+            let connected = stored_status == "connected" && (has_secret(GMAIL_REFRESH_TOKEN_KEY) || !protected_refresh_token.trim().is_empty());
             let status = if connected { "connected" } else if configured { stored_status.as_str() } else { "not_configured" }.to_string();
             Ok(GmailOAuthStatus {
                 configured,
@@ -2434,17 +2436,22 @@ fn save_gmail_oauth_config(app_handle: tauri::AppHandle, config: GmailOAuthConfi
     if client_id.is_empty() || !client_id.ends_with(".apps.googleusercontent.com") {
         return Err("Google OAuth Client ID không hợp lệ; giá trị phải kết thúc bằng .apps.googleusercontent.com".to_string());
     }
-    if !config.client_secret.trim().is_empty() {
-        save_secret(GMAIL_CLIENT_SECRET_KEY, &config.client_secret)?;
-    } else if !has_secret(GMAIL_CLIENT_SECRET_KEY) {
-        return Err("Hãy nhập Client Secret của OAuth Desktop app trong lần cấu hình đầu tiên.".to_string());
-    }
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
+    let existing_protected: String = connection.query_row("SELECT client_secret_protected FROM gmail_oauth_state WHERE id=1", [], |row| row.get(0)).unwrap_or_default();
+    let protected_secret = if !config.client_secret.trim().is_empty() {
+        let encrypted = protect_for_current_windows_user(config.client_secret.trim())?;
+        let _ = save_secret(GMAIL_CLIENT_SECRET_KEY, &config.client_secret);
+        encrypted
+    } else if has_secret(GMAIL_CLIENT_SECRET_KEY) || !existing_protected.trim().is_empty() {
+        existing_protected
+    } else {
+        return Err("Hãy nhập Client Secret của OAuth Desktop app trong lần cấu hình đầu tiên.".to_string());
+    };
     let timestamp = now_string();
     connection.execute(
-        "UPDATE gmail_oauth_state SET client_id=?1,status='configured',last_message='Đã lưu cấu hình OAuth; chưa kết nối Gmail.',updated_at=?2 WHERE id=1",
-        params![client_id, timestamp],
+        "UPDATE gmail_oauth_state SET client_id=?1,client_secret_protected=?2,status='configured',last_message='Đã lưu cấu hình OAuth; chưa kết nối Gmail.',updated_at=?3 WHERE id=1",
+        params![client_id, protected_secret, timestamp],
     ).map_err(|error| error.to_string())?;
     gmail_oauth_status_record(&connection)
 }
@@ -2531,17 +2538,17 @@ fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, S
             }
         }
     });
-    if let Err(error) = open_external_url(auth_url.to_string()) {
+    if let Err(error) = open_oauth_in_managed_browser(&app_handle, auth_url.as_str()) {
         connection.execute(
             "UPDATE gmail_oauth_state SET last_message=?1,updated_at=?2 WHERE id=1",
-            params![format!("Windows không tự mở được trang Google ({error}). Hãy bấm Mở trang Google OAuth trong EntityManager."), now_string()],
+            params![format!("Managed Chromium không tự mở được trang Google ({error}). Hãy bấm Mở trang Google OAuth trong EntityManager."), now_string()],
         ).map_err(|db_error| db_error.to_string())?;
     }
     gmail_oauth_status_record(&connection)
 }
 
 fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &str, verifier: &str, redirect_uri: &str) -> Result<String, String> {
-    let client_secret = read_secret(GMAIL_CLIENT_SECRET_KEY)?;
+    let client_secret = read_gmail_client_secret(app_handle)?;
     let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
         ("client_id", client_id), ("client_secret", client_secret.as_str()), ("code", code),
         ("code_verifier", verifier), ("grant_type", "authorization_code"), ("redirect_uri", redirect_uri),
@@ -2550,17 +2557,36 @@ fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &s
         .json::<serde_json::Value>().map_err(|error| error.to_string())?;
     let refresh_token = response["refresh_token"].as_str().ok_or_else(|| "Google không cấp refresh token. Hãy thu hồi quyền cũ rồi kết nối lại với prompt consent.".to_string())?;
     let access_token = response["access_token"].as_str().ok_or_else(|| "Google không trả về access token.".to_string())?;
-    save_secret(GMAIL_REFRESH_TOKEN_KEY, refresh_token)?;
+    let protected_refresh_token = protect_for_current_windows_user(refresh_token)?;
+    let _ = save_secret(GMAIL_REFRESH_TOKEN_KEY, refresh_token);
     let email = reqwest::blocking::Client::new().get("https://openidconnect.googleapis.com/v1/userinfo")
         .bearer_auth(access_token).send().map_err(|error| error.to_string())?
         .error_for_status().map_err(|error| error.to_string())?
         .json::<serde_json::Value>().map_err(|error| error.to_string())?["email"].as_str().unwrap_or("").to_string();
     let connection = open_database(app_handle)?;
     connection.execute(
-        "UPDATE gmail_oauth_state SET account_email=?1,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?2,current_auth_url='',updated_at=?2 WHERE id=1",
-        params![email, now_string()],
+        "UPDATE gmail_oauth_state SET account_email=?1,refresh_token_protected=?2,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?3,current_auth_url='',updated_at=?3 WHERE id=1",
+        params![email, protected_refresh_token, now_string()],
     ).map_err(|error| error.to_string())?;
     Ok(email)
+}
+
+fn open_oauth_in_managed_browser(app_handle: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    let executable = browser_executable(app_handle)?;
+    let profile = app_handle.path().app_data_dir().map_err(|error| error.to_string())?.join("browser-profiles").join("gmail-oauth");
+    fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
+    let extension = bundled_extension_directory(app_handle)?;
+    Command::new(executable)
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
+        .arg(format!("--disable-extensions-except={}", extension.display()))
+        .arg(format!("--load-extension={}", extension.display()))
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Không mở được OAuth trong Managed Chromium: {error}"))
 }
 
 fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -2568,8 +2594,8 @@ fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
     ensure_schema(&connection)?;
     let status = gmail_oauth_status_record(&connection)?;
     if !status.connected { return Err("Gmail OAuth chưa kết nối.".to_string()); }
-    let refresh_token = read_secret(GMAIL_REFRESH_TOKEN_KEY)?;
-    let client_secret = read_secret(GMAIL_CLIENT_SECRET_KEY)?;
+    let refresh_token = read_gmail_refresh_token(app_handle)?;
+    let client_secret = read_gmail_client_secret(app_handle)?;
     let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
         ("client_id", status.client_id.as_str()), ("client_secret", client_secret.as_str()),
         ("refresh_token", refresh_token.as_str()), ("grant_type", "refresh_token"),
@@ -3083,6 +3109,8 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "platform_validation", "evidence_saved_at", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "platform_validation", "certified_at", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "current_auth_url", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "gmail_oauth_state", "client_secret_protected", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "gmail_oauth_state", "refresh_token_protected", "TEXT NOT NULL DEFAULT ''")?;
 
     Ok(())
 }
@@ -4231,6 +4259,73 @@ fn has_secret(setting_type: &str) -> bool {
     read_secret(setting_type)
         .map(|secret| !secret.trim().is_empty())
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_dpapi(script: &str, input: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Không khởi động được Windows DPAPI: {error}"))?;
+    child.stdin.as_mut().ok_or_else(|| "Không mở được DPAPI input.".to_string())?
+        .write_all(input.as_bytes()).map_err(|error| error.to_string())?;
+    let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!("Windows DPAPI thất bại: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn protect_for_current_windows_user(value: &str) -> Result<String, String> {
+    run_windows_dpapi(
+        "$plain=[Console]::In.ReadToEnd(); Add-Type -AssemblyName System.Security; $bytes=[Text.Encoding]::UTF8.GetBytes($plain); [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser))",
+        value,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn protect_for_current_windows_user(value: &str) -> Result<String, String> {
+    Ok(general_purpose::STANDARD.encode(value.as_bytes()))
+}
+
+#[cfg(target_os = "windows")]
+fn unprotect_for_current_windows_user(value: &str) -> Result<String, String> {
+    run_windows_dpapi(
+        "$cipher=[Console]::In.ReadToEnd(); Add-Type -AssemblyName System.Security; $bytes=[Convert]::FromBase64String($cipher.Trim()); [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser))",
+        value,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unprotect_for_current_windows_user(value: &str) -> Result<String, String> {
+    let bytes = general_purpose::STANDARD.decode(value).map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+fn read_gmail_client_secret(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    if let Ok(secret) = read_secret(GMAIL_CLIENT_SECRET_KEY) {
+        if !secret.trim().is_empty() { return Ok(secret); }
+    }
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let protected: String = connection.query_row("SELECT client_secret_protected FROM gmail_oauth_state WHERE id=1", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if protected.trim().is_empty() { return Err("Chưa có Gmail Client Secret đã mã hóa.".to_string()); }
+    unprotect_for_current_windows_user(&protected)
+}
+
+fn read_gmail_refresh_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    if let Ok(secret) = read_secret(GMAIL_REFRESH_TOKEN_KEY) {
+        if !secret.trim().is_empty() { return Ok(secret); }
+    }
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let protected: String = connection.query_row("SELECT refresh_token_protected FROM gmail_oauth_state WHERE id=1", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if protected.trim().is_empty() { return Err("Chưa có Gmail refresh token đã mã hóa.".to_string()); }
+    unprotect_for_current_windows_user(&protected)
 }
 
 fn key_status_from_mask(value: &str) -> String {

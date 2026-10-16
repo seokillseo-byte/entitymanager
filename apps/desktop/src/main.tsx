@@ -1626,6 +1626,7 @@ function App() {
       setGmailOAuthDraft({ clientId, clientSecret });
       setGmailActionMessage("Đã đọc file OAuth JSON. Đang lưu Client Secret an toàn vào Windows Credential Manager...");
       const saved = await invoke<GmailOAuthStatus>("save_gmail_oauth_config", { config: { clientId, clientSecret } });
+      if (!saved.configured) throw new Error("Windows chưa xác nhận lưu Client Secret. Hãy thử nhập lại file JSON.");
       setGmailOAuth(saved);
       setGmailOAuthDraft({ clientId, clientSecret: "" });
       setStatusMessage("Đã nhập và lưu file Gmail OAuth.");
@@ -1637,6 +1638,11 @@ function App() {
   }
 
   async function connectGmailOAuth() {
+    if (!gmailOAuth.configured) {
+      setGmailActionMessage("Chưa có Client Secret. Hãy bấm Choose File và chọn lại file OAuth JSON trước khi kết nối.");
+      setStatusMessage("Gmail OAuth chưa đủ Client ID/Client Secret.");
+      return;
+    }
     try {
       setGmailActionMessage("Đang tạo phiên OAuth và mở trang Google...");
       const current = await invoke<GmailOAuthStatus>("start_gmail_oauth");
@@ -3240,7 +3246,7 @@ function App() {
               {gmailActionMessage && <div className={`status-message ${gmailOAuth.connected ? "success" : gmailOAuth.status === "error" ? "warning" : ""}`} role="status"><strong>Tiến trình Gmail OAuth</strong><span>{gmailActionMessage}</span></div>}
               <div className="settings-actions">
                 <button className="secondary-action" type="button" onClick={() => void saveGmailOAuthConfig()}>1. Lưu OAuth</button>
-                <button className="primary-action" type="button" disabled={!gmailOAuth.configured} onClick={() => void connectGmailOAuth()}>2. Kết nối Gmail</button>
+                <button className="primary-action" type="button" onClick={() => void connectGmailOAuth()}>2. Kết nối Gmail</button>
                 {gmailOAuth.authorizationUrl && <button className="secondary-action" type="button" onClick={() => void openGmailAuthorizationPage()}>Mở trang Google OAuth</button>}
                 <button className="secondary-action" type="button" onClick={() => void refreshGmailOAuthStatus()}>Làm mới trạng thái</button>
                 <button className="secondary-action" type="button" disabled={!gmailOAuth.connected} onClick={() => void checkMediumVerificationNow()}>Kiểm tra Medium ngay</button>
