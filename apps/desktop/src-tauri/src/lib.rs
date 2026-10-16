@@ -2337,6 +2337,17 @@ fn proxy_secret_account(proxy_id: &str) -> String {
     format!("proxy:{proxy_id}")
 }
 
+fn bundled_extension_directory(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resource_root = app_handle.path().resource_dir().map_err(|error| error.to_string())?;
+    let candidates = [
+        resource_root.join("resources").join("extension"),
+        resource_root.join("extension"),
+    ];
+    candidates.into_iter().find(|path| path.join("manifest.json").is_file()).ok_or_else(|| {
+        format!("Không tìm thấy Bridge trong resource directory {} (đã kiểm tra resources/extension và extension).", resource_root.display())
+    })
+}
+
 fn browser_executable() -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     #[cfg(target_os = "windows")]
@@ -2364,8 +2375,7 @@ fn browser_executable() -> Result<PathBuf, String> {
 fn proxy_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProxyRecord> {
     let id: String = row.get(0)?;
     Ok(ProxyRecord {
-        has_password: keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&id))
-            .ok().and_then(|entry| entry.get_password().ok()).map(|value| !value.is_empty()).unwrap_or(false),
+        has_password: has_secret(&proxy_secret_account(&id)),
         id,
         name: row.get(1)?, protocol: row.get(2)?, host: row.get(3)?, port: row.get(4)?, username: row.get(5)?,
         password: String::new(), country_code: row.get(6)?, status: row.get(7)?, latency_ms: row.get(8)?, exit_ip: row.get(9)?,
@@ -2635,11 +2645,11 @@ fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiag
         message: "Đã mở database và cập nhật schema thành công.".to_string(),
     });
 
-    let resource_result = app_handle.path().resource_dir().map_err(|error| error.to_string())?.join("extension").join("manifest.json");
+    let resource_result = bundled_extension_directory(&app_handle);
     checks.push(SystemDiagnosticCheck {
         id: "extension".to_string(), label: "Managed Browser Bridge".to_string(),
-        status: if resource_result.is_file() { "ok" } else { "error" }.to_string(),
-        message: if resource_result.is_file() { "Extension đã được đóng gói trong Desktop.".to_string() } else { "Thiếu extension/manifest.json; hãy cài lại bản phát hành mới nhất.".to_string() },
+        status: if resource_result.is_ok() { "ok" } else { "error" }.to_string(),
+        message: resource_result.map(|path| format!("Extension đã được đóng gói tại {}.", path.display())).unwrap_or_else(|error| error),
     });
 
     checks.push(match browser_executable() {
@@ -2689,8 +2699,7 @@ fn save_proxy_record(app_handle: tauri::AppHandle, proxy: ProxyRecord) -> Result
     ensure_schema(&connection)?;
     let timestamp = now_string();
     if !proxy.password.trim().is_empty() {
-        keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&proxy.id)).map_err(|e| e.to_string())?
-            .set_password(proxy.password.trim()).map_err(|e| format!("Không lưu được mật khẩu proxy an toàn: {e}"))?;
+        save_secret(&proxy_secret_account(&proxy.id), proxy.password.trim()).map_err(|e| format!("Không lưu được mật khẩu proxy an toàn: {e}"))?;
     }
     connection.execute("INSERT INTO proxy_records (id,name,protocol,host,port,username,country_code,status,latency_ms,exit_ip,last_error,last_checked_at,is_enabled,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'untested',0,'','','',?8,?9,?9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,host=excluded.host,port=excluded.port,username=excluded.username,country_code=excluded.country_code,is_enabled=excluded.is_enabled,updated_at=excluded.updated_at",
         params![proxy.id,proxy.name,proxy.protocol,proxy.host,proxy.port,proxy.username,proxy.country_code,proxy.is_enabled as i64,timestamp]).map_err(|e| e.to_string())?;
@@ -2705,7 +2714,7 @@ fn test_proxy_record(app_handle: tauri::AppHandle, proxy_id: String) -> Result<P
     let address = format!("{}://{}:{}", proxy.protocol, proxy.host, proxy.port);
     let mut reqwest_proxy = reqwest::Proxy::all(&address).map_err(|e| e.to_string())?;
     if !proxy.username.is_empty() {
-        let password = keyring::Entry::new(SECRET_SERVICE, &proxy_secret_account(&proxy.id)).ok().and_then(|entry| entry.get_password().ok()).unwrap_or_default();
+        let password = read_secret(&proxy_secret_account(&proxy.id)).unwrap_or_default();
         reqwest_proxy = reqwest_proxy.basic_auth(&proxy.username, &password);
     }
     let started = std::time::Instant::now();
@@ -2734,10 +2743,7 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     let executable = browser_executable()?;
     let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let extension_directory = app_handle.path().resource_dir().map_err(|e| e.to_string())?.join("extension");
-    if !extension_directory.join("manifest.json").is_file() {
-        return Err("Managed Browser Bridge chưa được đóng gói trong Desktop. Hãy cài bản phát hành mới nhất.".to_string());
-    }
+    let extension_directory = bundled_extension_directory(&app_handle)?;
     let mut command = Command::new(executable);
     command.arg(format!("--user-data-dir={}", root.display()))
         .arg("--no-first-run")
@@ -4180,22 +4186,34 @@ fn secret_account(setting_type: &str) -> String {
     format!("integration:{setting_type}")
 }
 
-fn save_secret(setting_type: &str, value: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(SECRET_SERVICE, &secret_account(setting_type))
-        .map_err(|error| format!("Failed to open OS credential store: {error}"))?;
+fn secret_service(setting_type: &str) -> String {
+    let safe_name: String = setting_type.chars().map(|character| {
+        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') { character } else { '-' }
+    }).collect();
+    format!("{SECRET_SERVICE}/{safe_name}")
+}
 
+fn secure_secret_entry(setting_type: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(&secret_service(setting_type), "EntityManager")
+        .map_err(|error| format!("Failed to open isolated OS credential: {error}"))
+}
+
+fn save_secret(setting_type: &str, value: &str) -> Result<(), String> {
+    let entry = secure_secret_entry(setting_type)?;
     entry
         .set_password(value.trim())
-        .map_err(|error| format!("Failed to save encrypted API key: {error}"))
+        .map_err(|error| format!("Failed to save encrypted API key: {error}"))?;
+    let verified = entry.get_password().map_err(|error| format!("Credential was written but cannot be read back: {error}"))?;
+    if verified == value.trim() { Ok(()) } else { Err("Credential verification failed after saving.".to_string()) }
 }
 
 fn read_secret(setting_type: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(SECRET_SERVICE, &secret_account(setting_type))
-        .map_err(|error| format!("Failed to open OS credential store: {error}"))?;
-
-    entry
-        .get_password()
-        .map_err(|error| format!("Failed to read encrypted API key: {error}"))
+    if let Ok(value) = secure_secret_entry(setting_type).and_then(|entry| entry.get_password().map_err(|error| error.to_string())) {
+        if !value.trim().is_empty() { return Ok(value); }
+    }
+    let legacy = keyring::Entry::new(SECRET_SERVICE, &secret_account(setting_type))
+        .map_err(|error| format!("Failed to open legacy OS credential: {error}"))?;
+    legacy.get_password().map_err(|error| format!("Failed to read isolated or legacy credential: {error}"))
 }
 
 fn has_secret(setting_type: &str) -> bool {
