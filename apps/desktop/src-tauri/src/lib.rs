@@ -2348,8 +2348,12 @@ fn bundled_extension_directory(app_handle: &tauri::AppHandle) -> Result<PathBuf,
     })
 }
 
-fn browser_executable() -> Result<PathBuf, String> {
+fn browser_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
+    if let Ok(resource_root) = app_handle.path().resource_dir() {
+        candidates.push(resource_root.join("resources").join("chromium").join("chrome.exe"));
+        candidates.push(resource_root.join("chromium").join("chrome.exe"));
+    }
     #[cfg(target_os = "windows")]
     {
         for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
@@ -2368,7 +2372,7 @@ fn browser_executable() -> Result<PathBuf, String> {
         candidates.push(PathBuf::from("/usr/bin/chromium-browser"));
     }
     candidates.into_iter().find(|path| path.is_file()).ok_or_else(|| {
-        "Không tìm thấy Chrome/Edge Chromium. Managed Browser cần một trình duyệt Chromium đã cài trên máy.".to_string()
+        "Không tìm thấy Managed Chromium đã đóng gói hoặc Chrome/Edge dự phòng. Hãy cài bản EntityManager mới nhất.".to_string()
     })
 }
 
@@ -2399,10 +2403,13 @@ fn gmail_oauth_status_record(connection: &Connection) -> Result<GmailOAuthStatus
         [],
         |row| {
             let client_id: String = row.get(0)?;
-            let status: String = row.get(2)?;
+            let stored_status: String = row.get(2)?;
+            let configured = !client_id.trim().is_empty() && has_secret(GMAIL_CLIENT_SECRET_KEY);
+            let connected = stored_status == "connected" && has_secret(GMAIL_REFRESH_TOKEN_KEY);
+            let status = if connected { "connected" } else if configured { stored_status.as_str() } else { "not_configured" }.to_string();
             Ok(GmailOAuthStatus {
-                configured: !client_id.trim().is_empty() && has_secret(GMAIL_CLIENT_SECRET_KEY),
-                connected: status == "connected" && has_secret(GMAIL_REFRESH_TOKEN_KEY),
+                configured,
+                connected,
                 client_id,
                 account_email: row.get(1)?,
                 status,
@@ -2652,8 +2659,11 @@ fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiag
         message: resource_result.map(|path| format!("Extension đã được đóng gói tại {}.", path.display())).unwrap_or_else(|error| error),
     });
 
-    checks.push(match browser_executable() {
-        Ok(path) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "ok".to_string(), message: format!("Đã tìm thấy {}", path.display()) },
+    checks.push(match browser_executable(&app_handle) {
+        Ok(path) => {
+            let managed = path.to_string_lossy().contains("EntityManager") && path.to_string_lossy().contains("chromium");
+            SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: if managed { "ok" } else { "warning" }.to_string(), message: if managed { format!("Managed Chromium đã được đóng gói tại {}.", path.display()) } else { format!("Đang dùng browser dự phòng tại {}; nên cài bản có Managed Chromium.", path.display()) } }
+        },
         Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
     });
 
@@ -2740,7 +2750,7 @@ fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessi
 #[tauri::command]
 fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
     if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Managed Browser chỉ mở URL http/https.".to_string()); }
-    let executable = browser_executable()?;
+    let executable = browser_executable(&app_handle)?;
     let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let extension_directory = bundled_extension_directory(&app_handle)?;
@@ -2749,6 +2759,7 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--remote-debugging-port=0")
+        .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
         .arg(format!("--disable-extensions-except={}", extension_directory.display()))
         .arg(format!("--load-extension={}", extension_directory.display()));
     if !request.visible { command.arg("--start-minimized"); }
@@ -2770,7 +2781,7 @@ fn open_managed_browser_url(app_handle: tauri::AppHandle, session_id: String, ur
     if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("Chỉ cho phép mở URL http/https.".to_string()); }
     let mut session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
     if session.status != "running" { return Err("Browser session không còn chạy.".to_string()); }
-    let executable = browser_executable()?;
+    let executable = browser_executable(&app_handle)?;
     Command::new(executable).arg(format!("--user-data-dir={}", session.profile_directory)).arg(&url).spawn().map_err(|e| format!("Không mở được URL trong Managed Browser: {e}"))?;
     let timestamp = now_string();
     session.current_url = url;
