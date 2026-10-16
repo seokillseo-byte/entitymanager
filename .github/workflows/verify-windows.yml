@@ -46,6 +46,10 @@ jobs:
       - name: Stage extension inside Desktop
         run: pnpm extension:stage
 
+      - name: Stage managed Chromium runtime
+        shell: pwsh
+        run: ./scripts/stage-managed-chromium.ps1
+
       - name: Build Windows installer
         run: pnpm desktop:build
 

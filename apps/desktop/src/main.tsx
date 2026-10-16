@@ -1756,8 +1756,8 @@ function App() {
                 <article className="panel extension-download-panel">
                   <div className="panel-header">
                     <div>
-                      <p className="eyebrow">BẢN MỚI NHẤT · CHROME EXTENSION</p>
-                      <h2>EntityManager Bridge</h2>
+                      <p className="eyebrow">TÙY CHỌN DỰ PHÒNG · CHROME CÁ NHÂN</p>
+                      <h2>EntityManager Bridge thủ công</h2>
                     </div>
                     <Puzzle size={22} />
                   </div>
@@ -1782,7 +1782,7 @@ function App() {
                     Tải Extension (.zip)
                   </button>
                   <p className="panel-hint">
-                    Cài đặt: giải nén ZIP → mở chrome://extensions → bật Developer mode → chọn Load unpacked và chọn thư mục đã giải nén.
+                    Không cần tải để dùng Managed Chromium. Chỉ cài ZIP này nếu anh muốn dùng Bridge trong Chrome cá nhân thay cho browser tự động của tool.
                   </p>
                 </article>
   
@@ -3211,7 +3211,7 @@ function App() {
                   <p className="eyebrow">Gmail verification</p>
                   <h3>Google OAuth · Medium email worker</h3>
                 </div>
-                <span className={`badge ${gmailOAuth.connected ? "good" : "warning"}`}>{gmailOAuth.connected ? "Connected" : gmailOAuth.status}</span>
+                <span className={`badge ${gmailOAuth.connected ? "good" : "warning"}`}>{gmailOAuth.connected ? "Connected" : gmailOAuth.configured ? "configured" : "thiếu Client Secret"}</span>
               </div>
               <p className="platform-notes">OAuth không lưu mật khẩu Gmail. Anh chấp thuận quyền đọc một lần; refresh token được giữ trong Windows Credential Manager và worker kiểm tra email Medium mỗi 20 giây.</p>
               <label className="oauth-file-import">
