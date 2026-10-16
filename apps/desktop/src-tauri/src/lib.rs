@@ -2549,10 +2549,11 @@ fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
 fn medium_verification_link(raw_message: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(raw_message).replace("=\r\n", "").replace("&amp;", "&");
     let pattern = Regex::new(r#"https://[^\s\"'<>]+"#).ok()?;
-    pattern.find_iter(&text).map(|item| item.as_str().trim_end_matches(['.', ')', ']', ';']).to_string()).find(|url| {
+    let result = pattern.find_iter(&text).map(|item| item.as_str().trim_end_matches(['.', ')', ']', ';']).to_string()).find(|url| {
         let lower = url.to_ascii_lowercase();
         lower.contains("medium.com") && ["verify", "callback", "signin", "email"].iter().any(|needle| lower.contains(needle))
-    })
+    });
+    result
 }
 
 fn poll_medium_verification(app_handle: &tauri::AppHandle) -> Result<String, String> {
