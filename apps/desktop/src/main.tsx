@@ -1083,6 +1083,41 @@ function App() {
     }
   }
 
+  async function launchBrowserControl(visible: boolean) {
+    try {
+      const running = browserSessions.find((session) => session.status === "running" && session.platformId === "control-center");
+      if (running) {
+        await setBrowserVisibility(running.id, visible);
+        setStatusMessage(visible ? "Đã hiển thị Chromium được quản lý." : "Chromium vẫn chạy nhưng đã được ẩn khỏi Desktop.");
+        return;
+      }
+      const session = await invoke<BrowserSessionRecord>("launch_managed_browser", { request: {
+        sessionId: `browser-control-${Date.now()}`,
+        campaignId: "control-center",
+        jobId: "control-center",
+        accountId: "control-center",
+        platformId: "control-center",
+        url: "https://accounts.google.com/",
+        proxyId: "",
+        visible
+      } });
+      setBrowserSessions((current) => upsertById(current, session));
+      setStatusMessage(visible ? "Đã mở Chromium được quản lý." : "Đã khởi chạy Chromium ở chế độ ẩn.");
+    } catch (error) {
+      setStatusMessage(`Không khởi chạy được Chromium: ${String(error)}`);
+    }
+  }
+
+  async function setAllBrowserVisibility(visible: boolean) {
+    const running = browserSessions.filter((session) => session.status === "running");
+    if (!running.length) {
+      setStatusMessage("Chưa có phiên Chromium nào đang chạy. Hãy bấm Mở Chromium quản lý.");
+      return;
+    }
+    await Promise.all(running.map((session) => setBrowserVisibility(session.id, visible)));
+    setStatusMessage(visible ? `Đã hiển thị ${running.length} phiên Chromium.` : `Đã ẩn ${running.length} phiên Chromium; worker vẫn tiếp tục chạy.`);
+  }
+
   async function openGmailBootstrap(sessionId: string) {
     try {
       const session = await invoke<BrowserSessionRecord>("open_managed_browser_url", { sessionId, url: "https://accounts.google.com/" });
@@ -1572,6 +1607,32 @@ function App() {
     } catch (error) {
       setStatusMessage(`Không lưu được Gmail OAuth: ${String(error)}`);
       setGmailActionMessage(`Lỗi lưu OAuth: ${String(error)}`);
+    }
+  }
+
+  async function importGmailOAuthJson(file: File | undefined) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as {
+        installed?: { client_id?: string; client_secret?: string };
+        web?: { client_id?: string; client_secret?: string };
+      };
+      const source = parsed.installed ?? parsed.web;
+      const clientId = source?.client_id?.trim() ?? "";
+      const clientSecret = source?.client_secret?.trim() ?? "";
+      if (!clientId || !clientSecret) {
+        throw new Error("File JSON không chứa client_id và client_secret.");
+      }
+      setGmailOAuthDraft({ clientId, clientSecret });
+      setGmailActionMessage("Đã đọc file OAuth JSON. Đang lưu Client Secret an toàn vào Windows Credential Manager...");
+      const saved = await invoke<GmailOAuthStatus>("save_gmail_oauth_config", { config: { clientId, clientSecret } });
+      setGmailOAuth(saved);
+      setGmailOAuthDraft({ clientId, clientSecret: "" });
+      setStatusMessage("Đã nhập và lưu file Gmail OAuth.");
+      setGmailActionMessage("Đã lưu đủ Client ID và Client Secret. Bây giờ bấm “2. Kết nối Gmail”.");
+    } catch (error) {
+      setGmailActionMessage(`Không nhập được file OAuth JSON: ${String(error)}`);
+      setStatusMessage("File OAuth JSON không hợp lệ hoặc không lưu được Credential Manager.");
     }
   }
 
@@ -3153,6 +3214,14 @@ function App() {
                 <span className={`badge ${gmailOAuth.connected ? "good" : "warning"}`}>{gmailOAuth.connected ? "Connected" : gmailOAuth.status}</span>
               </div>
               <p className="platform-notes">OAuth không lưu mật khẩu Gmail. Anh chấp thuận quyền đọc một lần; refresh token được giữ trong Windows Credential Manager và worker kiểm tra email Medium mỗi 20 giây.</p>
+              <label className="oauth-file-import">
+                <span>Nhập nhanh file OAuth JSON tải từ Google Cloud</span>
+                <input type="file" accept="application/json,.json" onChange={(event) => {
+                  void importGmailOAuthJson(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }} />
+                <small>Tool chỉ đọc client_id/client_secret rồi lưu secret vào Windows Credential Manager; không lưu lại file JSON.</small>
+              </label>
               <div className="settings-grid">
                 <label>
                   Google OAuth Client ID
@@ -3177,6 +3246,31 @@ function App() {
                 <button className="secondary-action" type="button" disabled={!gmailOAuth.connected} onClick={() => void checkMediumVerificationNow()}>Kiểm tra Medium ngay</button>
               </div>
               {gmailOAuth.authorizationUrl && <details><summary>URL OAuth dự phòng</summary><textarea readOnly rows={4} value={gmailOAuth.authorizationUrl} onFocus={(event) => event.currentTarget.select()} /></details>}
+            </div>
+            <div className="setting-card">
+              <div className="panel-header">
+                <div><p className="eyebrow">Managed Browser Control Center</p><h3>Điều khiển Chromium tập trung</h3></div>
+                <span className="badge">{browserSessions.filter((session) => session.status === "running").length} running</span>
+              </div>
+              <p className="platform-notes">Chromium chạy bằng profile riêng và có thể ẩn trong khi worker tiếp tục. Google không cho đăng nhập OAuth trong webview nhúng, vì vậy cửa sổ chỉ xuất hiện khi anh chủ động bấm Hiện.</p>
+              <div className="settings-actions">
+                <button className="primary-action" type="button" onClick={() => void launchBrowserControl(true)}>Mở Chromium quản lý</button>
+                <button className="secondary-action" type="button" onClick={() => void launchBrowserControl(false)}>Khởi chạy ẩn</button>
+                <button className="secondary-action" type="button" onClick={() => void setAllBrowserVisibility(true)}>Hiện tất cả</button>
+                <button className="secondary-action" type="button" onClick={() => void setAllBrowserVisibility(false)}>Ẩn tất cả</button>
+              </div>
+              <div className="browser-session-list">
+                {browserSessions.filter((session) => session.status === "running").length === 0 && <p className="muted-text">Chưa có Chromium nào đang chạy.</p>}
+                {browserSessions.filter((session) => session.status === "running").map((session) => (
+                  <div className="browser-session-row" key={session.id}>
+                    <div><strong>{session.platformId}</strong><span>{session.visibility} · PID {session.processId}</span><small>{session.currentUrl}</small></div>
+                    <div className="session-actions">
+                      <button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(session.id, session.visibility !== "visible")}>{session.visibility === "visible" ? "Ẩn" : "Hiện"}</button>
+                      <button className="secondary-action" type="button" onClick={() => void stopBrowser(session.id)}>Dừng</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="setting-card">
               <div className="panel-header"><div><p className="eyebrow">System Diagnostics</p><h3>Kiểm tra nền tảng tự động hóa</h3></div><button className="secondary-action" type="button" disabled={diagnosticsRunning} onClick={() => void runSystemDiagnostics()}>{diagnosticsRunning ? "Đang kiểm tra..." : "Chạy kiểm tra toàn bộ"}</button></div>
