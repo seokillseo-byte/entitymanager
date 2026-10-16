@@ -401,6 +401,7 @@ function App() {
   const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
   const [gmailOAuthDraft, setGmailOAuthDraft] = useState({ clientId: "", clientSecret: "" });
   const [gmailActionMessage, setGmailActionMessage] = useState("");
+  const [gmailActionRunning, setGmailActionRunning] = useState<"oauth" | "test" | "medium" | "">("");
   const [systemDiagnostics, setSystemDiagnostics] = useState<SystemDiagnosticCheck[]>([]);
   const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
 
@@ -1644,14 +1645,38 @@ function App() {
       return;
     }
     try {
+      setGmailActionRunning("oauth");
       setGmailActionMessage("Đang tạo phiên OAuth và mở trang Google...");
       const current = await invoke<GmailOAuthStatus>("start_gmail_oauth");
       setGmailOAuth(current);
+      setBrowserSessions(await invoke<BrowserSessionRecord[]>("get_browser_sessions"));
       setStatusMessage("Trang Google OAuth đã mở. Hãy chấp thuận quyền một lần rồi quay lại EntityManager.");
       setGmailActionMessage(current.authorizationUrl ? "Đang chờ Google xác nhận. Nếu trình duyệt không tự mở, bấm “Mở trang Google OAuth”." : current.lastMessage);
     } catch (error) {
       setStatusMessage(`Không bắt đầu được Gmail OAuth: ${String(error)}`);
       setGmailActionMessage(`Không bắt đầu được OAuth: ${String(error)}`);
+    } finally {
+      setGmailActionRunning("");
+    }
+  }
+
+  async function testGmailConnection() {
+    if (!gmailOAuth.connected) {
+      setGmailActionMessage("Gmail chưa Connected. Hãy hoàn tất cấp quyền trên cửa sổ Google trước khi kiểm tra Gmail API.");
+      setStatusMessage("Chưa thể kiểm tra Gmail API vì OAuth chưa hoàn tất.");
+      return;
+    }
+    try {
+      setGmailActionRunning("test");
+      setGmailActionMessage("Đang gọi Gmail API để xác minh token và quyền đọc...");
+      const message = await invoke<string>("test_gmail_connection");
+      setGmailActionMessage(message);
+      setStatusMessage(message);
+    } catch (error) {
+      setGmailActionMessage(`Kiểm tra Gmail API thất bại: ${String(error)}`);
+      setStatusMessage(`Gmail API chưa hoạt động: ${String(error)}`);
+    } finally {
+      setGmailActionRunning("");
     }
   }
 
@@ -1694,14 +1719,32 @@ function App() {
   }
 
   async function checkMediumVerificationNow() {
+    if (!gmailOAuth.connected) {
+      setGmailActionMessage("Chưa thể kiểm tra Medium: Gmail OAuth chưa Connected. Hãy hoàn tất trang Google trước.");
+      setStatusMessage("Medium worker đang chờ Gmail OAuth hoàn tất.");
+      return;
+    }
     try {
+      setGmailActionRunning("medium");
+      const latestJobs = await invoke<ProvisioningJobRecord[]>("get_provisioning_jobs");
+      setProvisioningJobs(latestJobs);
+      const waitingMedium = latestJobs.some((job) => job.platformId === "medium" && job.stage === "email_verification" && ["waiting_user", "running"].includes(job.status));
+      if (!waitingMedium) {
+        setGmailActionMessage("Gmail đã sẵn sàng, nhưng chưa có Medium job ở bước email_verification. Hãy chạy campaign Medium trước; worker sẽ tự kiểm tra khi checkpoint được tạo.");
+        setStatusMessage("Không có Medium checkpoint đang chờ email; không có việc nào để worker xử lý.");
+        return;
+      }
       const message = await invoke<string>("poll_medium_verification_now");
       setStatusMessage(message);
+      setGmailActionMessage(message);
       setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status"));
       setProvisioningJobs(await invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"));
       setBrowserSessions(await invoke<BrowserSessionRecord[]>("get_browser_sessions"));
     } catch (error) {
       setStatusMessage(`Kiểm tra email chưa hoàn tất: ${String(error)}`);
+      setGmailActionMessage(`Medium worker chưa hoàn tất: ${String(error)}`);
+    } finally {
+      setGmailActionRunning("");
     }
   }
 
@@ -3243,13 +3286,18 @@ function App() {
                 <span>{gmailOAuth.lastCheckedAt ? `checked ${new Date(Number(gmailOAuth.lastCheckedAt) * 1000).toLocaleString("vi-VN")}` : "chưa kiểm tra email"}</span>
               </div>
               <p className="platform-notes">{gmailOAuth.lastMessage}</p>
+              <div className="status-message" role="status">
+                <strong>Thứ tự hoạt động bắt buộc</strong>
+                <span>1) Lưu JSON → 2) Kết nối và hoàn tất trang Google → 3) Kiểm tra Gmail API → 4) Chạy campaign Medium → 5) Kiểm tra email Medium. Nút Medium không tạo email; nó chỉ xử lý checkpoint đang chờ.</span>
+              </div>
               {gmailActionMessage && <div className={`status-message ${gmailOAuth.connected ? "success" : gmailOAuth.status === "error" ? "warning" : ""}`} role="status"><strong>Tiến trình Gmail OAuth</strong><span>{gmailActionMessage}</span></div>}
               <div className="settings-actions">
                 <button className="secondary-action" type="button" onClick={() => void saveGmailOAuthConfig()}>1. Lưu OAuth</button>
-                <button className="primary-action" type="button" onClick={() => void connectGmailOAuth()}>2. Kết nối Gmail</button>
+                <button className="primary-action" type="button" disabled={Boolean(gmailActionRunning)} onClick={() => void connectGmailOAuth()}>{gmailActionRunning === "oauth" ? "Đang mở Google..." : "2. Kết nối Gmail"}</button>
                 {gmailOAuth.authorizationUrl && <button className="secondary-action" type="button" onClick={() => void openGmailAuthorizationPage()}>Mở trang Google OAuth</button>}
                 <button className="secondary-action" type="button" onClick={() => void refreshGmailOAuthStatus()}>Làm mới trạng thái</button>
-                <button className="secondary-action" type="button" disabled={!gmailOAuth.connected} onClick={() => void checkMediumVerificationNow()}>Kiểm tra Medium ngay</button>
+                <button className="secondary-action" type="button" disabled={Boolean(gmailActionRunning)} onClick={() => void testGmailConnection()}>{gmailActionRunning === "test" ? "Đang kiểm tra Gmail..." : "3. Kiểm tra Gmail API"}</button>
+                <button className="secondary-action" type="button" disabled={Boolean(gmailActionRunning)} onClick={() => void checkMediumVerificationNow()}>{gmailActionRunning === "medium" ? "Đang kiểm tra Medium..." : "5. Kiểm tra Medium ngay"}</button>
               </div>
               {gmailOAuth.authorizationUrl && <details><summary>URL OAuth dự phòng</summary><textarea readOnly rows={4} value={gmailOAuth.authorizationUrl} onFocus={(event) => event.currentTarget.select()} /></details>}
             </div>

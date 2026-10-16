@@ -2572,21 +2572,16 @@ fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &s
 }
 
 fn open_oauth_in_managed_browser(app_handle: &tauri::AppHandle, url: &str) -> Result<(), String> {
-    let executable = browser_executable(app_handle)?;
-    let profile = app_handle.path().app_data_dir().map_err(|error| error.to_string())?.join("browser-profiles").join("gmail-oauth");
-    fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
-    let extension = bundled_extension_directory(app_handle)?;
-    Command::new(executable)
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
-        .arg(format!("--disable-extensions-except={}", extension.display()))
-        .arg(format!("--load-extension={}", extension.display()))
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Không mở được OAuth trong Managed Chromium: {error}"))
+    launch_managed_browser(app_handle.clone(), BrowserLaunchRequest {
+        session_id: "browser-gmail-oauth".to_string(),
+        campaign_id: "gmail-oauth".to_string(),
+        job_id: "gmail-oauth".to_string(),
+        account_id: "gmail-oauth".to_string(),
+        platform_id: "gmail-oauth".to_string(),
+        url: url.to_string(),
+        proxy_id: String::new(),
+        visible: true,
+    }).map(|_| ())
 }
 
 fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -2603,6 +2598,20 @@ fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
         .error_for_status().map_err(|error| format!("Google từ chối refresh token: {error}"))?
         .json::<serde_json::Value>().map_err(|error| error.to_string())?;
     response["access_token"].as_str().map(str::to_string).ok_or_else(|| "Google không trả về access token mới.".to_string())
+}
+
+#[tauri::command]
+fn test_gmail_connection(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let access_token = gmail_access_token(&app_handle)?;
+    let response = reqwest::blocking::Client::new()
+        .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+        .bearer_auth(access_token)
+        .send().map_err(|error| format!("Không gọi được Gmail API: {error}"))?
+        .error_for_status().map_err(|error| format!("Gmail API từ chối quyền: {error}"))?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
+    let email = response["emailAddress"].as_str().unwrap_or("Gmail đã cấp quyền");
+    let total = response["messagesTotal"].as_i64().unwrap_or(0);
+    Ok(format!("Gmail API hoạt động cho {email}; hộp thư có khoảng {total} email."))
 }
 
 fn medium_verification_link(raw_message: &[u8]) -> Option<String> {
@@ -5020,6 +5029,7 @@ pub fn run() {
             get_gmail_oauth_status,
             save_gmail_oauth_config,
             start_gmail_oauth,
+            test_gmail_connection,
             poll_medium_verification_now,
             run_system_diagnostics,
             get_platforms,
