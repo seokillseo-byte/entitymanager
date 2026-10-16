@@ -1043,6 +1043,16 @@ function App() {
     }
   }
 
+  async function openGmailBootstrap(sessionId: string) {
+    try {
+      const session = await invoke<BrowserSessionRecord>("open_managed_browser_url", { sessionId, url: "https://accounts.google.com/" });
+      setBrowserSessions((current) => upsertById(current, session));
+      setStatusMessage("Đã mở Gmail trong đúng browser profile. Đăng nhập một lần; phiên sẽ được giữ cho account này.");
+    } catch (error) {
+      setStatusMessage(`Không mở được Gmail bootstrap: ${String(error)}`);
+    }
+  }
+
   async function startFullProvisioningCampaign() {
     if (!campaignPlans.length || campaignLaunching) {
       if (!campaignPlans.length) setStatusMessage("Hãy chọn ít nhất một platform trước khi chạy chiến dịch.");
@@ -2355,7 +2365,7 @@ function App() {
                 <div>
                   <p className="eyebrow">FULL ACCOUNT PROVISIONING</p>
                   <strong>Một nút: tạo tài khoản → profile NAP/EEAT → media → evidence → indexing</strong>
-                  <span>Mỗi platform được lưu thành một job có checkpoint. CAPTCHA, email/OTP hoặc OAuth sẽ tạm dừng đúng bước và tiếp tục sau khi được xác minh.</span>
+                  <span>Managed Chromium tự nạp Bridge, chạy Medium theo checkpoint và giữ session đăng nhập. CAPTCHA/email/OTP/OAuth chỉ dừng khi nền tảng bắt buộc xác minh người dùng.</span>
                 </div>
                 <button className="primary-action" type="button" disabled={campaignLaunching} onClick={() => void startFullProvisioningCampaign()}>
                   {campaignLaunching ? "Đang tạo hàng đợi..." : `Tạo toàn bộ Entity (${campaignPlans.length})`}
@@ -2367,8 +2377,8 @@ function App() {
                   <div className="panel-header"><div><p className="eyebrow">MANAGED BROWSER</p><h3>Browser Runtime</h3></div><span className="badge">{browserSessions.filter((item) => item.status === "running").length} running</span></div>
                   <label className="checkbox-row"><input type="checkbox" checked={browserVisible} onChange={(event) => setBrowserVisible(event.target.checked)} /><span>Hiển thị browser khi khởi chạy</span></label>
                   <label>Proxy cho campaign<select value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}><option value="">Direct — IP máy tính</option>{proxyRecords.filter((item) => item.isEnabled).map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name} · {proxy.status} {proxy.exitIp ? `· ${proxy.exitIp}` : ""}</option>)}</select></label>
-                  <p className="muted-text">Mỗi account dùng persistent profile riêng. Proxy đã gán được giữ cố định trong toàn bộ phiên.</p>
-                  <div className="browser-session-list">{browserSessions.slice(0, 6).map((session) => <div className="browser-session-row" key={session.id}><div><strong>{session.platformId}</strong><span>{session.status} · {session.visibility} · PID {session.processId || "—"}</span><small>{session.lastMessage}</small></div>{session.status === "running" && <div className="session-actions"><button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(session.id, session.visibility !== "visible")}>{session.visibility === "visible" ? "Ẩn" : "Hiện"}</button><button className="secondary-action" type="button" onClick={() => void stopBrowser(session.id)}>Dừng</button></div>}</div>)}</div>
+                  <p className="muted-text">Mỗi account dùng persistent profile riêng và tự nạp EntityManager Bridge. Proxy đã gán được giữ cố định trong toàn bộ phiên. Gmail chỉ cần đăng nhập lần đầu; tool không lưu mật khẩu Google.</p>
+                  <div className="browser-session-list">{browserSessions.slice(0, 6).map((session) => <div className="browser-session-row" key={session.id}><div><strong>{session.platformId}</strong><span>{session.status} · {session.visibility} · PID {session.processId || "—"}</span><small>{session.lastMessage}</small></div>{session.status === "running" && <div className="session-actions"><button className="secondary-action" type="button" onClick={() => void openGmailBootstrap(session.id)}>Gmail</button><button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(session.id, session.visibility !== "visible")}>{session.visibility === "visible" ? "Ẩn" : "Hiện"}</button><button className="secondary-action" type="button" onClick={() => void stopBrowser(session.id)}>Dừng</button></div>}</div>)}</div>
                 </section>
 
                 <section className="managed-browser-card">

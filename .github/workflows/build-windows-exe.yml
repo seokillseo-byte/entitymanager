@@ -50,6 +50,9 @@ jobs:
       - name: Build Chrome extension package
         run: pnpm extension:build
 
+      - name: Stage extension inside Desktop
+        run: pnpm extension:stage
+
       - name: Zip Chrome extension
         shell: pwsh
         run: Compress-Archive -Path apps/extension/dist/* -DestinationPath EntityManager-Chrome-Extension.zip -Force
