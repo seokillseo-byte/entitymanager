@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": ["resources/extension/**/*"],
     "icon": ["icons/icon.ico"],
     "publisher": "EntityManager"
   }

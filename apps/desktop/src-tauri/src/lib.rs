@@ -2400,8 +2400,17 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     let executable = browser_executable()?;
     let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let extension_directory = app_handle.path().resource_dir().map_err(|e| e.to_string())?.join("extension");
+    if !extension_directory.join("manifest.json").is_file() {
+        return Err("Managed Browser Bridge chưa được đóng gói trong Desktop. Hãy cài bản phát hành mới nhất.".to_string());
+    }
     let mut command = Command::new(executable);
-    command.arg(format!("--user-data-dir={}", root.display())).arg("--no-first-run").arg("--no-default-browser-check").arg("--remote-debugging-port=0");
+    command.arg(format!("--user-data-dir={}", root.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--remote-debugging-port=0")
+        .arg(format!("--disable-extensions-except={}", extension_directory.display()))
+        .arg(format!("--load-extension={}", extension_directory.display()));
     if !request.visible { command.arg("--start-minimized"); }
     if !request.proxy_id.is_empty() {
         let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == request.proxy_id).ok_or_else(|| "Proxy được chọn không tồn tại.".to_string())?;
@@ -2410,9 +2419,25 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     }
     let child = command.arg(&request.url).spawn().map_err(|e| format!("Không khởi chạy được Managed Browser: {e}"))?;
     let timestamp = now_string();
-    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent profile.".to_string(), created_at: timestamp.clone(), updated_at: timestamp };
+    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent profile và Bridge tích hợp.".to_string(), created_at: timestamp.clone(), updated_at: timestamp };
     let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
     connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at]).map_err(|e| e.to_string())?;
+    Ok(session)
+}
+
+#[tauri::command]
+fn open_managed_browser_url(app_handle: tauri::AppHandle, session_id: String, url: String) -> Result<BrowserSessionRecord, String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("Chỉ cho phép mở URL http/https.".to_string()); }
+    let mut session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
+    if session.status != "running" { return Err("Browser session không còn chạy.".to_string()); }
+    let executable = browser_executable()?;
+    Command::new(executable).arg(format!("--user-data-dir={}", session.profile_directory)).arg(&url).spawn().map_err(|e| format!("Không mở được URL trong Managed Browser: {e}"))?;
+    let timestamp = now_string();
+    session.current_url = url;
+    session.last_message = "Đã mở URL trong persistent browser profile.".to_string();
+    session.updated_at = timestamp.clone();
+    let connection = open_database(&app_handle)?;
+    connection.execute("UPDATE browser_sessions SET current_url=?1,last_message=?2,updated_at=?3 WHERE id=?4", params![session.current_url,session.last_message,timestamp,session.id]).map_err(|e| e.to_string())?;
     Ok(session)
 }
 
@@ -4553,6 +4578,7 @@ pub fn run() {
             test_proxy_record,
             get_browser_sessions,
             launch_managed_browser,
+            open_managed_browser_url,
             stop_managed_browser,
             set_managed_browser_visibility
         ])
