@@ -31,6 +31,16 @@ struct GmailOAuthStatus {
     status: String,
     last_message: String,
     last_checked_at: String,
+    authorization_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemDiagnosticCheck {
+    id: String,
+    label: String,
+    status: String,
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,8 +131,8 @@ fn open_external_url(url: String) -> Result<String, String> {
     }
 
     #[cfg(target_os = "windows")]
-    let result = Command::new("rundll32.exe")
-        .args(["url.dll,FileProtocolHandler", target])
+    let result = Command::new("cmd.exe")
+        .args(["/C", "start", "", target])
         .spawn();
 
     #[cfg(target_os = "macos")]
@@ -2375,7 +2385,7 @@ fn get_proxy_records(app_handle: tauri::AppHandle) -> Result<Vec<ProxyRecord>, S
 
 fn gmail_oauth_status_record(connection: &Connection) -> Result<GmailOAuthStatus, String> {
     connection.query_row(
-        "SELECT client_id,account_email,status,last_message,last_checked_at FROM gmail_oauth_state WHERE id=1",
+        "SELECT client_id,account_email,status,last_message,last_checked_at,current_auth_url FROM gmail_oauth_state WHERE id=1",
         [],
         |row| {
             let client_id: String = row.get(0)?;
@@ -2388,6 +2398,7 @@ fn gmail_oauth_status_record(connection: &Connection) -> Result<GmailOAuthStatus
                 status,
                 last_message: row.get(3)?,
                 last_checked_at: row.get(4)?,
+                authorization_url: row.get(5)?,
             })
         },
     ).map_err(|error| error.to_string())
@@ -2450,8 +2461,8 @@ fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, S
         .append_pair("code_challenge_method", "S256");
 
     connection.execute(
-        "UPDATE gmail_oauth_state SET status='authorizing',last_message='Đang chờ anh chấp thuận quyền Gmail trên trang Google.',updated_at=?1 WHERE id=1",
-        params![now_string()],
+        "UPDATE gmail_oauth_state SET status='authorizing',last_message='Đang chờ anh chấp thuận quyền Gmail trên trang Google.',current_auth_url=?1,updated_at=?2 WHERE id=1",
+        params![auth_url.as_str(), now_string()],
     ).map_err(|error| error.to_string())?;
 
     let callback_app = app_handle.clone();
@@ -2503,7 +2514,12 @@ fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, S
             }
         }
     });
-    open_external_url(auth_url.to_string())?;
+    if let Err(error) = open_external_url(auth_url.to_string()) {
+        connection.execute(
+            "UPDATE gmail_oauth_state SET last_message=?1,updated_at=?2 WHERE id=1",
+            params![format!("Windows không tự mở được trang Google ({error}). Hãy bấm Mở trang Google OAuth trong EntityManager."), now_string()],
+        ).map_err(|db_error| db_error.to_string())?;
+    }
     gmail_oauth_status_record(&connection)
 }
 
@@ -2524,7 +2540,7 @@ fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &s
         .json::<serde_json::Value>().map_err(|error| error.to_string())?["email"].as_str().unwrap_or("").to_string();
     let connection = open_database(app_handle)?;
     connection.execute(
-        "UPDATE gmail_oauth_state SET account_email=?1,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?2,updated_at=?2 WHERE id=1",
+        "UPDATE gmail_oauth_state SET account_email=?1,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?2,current_auth_url='',updated_at=?2 WHERE id=1",
         params![email, now_string()],
     ).map_err(|error| error.to_string())?;
     Ok(email)
@@ -2607,6 +2623,62 @@ fn start_gmail_verification_worker(app_handle: tauri::AppHandle) {
         let _ = poll_medium_verification(&app_handle);
         std::thread::sleep(std::time::Duration::from_secs(20));
     });
+}
+
+#[tauri::command]
+fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiagnosticCheck>, String> {
+    let mut checks = Vec::new();
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    checks.push(SystemDiagnosticCheck {
+        id: "sqlite".to_string(), label: "SQLite local database".to_string(), status: "ok".to_string(),
+        message: "Đã mở database và cập nhật schema thành công.".to_string(),
+    });
+
+    let resource_result = app_handle.path().resource_dir().map_err(|error| error.to_string())?.join("extension").join("manifest.json");
+    checks.push(SystemDiagnosticCheck {
+        id: "extension".to_string(), label: "Managed Browser Bridge".to_string(),
+        status: if resource_result.is_file() { "ok" } else { "error" }.to_string(),
+        message: if resource_result.is_file() { "Extension đã được đóng gói trong Desktop.".to_string() } else { "Thiếu extension/manifest.json; hãy cài lại bản phát hành mới nhất.".to_string() },
+    });
+
+    checks.push(match browser_executable() {
+        Ok(path) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "ok".to_string(), message: format!("Đã tìm thấy {}", path.display()) },
+        Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
+    });
+
+    let bridge_ready = "127.0.0.1:17321".parse().ok().and_then(|address| TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).ok()).is_some();
+    checks.push(SystemDiagnosticCheck {
+        id: "bridge".to_string(), label: "Desktop ↔ Extension bridge".to_string(), status: if bridge_ready { "ok" } else { "warning" }.to_string(),
+        message: if bridge_ready { "Bridge đang lắng nghe tại 127.0.0.1:17321.".to_string() } else { "Bridge chưa lắng nghe; khởi động lại Desktop rồi kiểm tra lại.".to_string() },
+    });
+
+    let gmail = gmail_oauth_status_record(&connection)?;
+    checks.push(SystemDiagnosticCheck {
+        id: "gmail_config".to_string(), label: "Gmail OAuth configuration".to_string(), status: if gmail.configured { "ok" } else { "error" }.to_string(),
+        message: if gmail.configured { "Client ID và Client Secret đã sẵn sàng.".to_string() } else { "Thiếu Client ID hoặc Client Secret trong Credential Manager.".to_string() },
+    });
+    checks.push(SystemDiagnosticCheck {
+        id: "gmail_connection".to_string(), label: "Gmail authorization".to_string(), status: if gmail.connected { "ok" } else if gmail.status == "authorizing" { "warning" } else { "not_tested" }.to_string(),
+        message: if gmail.connected { format!("Đã kết nối {}.", gmail.account_email) } else if gmail.status == "authorizing" { "Đang chờ hoàn tất trang Google OAuth; có thể mở lại URL dự phòng.".to_string() } else { "Chưa có refresh token; cần cấp quyền Google một lần.".to_string() },
+    });
+
+    let running_sessions: i64 = connection.query_row("SELECT COUNT(*) FROM browser_sessions WHERE status='running'", [], |row| row.get(0)).unwrap_or(0);
+    checks.push(SystemDiagnosticCheck {
+        id: "browser_sessions".to_string(), label: "Managed Browser sessions".to_string(), status: if running_sessions > 0 { "ok" } else { "not_tested" }.to_string(),
+        message: if running_sessions > 0 { format!("Có {running_sessions} browser session đang chạy.") } else { "Chưa có session đang chạy; đây không phải lỗi trước khi bắt đầu campaign.".to_string() },
+    });
+    let waiting_medium: i64 = connection.query_row("SELECT COUNT(*) FROM provisioning_jobs WHERE platform_id='medium' AND stage='email_verification' AND status IN ('waiting_user','running')", [], |row| row.get(0)).unwrap_or(0);
+    checks.push(SystemDiagnosticCheck {
+        id: "medium_checkpoint".to_string(), label: "Medium verification checkpoint".to_string(), status: if waiting_medium > 0 { "warning" } else { "not_tested" }.to_string(),
+        message: if waiting_medium > 0 { format!("Có {waiting_medium} job đang chờ Gmail worker.") } else { "Không có Medium job đang chờ email ở thời điểm kiểm tra.".to_string() },
+    });
+    let queued_index: i64 = connection.query_row("SELECT COUNT(*) FROM indexing_queue WHERE status IN ('queued','retry')", [], |row| row.get(0)).unwrap_or(0);
+    checks.push(SystemDiagnosticCheck {
+        id: "indexing".to_string(), label: "Indexing queue".to_string(), status: "not_tested".to_string(),
+        message: format!("Có {queued_index} URL đang chờ. Diagnostic chỉ xác minh hàng đợi; adapter index live cần provider hợp lệ."),
+    });
+    Ok(checks)
 }
 
 #[tauri::command]
@@ -2979,6 +3051,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 status TEXT NOT NULL DEFAULT 'not_configured',
                 last_message TEXT NOT NULL DEFAULT '',
                 last_checked_at TEXT NOT NULL DEFAULT '',
+                current_auth_url TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT ''
             );
             INSERT OR IGNORE INTO gmail_oauth_state (id) VALUES (1);
@@ -2992,6 +3065,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "entity_profiles", "banner_image_url", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "platform_validation", "evidence_saved_at", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "platform_validation", "certified_at", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "gmail_oauth_state", "current_auth_url", "TEXT NOT NULL DEFAULT ''")?;
 
     Ok(())
 }
@@ -4823,6 +4897,7 @@ pub fn run() {
             save_gmail_oauth_config,
             start_gmail_oauth,
             poll_medium_verification_now,
+            run_system_diagnostics,
             get_platforms,
             save_platform,
             get_selector_recipes,
