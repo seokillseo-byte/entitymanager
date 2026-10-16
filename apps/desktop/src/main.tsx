@@ -78,6 +78,16 @@ interface IntegrationSettingForm {
   lastTestAt: string;
 }
 
+interface GmailOAuthStatus {
+  clientId: string;
+  configured: boolean;
+  connected: boolean;
+  accountEmail: string;
+  status: string;
+  lastMessage: string;
+  lastCheckedAt: string;
+}
+
 type PlatformTypeFilter = "all" | PlatformType;
 type AutomationModeFilter = "all" | AutomationMode;
 type DifficultyFilter = "all" | PlatformDifficulty;
@@ -385,6 +395,8 @@ function App() {
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [browserVisible, setBrowserVisible] = useState(true);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
+  const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "" });
+  const [gmailOAuthDraft, setGmailOAuthDraft] = useState({ clientId: "", clientSecret: "" });
 
   useEffect(() => {
     void loadLocalData();
@@ -660,7 +672,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions, storedGmailOAuth] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -677,7 +689,8 @@ function App() {
         invoke<ProvisioningCampaignRecord[]>("get_provisioning_campaigns"),
         invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
         invoke<ProxyRecord[]>("get_proxy_records"),
-        invoke<BrowserSessionRecord[]>("get_browser_sessions")
+        invoke<BrowserSessionRecord[]>("get_browser_sessions"),
+        invoke<GmailOAuthStatus>("get_gmail_oauth_status")
       ]);
 
       setMoneySite(storedMoneySite);
@@ -697,6 +710,8 @@ function App() {
       setProvisioningJobs(storedProvisioningJobs);
       setProxyRecords(storedProxies);
       setBrowserSessions(storedBrowserSessions);
+      setGmailOAuth(storedGmailOAuth);
+      setGmailOAuthDraft((current) => ({ ...current, clientId: storedGmailOAuth.clientId }));
       setStatusMessage("Loaded from local SQLite");
     } catch {
       setStatusMessage("Preview mode using seed data");
@@ -1518,6 +1533,51 @@ function App() {
       setStatusMessage(`${setting.provider} live adapter test complete`);
     } catch {
       setStatusMessage("Live adapter tests are available only inside the packaged desktop app");
+    }
+  }
+
+  async function saveGmailOAuthConfig() {
+    try {
+      const saved = await invoke<GmailOAuthStatus>("save_gmail_oauth_config", { config: gmailOAuthDraft });
+      setGmailOAuth(saved);
+      setGmailOAuthDraft((current) => ({ ...current, clientSecret: "" }));
+      setStatusMessage("Đã lưu cấu hình Gmail OAuth an toàn.");
+    } catch (error) {
+      setStatusMessage(`Không lưu được Gmail OAuth: ${String(error)}`);
+    }
+  }
+
+  async function connectGmailOAuth() {
+    try {
+      const current = await invoke<GmailOAuthStatus>("start_gmail_oauth");
+      setGmailOAuth(current);
+      setStatusMessage("Trang Google OAuth đã mở. Hãy chấp thuận quyền một lần rồi quay lại EntityManager.");
+      window.setTimeout(async () => {
+        try { setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status")); } catch { /* keep current status */ }
+      }, 5000);
+    } catch (error) {
+      setStatusMessage(`Không bắt đầu được Gmail OAuth: ${String(error)}`);
+    }
+  }
+
+  async function refreshGmailOAuthStatus() {
+    try {
+      setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status"));
+      setStatusMessage("Đã làm mới trạng thái Gmail OAuth.");
+    } catch (error) {
+      setStatusMessage(`Không đọc được trạng thái Gmail OAuth: ${String(error)}`);
+    }
+  }
+
+  async function checkMediumVerificationNow() {
+    try {
+      const message = await invoke<string>("poll_medium_verification_now");
+      setStatusMessage(message);
+      setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status"));
+      setProvisioningJobs(await invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"));
+      setBrowserSessions(await invoke<BrowserSessionRecord[]>("get_browser_sessions"));
+    } catch (error) {
+      setStatusMessage(`Kiểm tra email chưa hoàn tất: ${String(error)}`);
     }
   }
 
@@ -3025,6 +3085,37 @@ function App() {
               <div>
                 <p className="eyebrow">Settings</p>
                 <h2>Encrypted provider keys and live adapter tests</h2>
+              </div>
+            </div>
+            <div className="setting-card gmail-oauth-card">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Gmail verification</p>
+                  <h3>Google OAuth · Medium email worker</h3>
+                </div>
+                <span className={`badge ${gmailOAuth.connected ? "good" : "warning"}`}>{gmailOAuth.connected ? "Connected" : gmailOAuth.status}</span>
+              </div>
+              <p className="platform-notes">OAuth không lưu mật khẩu Gmail. Anh chấp thuận quyền đọc một lần; refresh token được giữ trong Windows Credential Manager và worker kiểm tra email Medium mỗi 20 giây.</p>
+              <div className="settings-grid">
+                <label>
+                  Google OAuth Client ID
+                  <input value={gmailOAuthDraft.clientId} placeholder="...apps.googleusercontent.com" onChange={(event) => setGmailOAuthDraft((current) => ({ ...current, clientId: event.target.value }))} />
+                </label>
+                <label>
+                  Google OAuth Client Secret
+                  <input type="password" value={gmailOAuthDraft.clientSecret} placeholder={gmailOAuth.configured ? "Đã lưu an toàn — để trống nếu không đổi" : "Nhập client secret lần đầu"} onChange={(event) => setGmailOAuthDraft((current) => ({ ...current, clientSecret: event.target.value }))} />
+                </label>
+              </div>
+              <div className="platform-meta">
+                <span>{gmailOAuth.accountEmail || "Chưa có Gmail được cấp quyền"}</span>
+                <span>{gmailOAuth.lastCheckedAt ? `checked ${new Date(gmailOAuth.lastCheckedAt).toLocaleString("vi-VN")}` : "chưa kiểm tra email"}</span>
+              </div>
+              <p className="platform-notes">{gmailOAuth.lastMessage}</p>
+              <div className="settings-actions">
+                <button className="secondary-action" type="button" onClick={() => void saveGmailOAuthConfig()}>1. Lưu OAuth</button>
+                <button className="primary-action" type="button" disabled={!gmailOAuth.configured} onClick={() => void connectGmailOAuth()}>2. Kết nối Gmail</button>
+                <button className="secondary-action" type="button" onClick={() => void refreshGmailOAuthStatus()}>Làm mới trạng thái</button>
+                <button className="secondary-action" type="button" disabled={!gmailOAuth.connected} onClick={() => void checkMediumVerificationNow()}>Kiểm tra Medium ngay</button>
               </div>
             </div>
             <div className="settings-grid">
