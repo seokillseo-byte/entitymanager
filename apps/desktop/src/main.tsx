@@ -86,7 +86,10 @@ interface GmailOAuthStatus {
   status: string;
   lastMessage: string;
   lastCheckedAt: string;
+  authorizationUrl: string;
 }
+
+interface SystemDiagnosticCheck { id: string; label: string; status: "ok" | "warning" | "error" | "not_tested"; message: string; }
 
 type PlatformTypeFilter = "all" | PlatformType;
 type AutomationModeFilter = "all" | AutomationMode;
@@ -395,13 +398,35 @@ function App() {
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [browserVisible, setBrowserVisible] = useState(true);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
-  const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "" });
+  const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
   const [gmailOAuthDraft, setGmailOAuthDraft] = useState({ clientId: "", clientSecret: "" });
+  const [gmailActionMessage, setGmailActionMessage] = useState("");
+  const [systemDiagnostics, setSystemDiagnostics] = useState<SystemDiagnosticCheck[]>([]);
+  const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
 
   useEffect(() => {
     void loadLocalData();
     void startExtensionBridge();
   }, []);
+
+  useEffect(() => {
+    if (gmailOAuth.status !== "authorizing") return;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const latest = await invoke<GmailOAuthStatus>("get_gmail_oauth_status");
+        setGmailOAuth(latest);
+        if (latest.connected) {
+          setGmailActionMessage(`Đã kết nối Gmail ${latest.accountEmail}. Worker xác minh Medium đã sẵn sàng.`);
+          setStatusMessage(`Gmail OAuth connected: ${latest.accountEmail}`);
+        } else if (latest.status === "error") {
+          setGmailActionMessage(latest.lastMessage);
+        }
+      } catch (error) {
+        setGmailActionMessage(`Không làm mới được trạng thái OAuth: ${String(error)}`);
+      }
+    }, 2000);
+    return () => window.clearInterval(intervalId);
+  }, [gmailOAuth.status]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1538,34 +1563,66 @@ function App() {
 
   async function saveGmailOAuthConfig() {
     try {
+      setGmailActionMessage("Đang lưu Client ID và Client Secret vào Windows Credential Manager...");
       const saved = await invoke<GmailOAuthStatus>("save_gmail_oauth_config", { config: gmailOAuthDraft });
       setGmailOAuth(saved);
       setGmailOAuthDraft((current) => ({ ...current, clientSecret: "" }));
       setStatusMessage("Đã lưu cấu hình Gmail OAuth an toàn.");
+      setGmailActionMessage("Đã lưu cấu hình. Bây giờ nhấn “2. Kết nối Gmail”.");
     } catch (error) {
       setStatusMessage(`Không lưu được Gmail OAuth: ${String(error)}`);
+      setGmailActionMessage(`Lỗi lưu OAuth: ${String(error)}`);
     }
   }
 
   async function connectGmailOAuth() {
     try {
+      setGmailActionMessage("Đang tạo phiên OAuth và mở trang Google...");
       const current = await invoke<GmailOAuthStatus>("start_gmail_oauth");
       setGmailOAuth(current);
       setStatusMessage("Trang Google OAuth đã mở. Hãy chấp thuận quyền một lần rồi quay lại EntityManager.");
-      window.setTimeout(async () => {
-        try { setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status")); } catch { /* keep current status */ }
-      }, 5000);
+      setGmailActionMessage(current.authorizationUrl ? "Đang chờ Google xác nhận. Nếu trình duyệt không tự mở, bấm “Mở trang Google OAuth”." : current.lastMessage);
     } catch (error) {
       setStatusMessage(`Không bắt đầu được Gmail OAuth: ${String(error)}`);
+      setGmailActionMessage(`Không bắt đầu được OAuth: ${String(error)}`);
     }
   }
 
   async function refreshGmailOAuthStatus() {
     try {
-      setGmailOAuth(await invoke<GmailOAuthStatus>("get_gmail_oauth_status"));
+      const latest = await invoke<GmailOAuthStatus>("get_gmail_oauth_status");
+      setGmailOAuth(latest);
+      setGmailActionMessage(latest.lastMessage);
       setStatusMessage("Đã làm mới trạng thái Gmail OAuth.");
     } catch (error) {
       setStatusMessage(`Không đọc được trạng thái Gmail OAuth: ${String(error)}`);
+    }
+  }
+
+  async function openGmailAuthorizationPage() {
+    if (!gmailOAuth.authorizationUrl) {
+      setGmailActionMessage("Chưa có URL OAuth. Hãy nhấn “2. Kết nối Gmail” để tạo phiên mới.");
+      return;
+    }
+    try {
+      await invoke<string>("open_external_url", { url: gmailOAuth.authorizationUrl });
+      setGmailActionMessage("Đã yêu cầu Windows mở trang Google. Nếu cửa sổ nằm phía sau, kiểm tra thanh tác vụ Chrome/Edge.");
+    } catch (error) {
+      setGmailActionMessage(`Windows không mở được URL: ${String(error)}. Có thể copy URL dự phòng bên dưới.`);
+    }
+  }
+
+  async function runSystemDiagnostics() {
+    setDiagnosticsRunning(true);
+    try {
+      const checks = await invoke<SystemDiagnosticCheck[]>("run_system_diagnostics");
+      setSystemDiagnostics(checks);
+      const errors = checks.filter((check) => check.status === "error").length;
+      setStatusMessage(errors ? `Diagnostics tìm thấy ${errors} lỗi cần xử lý.` : "Diagnostics hoàn tất; không thấy lỗi nền tảng bắt buộc.");
+    } catch (error) {
+      setStatusMessage(`Không chạy được System Diagnostics: ${String(error)}`);
+    } finally {
+      setDiagnosticsRunning(false);
     }
   }
 
@@ -3108,15 +3165,23 @@ function App() {
               </div>
               <div className="platform-meta">
                 <span>{gmailOAuth.accountEmail || "Chưa có Gmail được cấp quyền"}</span>
-                <span>{gmailOAuth.lastCheckedAt ? `checked ${new Date(gmailOAuth.lastCheckedAt).toLocaleString("vi-VN")}` : "chưa kiểm tra email"}</span>
+                <span>{gmailOAuth.lastCheckedAt ? `checked ${new Date(Number(gmailOAuth.lastCheckedAt) * 1000).toLocaleString("vi-VN")}` : "chưa kiểm tra email"}</span>
               </div>
               <p className="platform-notes">{gmailOAuth.lastMessage}</p>
+              {gmailActionMessage && <div className={`status-message ${gmailOAuth.connected ? "success" : gmailOAuth.status === "error" ? "warning" : ""}`} role="status"><strong>Tiến trình Gmail OAuth</strong><span>{gmailActionMessage}</span></div>}
               <div className="settings-actions">
                 <button className="secondary-action" type="button" onClick={() => void saveGmailOAuthConfig()}>1. Lưu OAuth</button>
                 <button className="primary-action" type="button" disabled={!gmailOAuth.configured} onClick={() => void connectGmailOAuth()}>2. Kết nối Gmail</button>
+                {gmailOAuth.authorizationUrl && <button className="secondary-action" type="button" onClick={() => void openGmailAuthorizationPage()}>Mở trang Google OAuth</button>}
                 <button className="secondary-action" type="button" onClick={() => void refreshGmailOAuthStatus()}>Làm mới trạng thái</button>
                 <button className="secondary-action" type="button" disabled={!gmailOAuth.connected} onClick={() => void checkMediumVerificationNow()}>Kiểm tra Medium ngay</button>
               </div>
+              {gmailOAuth.authorizationUrl && <details><summary>URL OAuth dự phòng</summary><textarea readOnly rows={4} value={gmailOAuth.authorizationUrl} onFocus={(event) => event.currentTarget.select()} /></details>}
+            </div>
+            <div className="setting-card">
+              <div className="panel-header"><div><p className="eyebrow">System Diagnostics</p><h3>Kiểm tra nền tảng tự động hóa</h3></div><button className="secondary-action" type="button" disabled={diagnosticsRunning} onClick={() => void runSystemDiagnostics()}>{diagnosticsRunning ? "Đang kiểm tra..." : "Chạy kiểm tra toàn bộ"}</button></div>
+              <p className="platform-notes">Kiểm tra SQLite, Bridge, extension đóng gói, Chromium, Credential Manager, Gmail OAuth, browser session, Medium checkpoint và Indexing Queue. Các dịch vụ bên ngoài chưa có chiến dịch/live key sẽ được ghi “not tested”, không báo thành công giả.</p>
+              {systemDiagnostics.length > 0 && <div className="browser-session-list">{systemDiagnostics.map((check) => <div className="browser-session-row" key={check.id}><div><strong>{check.label}</strong><span>{check.status}</span><small>{check.message}</small></div></div>)}</div>}
             </div>
             <div className="settings-grid">
               {settings.map((setting) => (
