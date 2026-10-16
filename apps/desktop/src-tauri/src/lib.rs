@@ -1,7 +1,10 @@
 use base64::{engine::general_purpose, Engine as _};
+use rand::{distributions::Alphanumeric, Rng};
+use regex::Regex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -13,6 +16,29 @@ use tauri::Manager;
 const SECRET_SERVICE: &str = "EntityManager";
 const BUILTIN_SELECTOR_RECIPE_VERSION: i64 = 1_797_000_000;
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
+static GMAIL_VERIFICATION_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+
+const GMAIL_CLIENT_SECRET_KEY: &str = "gmail_oauth_client_secret";
+const GMAIL_REFRESH_TOKEN_KEY: &str = "gmail_oauth_refresh_token";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailOAuthStatus {
+    client_id: String,
+    configured: bool,
+    connected: bool,
+    account_email: String,
+    status: String,
+    last_message: String,
+    last_checked_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailOAuthConfigInput {
+    client_id: String,
+    client_secret: String,
+}
 
 fn image_asset_value_to_bridge_value(value: &str) -> String {
     let trimmed = value.trim();
@@ -2347,6 +2373,241 @@ fn get_proxy_records(app_handle: tauri::AppHandle) -> Result<Vec<ProxyRecord>, S
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+fn gmail_oauth_status_record(connection: &Connection) -> Result<GmailOAuthStatus, String> {
+    connection.query_row(
+        "SELECT client_id,account_email,status,last_message,last_checked_at FROM gmail_oauth_state WHERE id=1",
+        [],
+        |row| {
+            let client_id: String = row.get(0)?;
+            let status: String = row.get(2)?;
+            Ok(GmailOAuthStatus {
+                configured: !client_id.trim().is_empty() && has_secret(GMAIL_CLIENT_SECRET_KEY),
+                connected: status == "connected" && has_secret(GMAIL_REFRESH_TOKEN_KEY),
+                client_id,
+                account_email: row.get(1)?,
+                status,
+                last_message: row.get(3)?,
+                last_checked_at: row.get(4)?,
+            })
+        },
+    ).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_gmail_oauth_status(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    gmail_oauth_status_record(&connection)
+}
+
+#[tauri::command]
+fn save_gmail_oauth_config(app_handle: tauri::AppHandle, config: GmailOAuthConfigInput) -> Result<GmailOAuthStatus, String> {
+    let client_id = config.client_id.trim();
+    if client_id.is_empty() || !client_id.ends_with(".apps.googleusercontent.com") {
+        return Err("Google OAuth Client ID không hợp lệ; giá trị phải kết thúc bằng .apps.googleusercontent.com".to_string());
+    }
+    if !config.client_secret.trim().is_empty() {
+        save_secret(GMAIL_CLIENT_SECRET_KEY, &config.client_secret)?;
+    } else if !has_secret(GMAIL_CLIENT_SECRET_KEY) {
+        return Err("Hãy nhập Client Secret của OAuth Desktop app trong lần cấu hình đầu tiên.".to_string());
+    }
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    connection.execute(
+        "UPDATE gmail_oauth_state SET client_id=?1,status='configured',last_message='Đã lưu cấu hình OAuth; chưa kết nối Gmail.',updated_at=?2 WHERE id=1",
+        params![client_id, timestamp],
+    ).map_err(|error| error.to_string())?;
+    gmail_oauth_status_record(&connection)
+}
+
+#[tauri::command]
+fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let status = gmail_oauth_status_record(&connection)?;
+    if !status.configured {
+        return Err("Hãy lưu Google OAuth Client ID và Client Secret trước.".to_string());
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:17322")
+        .map_err(|error| format!("Không mở được OAuth callback 127.0.0.1:17322: {error}"))?;
+    listener.set_nonblocking(true).map_err(|error| error.to_string())?;
+    let verifier: String = rand::thread_rng().sample_iter(&Alphanumeric).take(64).map(char::from).collect();
+    let state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
+    let challenge = general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let redirect_uri = "http://127.0.0.1:17322/oauth/callback";
+    let mut auth_url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth").map_err(|error| error.to_string())?;
+    auth_url.query_pairs_mut()
+        .append_pair("client_id", &status.client_id)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("response_type", "code")
+        .append_pair("scope", "openid email https://www.googleapis.com/auth/gmail.readonly")
+        .append_pair("access_type", "offline")
+        .append_pair("prompt", "consent")
+        .append_pair("state", &state)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256");
+
+    connection.execute(
+        "UPDATE gmail_oauth_state SET status='authorizing',last_message='Đang chờ anh chấp thuận quyền Gmail trên trang Google.',updated_at=?1 WHERE id=1",
+        params![now_string()],
+    ).map_err(|error| error.to_string())?;
+
+    let callback_app = app_handle.clone();
+    let client_id = status.client_id.clone();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut buffer = [0_u8; 16_384];
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..read]);
+                    let target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
+                    let parsed = url::Url::parse(&format!("http://127.0.0.1{target}"));
+                    let result = parsed.map_err(|error| error.to_string()).and_then(|url| {
+                        let values = url.query_pairs().collect::<std::collections::HashMap<_, _>>();
+                        if values.get("state").map(|value| value.as_ref()) != Some(state.as_str()) {
+                            return Err("OAuth state không khớp; yêu cầu đã bị hủy để bảo vệ tài khoản.".to_string());
+                        }
+                        let code = values.get("code").map(|value| value.to_string()).ok_or_else(|| {
+                            values.get("error").map(|value| format!("Google OAuth từ chối: {value}")).unwrap_or_else(|| "Google không trả về authorization code.".to_string())
+                        })?;
+                        complete_gmail_oauth(&callback_app, &client_id, &code, &verifier, redirect_uri)
+                    });
+                    let (title, message) = match result {
+                        Ok(email) => ("Kết nối Gmail thành công", format!("EntityManager đã được cấp quyền đọc email cho {email}. Anh có thể đóng tab này.")),
+                        Err(error) => {
+                            if let Ok(connection) = open_database(&callback_app) {
+                                let _ = connection.execute("UPDATE gmail_oauth_state SET status='error',last_message=?1,updated_at=?2 WHERE id=1", params![&error, now_string()]);
+                            }
+                            ("Kết nối Gmail thất bại", format!("{error} Hãy quay lại EntityManager và thử lại."))
+                        }
+                    };
+                    let body = format!("<!doctype html><meta charset='utf-8'><title>{title}</title><style>body{{font:16px system-ui;max-width:720px;margin:80px auto;padding:24px}}h1{{color:#163a5f}}</style><h1>{title}</h1><p>{message}</p>");
+                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                    let _ = stream.write_all(response.as_bytes());
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        if let Ok(connection) = open_database(&callback_app) {
+                            let _ = connection.execute("UPDATE gmail_oauth_state SET status='configured',last_message='OAuth hết thời gian chờ; hãy bấm Kết nối Gmail lại.',updated_at=?1 WHERE id=1", params![now_string()]);
+                        }
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    open_external_url(auth_url.to_string())?;
+    gmail_oauth_status_record(&connection)
+}
+
+fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &str, verifier: &str, redirect_uri: &str) -> Result<String, String> {
+    let client_secret = read_secret(GMAIL_CLIENT_SECRET_KEY)?;
+    let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
+        ("client_id", client_id), ("client_secret", client_secret.as_str()), ("code", code),
+        ("code_verifier", verifier), ("grant_type", "authorization_code"), ("redirect_uri", redirect_uri),
+    ]).send().map_err(|error| format!("Không đổi được OAuth code: {error}"))?
+        .error_for_status().map_err(|error| format!("Google từ chối OAuth token: {error}"))?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
+    let refresh_token = response["refresh_token"].as_str().ok_or_else(|| "Google không cấp refresh token. Hãy thu hồi quyền cũ rồi kết nối lại với prompt consent.".to_string())?;
+    let access_token = response["access_token"].as_str().ok_or_else(|| "Google không trả về access token.".to_string())?;
+    save_secret(GMAIL_REFRESH_TOKEN_KEY, refresh_token)?;
+    let email = reqwest::blocking::Client::new().get("https://openidconnect.googleapis.com/v1/userinfo")
+        .bearer_auth(access_token).send().map_err(|error| error.to_string())?
+        .error_for_status().map_err(|error| error.to_string())?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?["email"].as_str().unwrap_or("").to_string();
+    let connection = open_database(app_handle)?;
+    connection.execute(
+        "UPDATE gmail_oauth_state SET account_email=?1,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?2,updated_at=?2 WHERE id=1",
+        params![email, now_string()],
+    ).map_err(|error| error.to_string())?;
+    Ok(email)
+}
+
+fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let status = gmail_oauth_status_record(&connection)?;
+    if !status.connected { return Err("Gmail OAuth chưa kết nối.".to_string()); }
+    let refresh_token = read_secret(GMAIL_REFRESH_TOKEN_KEY)?;
+    let client_secret = read_secret(GMAIL_CLIENT_SECRET_KEY)?;
+    let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
+        ("client_id", status.client_id.as_str()), ("client_secret", client_secret.as_str()),
+        ("refresh_token", refresh_token.as_str()), ("grant_type", "refresh_token"),
+    ]).send().map_err(|error| format!("Không làm mới được Gmail token: {error}"))?
+        .error_for_status().map_err(|error| format!("Google từ chối refresh token: {error}"))?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
+    response["access_token"].as_str().map(str::to_string).ok_or_else(|| "Google không trả về access token mới.".to_string())
+}
+
+fn medium_verification_link(raw_message: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(raw_message).replace("=\r\n", "").replace("&amp;", "&");
+    let pattern = Regex::new(r#"https://[^\s\"'<>]+"#).ok()?;
+    pattern.find_iter(&text).map(|item| item.as_str().trim_end_matches(['.', ')', ']', ';']).to_string()).find(|url| {
+        let lower = url.to_ascii_lowercase();
+        lower.contains("medium.com") && ["verify", "callback", "signin", "email"].iter().any(|needle| lower.contains(needle))
+    })
+}
+
+fn poll_medium_verification(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let job: (String, String, i64) = connection.query_row(
+        "SELECT id,account_id,CAST(updated_at AS INTEGER) FROM provisioning_jobs WHERE platform_id='medium' AND stage='email_verification' AND status IN ('waiting_user','running') ORDER BY CAST(updated_at AS INTEGER) DESC LIMIT 1",
+        [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|error| if matches!(error, rusqlite::Error::QueryReturnedNoRows) { "Không có Medium checkpoint đang chờ email xác minh.".to_string() } else { error.to_string() })?;
+    let access_token = gmail_access_token(app_handle)?;
+    let client = reqwest::blocking::Client::new();
+    let query = "from:(medium.com) newer_than:7d";
+    let list = client.get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
+        .bearer_auth(&access_token).query(&[("q", query), ("maxResults", "10")]).send()
+        .map_err(|error| format!("Không đọc được Gmail: {error}"))?.error_for_status().map_err(|error| error.to_string())?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
+    let messages = list["messages"].as_array().cloned().unwrap_or_default();
+    for message in messages {
+        let Some(id) = message["id"].as_str() else { continue };
+        let payload = client.get(format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}"))
+            .bearer_auth(&access_token).query(&[("format", "raw")]).send().map_err(|error| error.to_string())?
+            .error_for_status().map_err(|error| error.to_string())?.json::<serde_json::Value>().map_err(|error| error.to_string())?;
+        let message_time_ms = payload["internalDate"].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+        if message_time_ms > 0 && message_time_ms < job.2.saturating_mul(1000) { continue; }
+        let Some(raw) = payload["raw"].as_str() else { continue };
+        let bytes = general_purpose::URL_SAFE_NO_PAD.decode(raw).or_else(|_| general_purpose::URL_SAFE.decode(raw)).unwrap_or_default();
+        if let Some(link) = medium_verification_link(&bytes) {
+            let session_id: String = connection.query_row(
+                "SELECT id FROM browser_sessions WHERE job_id=?1 AND status='running' ORDER BY updated_at DESC LIMIT 1",
+                params![job.0], |row| row.get(0),
+            ).map_err(|_| "Đã tìm thấy link Medium nhưng Managed Browser session không còn chạy.".to_string())?;
+            open_managed_browser_url(app_handle.clone(), session_id, link)?;
+            let timestamp = now_string();
+            connection.execute("UPDATE provisioning_jobs SET stage='login',status='running',last_message='Gmail OAuth đã tìm thấy và mở link xác minh Medium.',updated_at=?1 WHERE id=?2", params![timestamp,job.0]).map_err(|error| error.to_string())?;
+            connection.execute("UPDATE gmail_oauth_state SET last_message='Đã mở link xác minh Medium trong Managed Browser.',last_checked_at=?1,updated_at=?1 WHERE id=1", params![timestamp]).map_err(|error| error.to_string())?;
+            return Ok("Đã tìm thấy email và mở link xác minh Medium trong đúng Managed Browser profile.".to_string());
+        }
+    }
+    connection.execute("UPDATE gmail_oauth_state SET last_message='Chưa tìm thấy email xác minh Medium; worker sẽ thử lại.',last_checked_at=?1,updated_at=?1 WHERE id=1", params![now_string()]).map_err(|error| error.to_string())?;
+    Ok("Chưa tìm thấy email xác minh Medium; worker sẽ tự thử lại.".to_string())
+}
+
+#[tauri::command]
+fn poll_medium_verification_now(app_handle: tauri::AppHandle) -> Result<String, String> {
+    poll_medium_verification(&app_handle)
+}
+
+fn start_gmail_verification_worker(app_handle: tauri::AppHandle) {
+    if GMAIL_VERIFICATION_WORKER_STARTED.swap(true, Ordering::SeqCst) { return; }
+    std::thread::spawn(move || loop {
+        let _ = poll_medium_verification(&app_handle);
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    });
+}
+
 #[tauri::command]
 fn save_proxy_record(app_handle: tauri::AppHandle, proxy: ProxyRecord) -> Result<ProxyRecord, String> {
     if proxy.host.trim().is_empty() || !(1..=65535).contains(&proxy.port) { return Err("Proxy cần host và port hợp lệ.".to_string()); }
@@ -2709,6 +2970,17 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_browser_sessions_job ON browser_sessions(job_id, updated_at);
+
+            CREATE TABLE IF NOT EXISTS gmail_oauth_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                client_id TEXT NOT NULL DEFAULT '',
+                account_email TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'not_configured',
+                last_message TEXT NOT NULL DEFAULT '',
+                last_checked_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            INSERT OR IGNORE INTO gmail_oauth_state (id) VALUES (1);
             ",
         )
         .map_err(|error| error.to_string())?;
@@ -4527,6 +4799,10 @@ fn platform(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            start_gmail_verification_worker(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_health,
             get_indexing_queue_count,
@@ -4542,6 +4818,10 @@ pub fn run() {
             save_integration_setting,
             test_integration_setting,
             test_live_integration_setting,
+            get_gmail_oauth_status,
+            save_gmail_oauth_config,
+            start_gmail_oauth,
+            poll_medium_verification_now,
             get_platforms,
             save_platform,
             get_selector_recipes,
