@@ -3463,3 +3463,80 @@ function buildProfileAngle(platform: PlatformLibraryRecord, profile: EntityProfi
   if (platform.entityValue === "local") {
     return `Reinforce NAP consistency for ${profile.brandName} using address, phone, and official website data.`;
   }
+
+  if (platform.entityValue === "media") {
+    return `Use branded visuals and proof assets to make ${profile.brandName} recognizable across media platforms.`;
+  }
+
+  if (platform.entityValue === "authority") {
+    return `Build high-trust authority proof around ${profile.legalName || profile.brandName} with clear ownership and expertise signals.`;
+  }
+
+  return `Create a consistent ${profile.profileType} profile for ${profile.brandName} and connect it back to the money site.`;
+}
+
+function requiredAssetsForPlatform(platform: PlatformLibraryRecord): string[] {
+  const assets = ["brand bio", "logo"];
+
+  if (platform.entityValue === "author") {
+    assets.push("author bio");
+  }
+
+  if (platform.entityValue === "local") {
+    assets.push("NAP");
+  }
+
+  if (["media", "video", "audio", "portfolio"].includes(platform.type)) {
+    assets.push("media asset");
+  }
+
+  return assets;
+}
+
+function workflowStepsForPlatform(platform: PlatformLibraryRecord): string[] {
+  const steps = ["Prepare profile data", "Create or review account", "Add brand/EEAT details", "Attach evidence URL"];
+
+  if (platform.requiresCaptcha) {
+    steps.splice(2, 0, "Solve CAPTCHA/manual gate");
+  }
+
+  if (platform.automationMode === "manual_review") {
+    steps.push("Manual QA before publishing");
+  }
+
+  return steps;
+}
+
+function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
+  const exists = items.some((item) => item.id === next.id);
+
+  if (!exists) {
+    return [next, ...items];
+  }
+
+  return items.map((item) => (item.id === next.id ? next : item));
+}
+
+function upsertByPlatformId<T extends { platformId: string }>(items: T[], next: T): T[] {
+  const exists = items.some((item) => item.platformId === next.platformId);
+
+  if (!exists) {
+    return [next, ...items];
+  }
+
+  return items.map((item) => (item.platformId === next.platformId ? next : item));
+}
+
+function maskToken(token: string): string {
+  if (token.length <= 12) {
+    return "stored token";
+  }
+
+  return `${token.slice(0, 6)}...${token.slice(-6)}`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
