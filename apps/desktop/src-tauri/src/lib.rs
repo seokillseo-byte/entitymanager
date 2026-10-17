@@ -2813,6 +2813,29 @@ fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessi
 #[tauri::command]
 fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
     if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Managed Browser chỉ mở URL http/https.".to_string()); }
+    // A campaign retry reuses the account's persistent Chrome profile. Chromium
+    // otherwise forwards the new URL to an older process, which may still have a
+    // stale bundled extension loaded and leaves the new worker unable to run.
+    // Stop only sessions that own this exact account profile before relaunching.
+    let previous_sessions = get_browser_sessions(app_handle.clone())?;
+    for previous in previous_sessions.into_iter().filter(|session| {
+        session.status == "running" && session.account_id == request.account_id
+    }) {
+        #[cfg(target_os = "windows")]
+        {
+            let mut command = Command::new("taskkill");
+            command.creation_flags(CREATE_NO_WINDOW);
+            let _ = command.args(["/PID", &previous.process_id.to_string(), "/T", "/F"]).output();
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = Command::new("kill").arg(previous.process_id.to_string()).output();
+
+        let connection = open_database(&app_handle)?;
+        connection.execute(
+            "UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Đã thay phiên cũ để nạp Bridge mới cho campaign.',updated_at=?1 WHERE id=?2",
+            params![now_string(), previous.id],
+        ).map_err(|error| error.to_string())?;
+    }
     let executable = browser_executable(&app_handle)?;
     let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -2821,7 +2844,6 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     command.arg(format!("--user-data-dir={}", root.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
-        .arg("--remote-debugging-port=0")
         .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
         .arg(format!("--disable-extensions-except={}", extension_directory.display()))
         .arg(format!("--load-extension={}", extension_directory.display()));
@@ -2859,7 +2881,11 @@ fn open_managed_browser_url(app_handle: tauri::AppHandle, session_id: String, ur
 fn stop_managed_browser(app_handle: tauri::AppHandle, session_id: String) -> Result<BrowserSessionRecord, String> {
     let session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
     #[cfg(target_os = "windows")]
-    let _ = Command::new("taskkill").args(["/PID", &session.process_id.to_string(), "/T", "/F"]).output();
+    {
+        let mut command = Command::new("taskkill");
+        command.creation_flags(CREATE_NO_WINDOW);
+        let _ = command.args(["/PID", &session.process_id.to_string(), "/T", "/F"]).output();
+    }
     #[cfg(not(target_os = "windows"))]
     let _ = Command::new("kill").arg(session.process_id.to_string()).output();
     let connection = open_database(&app_handle)?; let timestamp = now_string();
