@@ -4,7 +4,7 @@ import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitB
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, BrowserSessionRecord, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, ProxyRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, BrowserSessionRecord, BrowserStorageOverview, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, ProxyRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
@@ -347,6 +347,19 @@ function signupUrlForPlatform(platformId: string, fallbackUrl = "") {
   return urls[platformId] ?? fallbackUrl;
 }
 
+function formatStorage(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
+}
+
+function identityIdFor(moneySite: MoneySiteForm, profile: EntityProfileRecord) {
+  const source = `${moneySite.domain || "site"}-${profile.id || profile.email || "primary"}`.toLowerCase();
+  const safe = source.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return `identity-${safe || "primary"}`;
+}
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
@@ -395,6 +408,8 @@ function App() {
   const [campaignLaunching, setCampaignLaunching] = useState(false);
   const [proxyRecords, setProxyRecords] = useState<ProxyRecord[]>([]);
   const [browserSessions, setBrowserSessions] = useState<BrowserSessionRecord[]>([]);
+  const [browserStorage, setBrowserStorage] = useState<BrowserStorageOverview | null>(null);
+  const [storageBusy, setStorageBusy] = useState("");
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [browserVisible, setBrowserVisible] = useState(true);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
@@ -698,7 +713,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions, storedGmailOAuth] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions, storedBrowserStorage, storedGmailOAuth] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -716,6 +731,7 @@ function App() {
         invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
         invoke<ProxyRecord[]>("get_proxy_records"),
         invoke<BrowserSessionRecord[]>("get_browser_sessions"),
+        invoke<BrowserStorageOverview>("get_browser_storage_overview"),
         invoke<GmailOAuthStatus>("get_gmail_oauth_status")
       ]);
 
@@ -736,6 +752,7 @@ function App() {
       setProvisioningJobs(storedProvisioningJobs);
       setProxyRecords(storedProxies);
       setBrowserSessions(storedBrowserSessions);
+      setBrowserStorage(storedBrowserStorage);
       setGmailOAuth(storedGmailOAuth);
       setGmailOAuthDraft((current) => ({ ...current, clientId: storedGmailOAuth.clientId }));
       setStatusMessage("Loaded from local SQLite");
@@ -1064,7 +1081,8 @@ function App() {
       platformId: job.platformId,
       url: job.signupUrl || job.profileUrl,
       proxyId: selectedProxyId,
-      visible: browserVisible
+      visible: browserVisible,
+      identityId: identityIdFor(moneySite, entityProfile)
     } });
     setBrowserSessions((current) => upsertById(current, session));
     return session;
@@ -1100,7 +1118,8 @@ function App() {
         platformId: "control-center",
         url: "https://accounts.google.com/",
         proxyId: "",
-        visible
+        visible,
+        identityId: identityIdFor(moneySite, entityProfile)
       } });
       setBrowserSessions((current) => upsertById(current, session));
       setStatusMessage(visible ? "Đã mở Chromium được quản lý." : "Đã khởi chạy Chromium ở chế độ ẩn.");
@@ -1127,6 +1146,36 @@ function App() {
     } catch (error) {
       setStatusMessage(`Không mở được Gmail bootstrap: ${String(error)}`);
     }
+  }
+
+  async function refreshBrowserStorage() {
+    setStorageBusy("refresh");
+    try {
+      setBrowserStorage(await invoke<BrowserStorageOverview>("get_browser_storage_overview"));
+      setStatusMessage("Đã đo lại dung lượng Browser Identity.");
+    } catch (error) { setStatusMessage(`Không đo được dung lượng: ${String(error)}`); }
+    finally { setStorageBusy(""); }
+  }
+
+  async function saveStorageLimit(maxGb: number) {
+    if (!browserStorage) return;
+    setStorageBusy("policy");
+    try {
+      const policy = { ...browserStorage.policy, maxTotalBytes: Math.round(maxGb * 1024 ** 3) };
+      setBrowserStorage(await invoke<BrowserStorageOverview>("save_browser_storage_policy", { policy }));
+      setStatusMessage(`Đã lưu trần dung lượng ${maxGb} GB. Tool không chiếm sẵn dung lượng này.`);
+    } catch (error) { setStatusMessage(`Không lưu được Storage Policy: ${String(error)}`); }
+    finally { setStorageBusy(""); }
+  }
+
+  async function maintainBrowserIdentity(command: "cleanup_browser_identity" | "archive_browser_identity" | "restore_browser_identity", identityId: string) {
+    setStorageBusy(`${command}:${identityId}`);
+    try {
+      const overview = await invoke<BrowserStorageOverview>(command, { identityId });
+      setBrowserStorage(overview);
+      setStatusMessage(overview.message);
+    } catch (error) { setStatusMessage(`Không thể bảo trì Browser Identity: ${String(error)}`); }
+    finally { setStorageBusy(""); }
   }
 
   async function startFullProvisioningCampaign() {
@@ -3324,6 +3373,34 @@ function App() {
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="setting-card">
+              <div className="panel-header">
+                <div><p className="eyebrow">Persistent Identity Storage</p><h3>Browser Identity & dung lượng</h3></div>
+                <span className={`badge ${browserStorage?.safetyStatus === "healthy" ? "good" : "warning"}`}>{browserStorage?.safetyStatus ?? "loading"}</span>
+              </div>
+              <p className="platform-notes">Một identity dùng chung phiên đăng nhập cho các platform của cùng entity. Tool giữ cookie/Local Storage để chăm sóc lâu dài; không tạo một profile Chromium mới cho từng platform.</p>
+              {browserStorage && <>
+                <div className="settings-grid">
+                  <label>Trần tổng dung lượng (GB)<input type="number" min="10" step="10" defaultValue={Math.round(browserStorage.policy.maxTotalBytes / 1024 ** 3)} onBlur={(event) => void saveStorageLimit(Number(event.currentTarget.value))} /></label>
+                  <label>Dự phòng ổ đĩa tối thiểu<input readOnly value={`${formatStorage(browserStorage.policy.minFreeBytes)} hoặc ${browserStorage.policy.minFreePercent}%`} /></label>
+                  <label>Đang dùng<input readOnly value={`${formatStorage(browserStorage.totalProfileBytes)} / ${formatStorage(browserStorage.policy.maxTotalBytes)}`} /></label>
+                  <label>Ổ đĩa còn trống<input readOnly value={`${formatStorage(browserStorage.freeDiskBytes)} / ${formatStorage(browserStorage.diskCapacityBytes)}`} /></label>
+                </div>
+                <p className="platform-notes">{browserStorage.message}</p>
+                <div className="settings-actions"><button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void refreshBrowserStorage()}>{storageBusy === "refresh" ? "Đang đo..." : "Đo lại dung lượng"}</button></div>
+                <div className="browser-session-list">
+                  {browserStorage.identities.map((identity) => <div className="browser-session-row" key={identity.id}>
+                    <div><strong>{identity.name} {identity.isPinned ? "· pinned" : ""}</strong><span>{identity.status} · {formatStorage(identity.sizeBytes)} · giữ {identity.retentionDays} ngày</span><small>{identity.email || identity.id}</small></div>
+                    <div className="session-actions">
+                      {identity.status === "archived" ? <button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void maintainBrowserIdentity("restore_browser_identity", identity.id)}>Khôi phục</button> : <>
+                        <button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void maintainBrowserIdentity("cleanup_browser_identity", identity.id)}>Dọn cache</button>
+                        <button className="secondary-action" type="button" disabled={Boolean(storageBusy) || identity.isPinned} title={identity.isPinned ? "Identity chính đang được ghim để tránh archive nhầm" : "Nén profile khi dự án tạm nghỉ"} onClick={() => void maintainBrowserIdentity("archive_browser_identity", identity.id)}>Archive</button>
+                      </>}
+                    </div>
+                  </div>)}
+                </div>
+              </>}
             </div>
             <div className="setting-card">
               <div className="panel-header"><div><p className="eyebrow">System Diagnostics</p><h3>Kiểm tra nền tảng tự động hóa</h3></div><button className="secondary-action" type="button" disabled={diagnosticsRunning} onClick={() => void runSystemDiagnostics()}>{diagnosticsRunning ? "Đang kiểm tra..." : "Chạy kiểm tra toàn bộ"}</button></div>

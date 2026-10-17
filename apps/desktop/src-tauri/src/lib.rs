@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
@@ -408,7 +408,11 @@ struct BrowserLaunchRequest {
     url: String,
     proxy_id: String,
     visible: bool,
+    #[serde(default = "default_identity_id")]
+    identity_id: String,
 }
+
+fn default_identity_id() -> String { "identity-primary".to_string() }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -427,6 +431,31 @@ struct BrowserSessionRecord {
     last_message: String,
     created_at: String,
     updated_at: String,
+    identity_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserIdentityProfile {
+    id: String, name: String, email: String, proxy_id: String, profile_directory: String,
+    status: String, retention_days: i64, is_pinned: bool, size_bytes: i64,
+    last_used_at: String, last_cleanup_at: String, archive_path: String,
+    created_at: String, updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserStoragePolicy {
+    max_total_bytes: i64, min_free_bytes: i64, min_free_percent: i64, auto_cleanup: bool,
+    archive_after_days: i64, warning_profile_bytes: i64, cleanup_profile_bytes: i64,
+    hard_profile_bytes: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserStorageOverview {
+    policy: BrowserStoragePolicy, identities: Vec<BrowserIdentityProfile>, total_profile_bytes: i64,
+    free_disk_bytes: i64, disk_capacity_bytes: i64, safety_status: String, message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2798,14 +2827,184 @@ fn test_proxy_record(app_handle: tauri::AppHandle, proxy_id: String) -> Result<P
     get_proxy_records(app_handle)?.into_iter().find(|item| item.id == proxy.id).ok_or_else(|| "Không đọc được kết quả proxy.".to_string())
 }
 
+fn directory_size(path: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(path) else { return 0; };
+    entries.filter_map(Result::ok).map(|entry| {
+        let Ok(kind) = entry.file_type() else { return 0; };
+        if kind.is_symlink() { 0 } else if kind.is_dir() { directory_size(&entry.path()) } else { entry.metadata().map(|m| m.len()).unwrap_or(0) }
+    }).sum()
+}
+
+fn identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserIdentityProfile> {
+    Ok(BrowserIdentityProfile {
+        id: row.get(0)?, name: row.get(1)?, email: row.get(2)?, proxy_id: row.get(3)?, profile_directory: row.get(4)?,
+        status: row.get(5)?, retention_days: row.get(6)?, is_pinned: row.get::<_, i64>(7)? != 0, size_bytes: row.get(8)?,
+        last_used_at: row.get(9)?, last_cleanup_at: row.get(10)?, archive_path: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)?,
+    })
+}
+
+fn storage_policy(connection: &Connection) -> Result<BrowserStoragePolicy, String> {
+    connection.query_row("SELECT max_total_bytes,min_free_bytes,min_free_percent,auto_cleanup,archive_after_days,warning_profile_bytes,cleanup_profile_bytes,hard_profile_bytes FROM browser_storage_policy WHERE id=1", [], |row| Ok(BrowserStoragePolicy {
+        max_total_bytes: row.get(0)?, min_free_bytes: row.get(1)?, min_free_percent: row.get(2)?, auto_cleanup: row.get::<_, i64>(3)? != 0,
+        archive_after_days: row.get(4)?, warning_profile_bytes: row.get(5)?, cleanup_profile_bytes: row.get(6)?, hard_profile_bytes: row.get(7)?,
+    })).map_err(|e| e.to_string())
+}
+
+fn ensure_identity(app_handle: &tauri::AppHandle, connection: &Connection, identity_id: &str) -> Result<(), String> {
+    if identity_id.is_empty() || identity_id.len() > 128 || !identity_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { return Err("Browser Identity ID không hợp lệ.".to_string()); }
+    let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-identities").join(identity_id);
+    let (name, email): (String, String) = connection.query_row("SELECT brand_name,email FROM entity_profiles LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap_or(("Primary Entity".to_string(), String::new()));
+    let now = now_string();
+    connection.execute("INSERT OR IGNORE INTO browser_identity_profiles (id,name,email,profile_directory,status,retention_days,is_pinned,size_bytes,last_used_at,last_cleanup_at,archive_path,created_at,updated_at) VALUES (?1,?2,?3,?4,'active',30,0,0,'','','',?5,?5)", params![identity_id,if name.is_empty() { "Primary Entity" } else { &name },email,root.to_string_lossy(),now]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn get_identities(connection: &Connection) -> Result<Vec<BrowserIdentityProfile>, String> {
+    let mut statement = connection.prepare("SELECT id,name,email,proxy_id,profile_directory,status,retention_days,is_pinned,size_bytes,last_used_at,last_cleanup_at,archive_path,created_at,updated_at FROM browser_identity_profiles ORDER BY is_pinned DESC,updated_at DESC").map_err(|e| e.to_string())?;
+    let identities = statement.query_map([], identity_from_row).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(identities)
+}
+
+#[tauri::command]
+fn get_browser_storage_overview(app_handle: tauri::AppHandle) -> Result<BrowserStorageOverview, String> {
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    let mut identities = get_identities(&connection)?;
+    let mut total = 0_i64;
+    for identity in &mut identities {
+        let measured_path = if identity.status == "archived" { identity.archive_path.as_str() } else { identity.profile_directory.as_str() };
+        identity.size_bytes = fs::metadata(measured_path).map(|m| if m.is_dir() { directory_size(Path::new(measured_path)) } else { m.len() }).unwrap_or(0) as i64;
+        total = total.saturating_add(identity.size_bytes);
+        connection.execute("UPDATE browser_identity_profiles SET size_bytes=?1 WHERE id=?2", params![identity.size_bytes,identity.id]).map_err(|e| e.to_string())?;
+    }
+    let app_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
+    let free = fs2::available_space(&app_dir).unwrap_or(0) as i64;
+    let capacity = fs2::total_space(&app_dir).unwrap_or(0) as i64;
+    let policy = storage_policy(&connection)?;
+    let required_free = policy.min_free_bytes.max(capacity.saturating_mul(policy.min_free_percent) / 100);
+    let (safety_status, message) = if total >= policy.max_total_bytes || free <= required_free { ("blocked", "Đã chạm ngưỡng an toàn. Hãy dọn cache hoặc archive identity trước khi chạy thêm.") } else if total >= policy.max_total_bytes * 9 / 10 || free <= required_free * 2 { ("warning", "Dung lượng đang gần ngưỡng; nên dọn cache các identity không chạy.") } else { ("healthy", "Dung lượng an toàn; cookie và phiên đăng nhập được bảo toàn.") };
+    Ok(BrowserStorageOverview { policy, identities, total_profile_bytes: total, free_disk_bytes: free, disk_capacity_bytes: capacity, safety_status: safety_status.to_string(), message: message.to_string() })
+}
+
+#[tauri::command]
+fn save_browser_storage_policy(app_handle: tauri::AppHandle, policy: BrowserStoragePolicy) -> Result<BrowserStorageOverview, String> {
+    if policy.max_total_bytes < 10 * 1024_i64.pow(3) || !(5..=50).contains(&policy.min_free_percent) { return Err("Trần phải từ 10 GB và dự phòng phải từ 5% đến 50%.".to_string()); }
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    connection.execute("UPDATE browser_storage_policy SET max_total_bytes=?1,min_free_bytes=?2,min_free_percent=?3,auto_cleanup=?4,archive_after_days=?5,warning_profile_bytes=?6,cleanup_profile_bytes=?7,hard_profile_bytes=?8 WHERE id=1", params![policy.max_total_bytes,policy.min_free_bytes,policy.min_free_percent,policy.auto_cleanup as i64,policy.archive_after_days,policy.warning_profile_bytes,policy.cleanup_profile_bytes,policy.hard_profile_bytes]).map_err(|e| e.to_string())?;
+    get_browser_storage_overview(app_handle)
+}
+
+fn assert_identity_idle(connection: &Connection, identity_id: &str) -> Result<(), String> {
+    let count: i64 = connection.query_row("SELECT COUNT(*) FROM browser_sessions WHERE identity_id=?1 AND status='running'", params![identity_id], |row| row.get(0)).map_err(|e| e.to_string())?;
+    if count > 0 { Err("Hãy dừng Chromium của identity này trước khi bảo trì dung lượng.".to_string()) } else { Ok(()) }
+}
+
+#[tauri::command]
+fn cleanup_browser_identity(app_handle: tauri::AppHandle, identity_id: String) -> Result<BrowserStorageOverview, String> {
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?; assert_identity_idle(&connection, &identity_id)?;
+    let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Không tìm thấy Browser Identity.".to_string())?;
+    let root = PathBuf::from(&identity.profile_directory);
+    let before = directory_size(&root);
+    for relative in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/GrShaderCache", "Default/DawnCache", "ShaderCache", "GrShaderCache", "Crashpad/reports"] {
+        let target = root.join(relative);
+        if target.starts_with(&root) && target.exists() { fs::remove_dir_all(&target).map_err(|e| format!("Không dọn được {}: {e}", target.display()))?; }
+    }
+    let reclaimed = before.saturating_sub(directory_size(&root));
+    connection.execute("UPDATE browser_identity_profiles SET last_cleanup_at=?1,updated_at=?1 WHERE id=?2", params![now_string(),identity_id]).map_err(|e| e.to_string())?;
+    let mut overview = get_browser_storage_overview(app_handle)?;
+    overview.message = format!("Đã dọn {:.1} MB cache; cookie, Local Storage và phiên đăng nhập vẫn được giữ.", reclaimed as f64 / 1_048_576.0);
+    Ok(overview)
+}
+
+fn zip_directory(writer: &mut zip::ZipWriter<fs::File>, root: &Path, current: &Path) -> Result<(), String> {
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for entry in fs::read_dir(current).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink() { continue; }
+        let relative = path.strip_prefix(root).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+        if kind.is_dir() {
+            writer.add_directory(format!("{relative}/"), options).map_err(|e| e.to_string())?;
+            zip_directory(writer, root, &path)?;
+        } else {
+            writer.start_file(relative, options).map_err(|e| e.to_string())?;
+            let mut source = fs::File::open(&path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut source, writer).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn archive_browser_identity(app_handle: tauri::AppHandle, identity_id: String) -> Result<BrowserStorageOverview, String> {
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?; assert_identity_idle(&connection, &identity_id)?;
+    let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Không tìm thấy Browser Identity.".to_string())?;
+    if identity.is_pinned { return Err("Identity đang được ghim. Hãy bỏ ghim trước khi archive.".to_string()); }
+    if identity.status == "archived" { return get_browser_storage_overview(app_handle); }
+    let root = PathBuf::from(&identity.profile_directory);
+    if !root.exists() { return Err("Identity chưa có dữ liệu Chromium để archive.".to_string()); }
+    let archive_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profile-archives");
+    fs::create_dir_all(&archive_dir).map_err(|e| e.to_string())?;
+    let archive = archive_dir.join(format!("{}.zip", identity.id));
+    let temporary = archive.with_extension("zip.tmp");
+    let file = fs::File::create(&temporary).map_err(|e| e.to_string())?;
+    let mut writer = zip::ZipWriter::new(file);
+    zip_directory(&mut writer, &root, &root)?;
+    writer.finish().map_err(|e| e.to_string())?;
+    let check = fs::File::open(&temporary).map_err(|e| e.to_string())?;
+    zip::ZipArchive::new(check).map_err(|e| format!("Archive không hợp lệ, profile gốc vẫn được giữ: {e}"))?;
+    if archive.exists() { fs::remove_file(&archive).map_err(|e| e.to_string())?; }
+    fs::rename(&temporary, &archive).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(&root).map_err(|e| format!("Archive đã tạo nhưng chưa xóa được profile gốc: {e}"))?;
+    let now = now_string();
+    connection.execute("UPDATE browser_identity_profiles SET status='archived',archive_path=?1,updated_at=?2 WHERE id=?3", params![archive.to_string_lossy(),now,identity.id]).map_err(|e| e.to_string())?;
+    get_browser_storage_overview(app_handle)
+}
+
+fn restore_identity_if_needed(connection: &Connection, identity: &BrowserIdentityProfile) -> Result<(), String> {
+    if identity.status != "archived" { return Ok(()); }
+    let archive_path = PathBuf::from(&identity.archive_path);
+    let target = PathBuf::from(&identity.profile_directory);
+    if !archive_path.exists() { return Err("Không tìm thấy file archive của Browser Identity.".to_string()); }
+    let temporary = target.with_extension("restore-tmp");
+    if temporary.exists() { fs::remove_dir_all(&temporary).map_err(|e| e.to_string())?; }
+    fs::create_dir_all(&temporary).map_err(|e| e.to_string())?;
+    let file = fs::File::open(&archive_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    for index in 0..archive.len() {
+        let mut item = archive.by_index(index).map_err(|e| e.to_string())?;
+        let Some(relative) = item.enclosed_name() else { continue; };
+        let output = temporary.join(relative);
+        if item.is_dir() { fs::create_dir_all(&output).map_err(|e| e.to_string())?; }
+        else {
+            if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+            let mut destination = fs::File::create(&output).map_err(|e| e.to_string())?;
+            std::io::copy(&mut item, &mut destination).map_err(|e| e.to_string())?;
+        }
+    }
+    if target.exists() { fs::remove_dir_all(&target).map_err(|e| e.to_string())?; }
+    fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+    connection.execute("UPDATE browser_identity_profiles SET status='active',updated_at=?1 WHERE id=?2", params![now_string(),identity.id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn restore_browser_identity(app_handle: tauri::AppHandle, identity_id: String) -> Result<BrowserStorageOverview, String> {
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?; assert_identity_idle(&connection, &identity_id)?;
+    let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Không tìm thấy Browser Identity.".to_string())?;
+    restore_identity_if_needed(&connection, &identity)?;
+    get_browser_storage_overview(app_handle)
+}
+
 fn browser_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSessionRecord> {
-    Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)? })
+    Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)?, identity_id: row.get(14)? })
 }
 
 #[tauri::command]
 fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessionRecord>, String> {
     let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
-    let mut statement = connection.prepare("SELECT id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at FROM browser_sessions ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+    let mut statement = connection.prepare("SELECT id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at,identity_id FROM browser_sessions ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
     let rows = statement.query_map([], browser_session_from_row).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
@@ -2813,13 +3012,20 @@ fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessi
 #[tauri::command]
 fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
     if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Managed Browser chỉ mở URL http/https.".to_string()); }
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    let identity_id = if request.identity_id.trim().is_empty() { default_identity_id() } else { request.identity_id.clone() };
+    ensure_identity(&app_handle, &connection, &identity_id)?;
+    let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Browser Identity không tồn tại.".to_string())?;
+    restore_identity_if_needed(&connection, &identity)?;
+    let storage = get_browser_storage_overview(app_handle.clone())?;
+    if storage.safety_status == "blocked" { return Err(format!("Storage Guard chặn khởi chạy: {}", storage.message)); }
     // A campaign retry reuses the account's persistent Chrome profile. Chromium
     // otherwise forwards the new URL to an older process, which may still have a
     // stale bundled extension loaded and leaves the new worker unable to run.
     // Stop only sessions that own this exact account profile before relaunching.
     let previous_sessions = get_browser_sessions(app_handle.clone())?;
     for previous in previous_sessions.into_iter().filter(|session| {
-        session.status == "running" && session.account_id == request.account_id
+        session.status == "running" && session.identity_id == identity_id
     }) {
         #[cfg(target_os = "windows")]
         {
@@ -2837,7 +3043,9 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
         ).map_err(|error| error.to_string())?;
     }
     let executable = browser_executable(&app_handle)?;
-    let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
+    let root = PathBuf::from(&identity.profile_directory);
+    let legacy_root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
+    if !root.exists() && legacy_root.exists() { if let Some(parent) = root.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; } fs::rename(&legacy_root, &root).map_err(|e| format!("Không chuyển được browser profile cũ: {e}"))?; }
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let extension_directory = bundled_extension_directory(&app_handle)?;
     let mut command = Command::new(executable);
@@ -2855,9 +3063,9 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     }
     let child = command.arg(&request.url).spawn().map_err(|e| format!("Không khởi chạy được Managed Browser: {e}"))?;
     let timestamp = now_string();
-    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent profile và Bridge tích hợp.".to_string(), created_at: timestamp.clone(), updated_at: timestamp };
-    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
-    connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at]).map_err(|e| e.to_string())?;
+    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent Identity Profile và Bridge tích hợp.".to_string(), created_at: timestamp.clone(), updated_at: timestamp.clone(), identity_id: identity_id.clone() };
+    connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at,identity_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at,identity_id=excluded.identity_id", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at,session.identity_id]).map_err(|e| e.to_string())?;
+    connection.execute("UPDATE browser_identity_profiles SET last_used_at=?1,updated_at=?1,proxy_id=CASE WHEN ?2='' THEN proxy_id ELSE ?2 END WHERE id=?3", params![timestamp,session.proxy_id,identity_id]).map_err(|e| e.to_string())?;
     Ok(session)
 }
 
@@ -3170,6 +3378,36 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS idx_browser_sessions_job ON browser_sessions(job_id, updated_at);
 
+            CREATE TABLE IF NOT EXISTS browser_identity_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL DEFAULT '',
+                proxy_id TEXT NOT NULL DEFAULT '',
+                profile_directory TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                retention_days INTEGER NOT NULL DEFAULT 30,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                last_used_at TEXT NOT NULL DEFAULT '',
+                last_cleanup_at TEXT NOT NULL DEFAULT '',
+                archive_path TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS browser_storage_policy (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                max_total_bytes INTEGER NOT NULL DEFAULT 536870912000,
+                min_free_bytes INTEGER NOT NULL DEFAULT 10737418240,
+                min_free_percent INTEGER NOT NULL DEFAULT 15,
+                auto_cleanup INTEGER NOT NULL DEFAULT 1,
+                archive_after_days INTEGER NOT NULL DEFAULT 30,
+                warning_profile_bytes INTEGER NOT NULL DEFAULT 314572800,
+                cleanup_profile_bytes INTEGER NOT NULL DEFAULT 524288000,
+                hard_profile_bytes INTEGER NOT NULL DEFAULT 786432000
+            );
+            INSERT OR IGNORE INTO browser_storage_policy (id) VALUES (1);
+
             CREATE TABLE IF NOT EXISTS gmail_oauth_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 client_id TEXT NOT NULL DEFAULT '',
@@ -3194,6 +3432,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "gmail_oauth_state", "current_auth_url", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "client_secret_protected", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "refresh_token_protected", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "browser_sessions", "identity_id", "TEXT NOT NULL DEFAULT 'identity-primary'")?;
 
     // Builds before 293 incorrectly launched OAuth inside Managed Chromium.
     // Retire that legacy database row so it no longer appears as a running
@@ -5151,6 +5390,11 @@ pub fn run() {
             save_proxy_record,
             test_proxy_record,
             get_browser_sessions,
+            get_browser_storage_overview,
+            save_browser_storage_policy,
+            cleanup_browser_identity,
+            archive_browser_identity,
+            restore_browser_identity,
             launch_managed_browser,
             open_managed_browser_url,
             stop_managed_browser,
