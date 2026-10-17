@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 61534)
+Total output lines: 5404
+
 use base64::{engine::general_purpose, Engine as _};
 use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
@@ -8,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
@@ -408,7 +411,11 @@ struct BrowserLaunchRequest {
     url: String,
     proxy_id: String,
     visible: bool,
+    #[serde(default = "default_identity_id")]
+    identity_id: String,
 }
+
+fn default_identity_id() -> String { "identity-primary".to_string() }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -427,6 +434,31 @@ struct BrowserSessionRecord {
     last_message: String,
     created_at: String,
     updated_at: String,
+    identity_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserIdentityProfile {
+    id: String, name: String, email: String, proxy_id: String, profile_directory: String,
+    status: String, retention_days: i64, is_pinned: bool, size_bytes: i64,
+    last_used_at: String, last_cleanup_at: String, archive_path: String,
+    created_at: String, updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserStoragePolicy {
+    max_total_bytes: i64, min_free_bytes: i64, min_free_percent: i64, auto_cleanup: bool,
+    archive_after_days: i64, warning_profile_bytes: i64, cleanup_profile_bytes: i64,
+    hard_profile_bytes: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserStorageOverview {
+    policy: BrowserStoragePolicy, identities: Vec<BrowserIdentityProfile>, total_profile_bytes: i64,
+    free_disk_bytes: i64, disk_capacity_bytes: i64, safety_status: String, message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2488,409 +2520,7 @@ fn save_gmail_oauth_config(app_handle: tauri::AppHandle, config: GmailOAuthConfi
         }
     }
 
-    let connection = open_database(&app_handle)?;
-    ensure_schema(&connection)?;
-    gmail_oauth_status_record(&connection)
-}
-
-#[tauri::command]
-fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, String> {
-    let connection = open_database(&app_handle)?;
-    ensure_schema(&connection)?;
-    let status = gmail_oauth_status_record(&connection)?;
-    if !status.configured {
-        return Err("Hãy lưu Google OAuth Client ID và Client Secret trước.".to_string());
-    }
-
-    let listener = TcpListener::bind("127.0.0.1:17322")
-        .map_err(|error| format!("Không mở được OAuth callback 127.0.0.1:17322: {error}"))?;
-    listener.set_nonblocking(true).map_err(|error| error.to_string())?;
-    let verifier: String = rand::thread_rng().sample_iter(&Alphanumeric).take(64).map(char::from).collect();
-    let state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
-    let challenge = general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let redirect_uri = "http://127.0.0.1:17322/oauth/callback";
-    let mut auth_url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth").map_err(|error| error.to_string())?;
-    auth_url.query_pairs_mut()
-        .append_pair("client_id", &status.client_id)
-        .append_pair("redirect_uri", redirect_uri)
-        .append_pair("response_type", "code")
-        .append_pair("scope", "openid email https://www.googleapis.com/auth/gmail.readonly")
-        .append_pair("access_type", "offline")
-        .append_pair("prompt", "consent")
-        .append_pair("state", &state)
-        .append_pair("code_challenge", &challenge)
-        .append_pair("code_challenge_method", "S256");
-
-    connection.execute(
-        "UPDATE gmail_oauth_state SET status='authorizing',last_message='Đang chờ anh chấp thuận quyền Gmail trên trang Google.',current_auth_url=?1,updated_at=?2 WHERE id=1",
-        params![auth_url.as_str(), now_string()],
-    ).map_err(|error| error.to_string())?;
-
-    let callback_app = app_handle.clone();
-    let client_id = status.client_id.clone();
-    std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        loop {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut buffer = [0_u8; 16_384];
-                    let read = stream.read(&mut buffer).unwrap_or(0);
-                    let request = String::from_utf8_lossy(&buffer[..read]);
-                    let target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
-                    let parsed = url::Url::parse(&format!("http://127.0.0.1{target}"));
-                    let result = parsed.map_err(|error| error.to_string()).and_then(|url| {
-                        let values = url.query_pairs().collect::<std::collections::HashMap<_, _>>();
-                        if values.get("state").map(|value| value.as_ref()) != Some(state.as_str()) {
-                            return Err("OAuth state không khớp; yêu cầu đã bị hủy để bảo vệ tài khoản.".to_string());
-                        }
-                        let code = values.get("code").map(|value| value.to_string()).ok_or_else(|| {
-                            values.get("error").map(|value| format!("Google OAuth từ chối: {value}")).unwrap_or_else(|| "Google không trả về authorization code.".to_string())
-                        })?;
-                        complete_gmail_oauth(&callback_app, &client_id, &code, &verifier, redirect_uri)
-                    });
-                    let (title, message) = match result {
-                        Ok(email) => ("Kết nối Gmail thành công", format!("EntityManager đã được cấp quyền đọc email cho {email}. Anh có thể đóng tab này.")),
-                        Err(error) => {
-                            if let Ok(connection) = open_database(&callback_app) {
-                                let _ = connection.execute("UPDATE gmail_oauth_state SET status='error',last_message=?1,updated_at=?2 WHERE id=1", params![&error, now_string()]);
-                            }
-                            ("Kết nối Gmail thất bại", format!("{error} Hãy quay lại EntityManager và thử lại."))
-                        }
-                    };
-                    let body = format!("<!doctype html><meta charset='utf-8'><title>{title}</title><style>body{{font:16px system-ui;max-width:720px;margin:80px auto;padding:24px}}h1{{color:#163a5f}}</style><h1>{title}</h1><p>{message}</p>");
-                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                    let _ = stream.write_all(response.as_bytes());
-                    break;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if std::time::Instant::now() >= deadline {
-                        if let Ok(connection) = open_database(&callback_app) {
-                            let _ = connection.execute("UPDATE gmail_oauth_state SET status='configured',last_message='OAuth hết thời gian chờ; hãy bấm Kết nối Gmail lại.',updated_at=?1 WHERE id=1", params![now_string()]);
-                        }
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-    // Google blocks sign-in from automation-controlled Chrome/Chromium. OAuth must
-    // be completed in the user's normal system browser; the managed runtime is
-    // reserved for platform provisioning after a refresh token is available.
-    if let Err(error) = open_external_url(auth_url.to_string()) {
-        connection.execute(
-            "UPDATE gmail_oauth_state SET last_message=?1,updated_at=?2 WHERE id=1",
-            params![format!("Windows không tự mở được trang Google OAuth ({error}). Hãy bấm Mở trang Google OAuth hoặc copy URL dự phòng."), now_string()],
-        ).map_err(|db_error| db_error.to_string())?;
-    }
-    gmail_oauth_status_record(&connection)
-}
-
-fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &str, verifier: &str, redirect_uri: &str) -> Result<String, String> {
-    let client_secret = read_gmail_client_secret(app_handle)?;
-    let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
-        ("client_id", client_id), ("client_secret", client_secret.as_str()), ("code", code),
-        ("code_verifier", verifier), ("grant_type", "authorization_code"), ("redirect_uri", redirect_uri),
-    ]).send().map_err(|error| format!("Không đổi được OAuth code: {error}"))?
-        .error_for_status().map_err(|error| format!("Google từ chối OAuth token: {error}"))?
-        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
-    let refresh_token = response["refresh_token"].as_str().ok_or_else(|| "Google không cấp refresh token. Hãy thu hồi quyền cũ rồi kết nối lại với prompt consent.".to_string())?;
-    let access_token = response["access_token"].as_str().ok_or_else(|| "Google không trả về access token.".to_string())?;
-    let protected_refresh_token = protect_for_current_windows_user(refresh_token)?;
-    let _ = save_secret(GMAIL_REFRESH_TOKEN_KEY, refresh_token);
-    let email = reqwest::blocking::Client::new().get("https://openidconnect.googleapis.com/v1/userinfo")
-        .bearer_auth(access_token).send().map_err(|error| error.to_string())?
-        .error_for_status().map_err(|error| error.to_string())?
-        .json::<serde_json::Value>().map_err(|error| error.to_string())?["email"].as_str().unwrap_or("").to_string();
-    let connection = open_database(app_handle)?;
-    connection.execute(
-        "UPDATE gmail_oauth_state SET account_email=?1,refresh_token_protected=?2,status='connected',last_message='Gmail OAuth đã kết nối; worker có thể đọc email xác minh Medium.',last_checked_at=?3,current_auth_url='',updated_at=?3 WHERE id=1",
-        params![email, protected_refresh_token, now_string()],
-    ).map_err(|error| error.to_string())?;
-    Ok(email)
-}
-
-fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
-    let connection = open_database(app_handle)?;
-    ensure_schema(&connection)?;
-    let status = gmail_oauth_status_record(&connection)?;
-    if !status.configured { return Err("Gmail OAuth chưa được cấu hình.".to_string()); }
-    let refresh_token = read_gmail_refresh_token(app_handle)?;
-    let client_secret = read_gmail_client_secret(app_handle)?;
-    let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
-        ("client_id", status.client_id.as_str()), ("client_secret", client_secret.as_str()),
-        ("refresh_token", refresh_token.as_str()), ("grant_type", "refresh_token"),
-    ]).send().map_err(|error| format!("Không làm mới được Gmail token: {error}"))?
-        .error_for_status().map_err(|error| format!("Google từ chối refresh token: {error}"))?
-        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
-    response["access_token"].as_str().map(str::to_string).ok_or_else(|| "Google không trả về access token mới.".to_string())
-}
-
-#[tauri::command]
-fn test_gmail_connection(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let access_token = gmail_access_token(&app_handle)?;
-    let response = reqwest::blocking::Client::new()
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
-        .bearer_auth(access_token)
-        .send().map_err(|error| format!("Không gọi được Gmail API: {error}"))?
-        .error_for_status().map_err(|error| format!("Gmail API từ chối quyền: {error}"))?
-        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
-    let email = response["emailAddress"].as_str().unwrap_or("Gmail đã cấp quyền");
-    let total = response["messagesTotal"].as_i64().unwrap_or(0);
-    Ok(format!("Gmail API hoạt động cho {email}; hộp thư có khoảng {total} email."))
-}
-
-fn medium_verification_link(raw_message: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(raw_message).replace("=\r\n", "").replace("&amp;", "&");
-    let pattern = Regex::new(r#"https://[^\s\"'<>]+"#).ok()?;
-    let result = pattern.find_iter(&text).map(|item| item.as_str().trim_end_matches(['.', ')', ']', ';']).to_string()).find(|url| {
-        let lower = url.to_ascii_lowercase();
-        lower.contains("medium.com") && ["verify", "callback", "signin", "email"].iter().any(|needle| lower.contains(needle))
-    });
-    result
-}
-
-fn poll_medium_verification(app_handle: &tauri::AppHandle) -> Result<String, String> {
-    let connection = open_database(app_handle)?;
-    ensure_schema(&connection)?;
-    let job: (String, String, i64) = connection.query_row(
-        "SELECT id,account_id,CAST(updated_at AS INTEGER) FROM provisioning_jobs WHERE platform_id='medium' AND stage='email_verification' AND status IN ('waiting_user','running') ORDER BY CAST(updated_at AS INTEGER) DESC LIMIT 1",
-        [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).map_err(|error| if matches!(error, rusqlite::Error::QueryReturnedNoRows) { "Không có Medium checkpoint đang chờ email xác minh.".to_string() } else { error.to_string() })?;
-    let access_token = gmail_access_token(app_handle)?;
-    let client = reqwest::blocking::Client::new();
-    let query = "from:(medium.com) newer_than:7d";
-    let list = client.get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
-        .bearer_auth(&access_token).query(&[("q", query), ("maxResults", "10")]).send()
-        .map_err(|error| format!("Không đọc được Gmail: {error}"))?.error_for_status().map_err(|error| error.to_string())?
-        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
-    let messages = list["messages"].as_array().cloned().unwrap_or_default();
-    for message in messages {
-        let Some(id) = message["id"].as_str() else { continue };
-        let payload = client.get(format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}"))
-            .bearer_auth(&access_token).query(&[("format", "raw")]).send().map_err(|error| error.to_string())?
-            .error_for_status().map_err(|error| error.to_string())?.json::<serde_json::Value>().map_err(|error| error.to_string())?;
-        let message_time_ms = payload["internalDate"].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
-        if message_time_ms > 0 && message_time_ms < job.2.saturating_mul(1000) { continue; }
-        let Some(raw) = payload["raw"].as_str() else { continue };
-        let bytes = general_purpose::URL_SAFE_NO_PAD.decode(raw).or_else(|_| general_purpose::URL_SAFE.decode(raw)).unwrap_or_default();
-        if let Some(link) = medium_verification_link(&bytes) {
-            let session_id: String = connection.query_row(
-                "SELECT id FROM browser_sessions WHERE job_id=?1 AND status='running' ORDER BY updated_at DESC LIMIT 1",
-                params![job.0], |row| row.get(0),
-            ).map_err(|_| "Đã tìm thấy link Medium nhưng Managed Browser session không còn chạy.".to_string())?;
-            open_managed_browser_url(app_handle.clone(), session_id, link)?;
-            let timestamp = now_string();
-            connection.execute("UPDATE provisioning_jobs SET stage='login',status='running',last_message='Gmail OAuth đã tìm thấy và mở link xác minh Medium.',updated_at=?1 WHERE id=?2", params![timestamp,job.0]).map_err(|error| error.to_string())?;
-            connection.execute("UPDATE gmail_oauth_state SET last_message='Đã mở link xác minh Medium trong Managed Browser.',last_checked_at=?1,updated_at=?1 WHERE id=1", params![timestamp]).map_err(|error| error.to_string())?;
-            return Ok("Đã tìm thấy email và mở link xác minh Medium trong đúng Managed Browser profile.".to_string());
-        }
-    }
-    connection.execute("UPDATE gmail_oauth_state SET last_message='Chưa tìm thấy email xác minh Medium; worker sẽ thử lại.',last_checked_at=?1,updated_at=?1 WHERE id=1", params![now_string()]).map_err(|error| error.to_string())?;
-    Ok("Chưa tìm thấy email xác minh Medium; worker sẽ tự thử lại.".to_string())
-}
-
-#[tauri::command]
-fn poll_medium_verification_now(app_handle: tauri::AppHandle) -> Result<String, String> {
-    poll_medium_verification(&app_handle)
-}
-
-fn start_gmail_verification_worker(app_handle: tauri::AppHandle) {
-    if GMAIL_VERIFICATION_WORKER_STARTED.swap(true, Ordering::SeqCst) { return; }
-    std::thread::spawn(move || loop {
-        let _ = poll_medium_verification(&app_handle);
-        std::thread::sleep(std::time::Duration::from_secs(20));
-    });
-}
-
-#[tauri::command]
-fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiagnosticCheck>, String> {
-    let mut checks = Vec::new();
-    let active_database_path = database_path(&app_handle)?;
-    let connection = open_database(&app_handle)?;
-    ensure_schema(&connection)?;
-    checks.push(SystemDiagnosticCheck {
-        id: "sqlite".to_string(), label: "SQLite local database".to_string(), status: "ok".to_string(),
-        message: format!("Đã mở database bền vững tại {} và cập nhật schema thành công.", active_database_path.display()),
-    });
-
-    let resource_result = bundled_extension_directory(&app_handle);
-    checks.push(SystemDiagnosticCheck {
-        id: "extension".to_string(), label: "Managed Browser Bridge".to_string(),
-        status: if resource_result.is_ok() { "ok" } else { "error" }.to_string(),
-        message: resource_result.map(|path| format!("Extension đã được đóng gói tại {}.", path.display())).unwrap_or_else(|error| error),
-    });
-
-    checks.push(match browser_executable(&app_handle) {
-        Ok(path) => {
-            let managed = path.to_string_lossy().contains("EntityManager") && path.to_string_lossy().contains("chromium");
-            SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: if managed { "ok" } else { "warning" }.to_string(), message: if managed { format!("Managed Chromium đã được đóng gói tại {}.", path.display()) } else { format!("Đang dùng browser dự phòng tại {}; nên cài bản có Managed Chromium.", path.display()) } }
-        },
-        Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
-    });
-
-    let bridge_ready = "127.0.0.1:17321".parse().ok().and_then(|address| TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).ok()).is_some();
-    checks.push(SystemDiagnosticCheck {
-        id: "bridge".to_string(), label: "Desktop ↔ Extension bridge".to_string(), status: if bridge_ready { "ok" } else { "warning" }.to_string(),
-        message: if bridge_ready { "Bridge đang lắng nghe tại 127.0.0.1:17321.".to_string() } else { "Bridge chưa lắng nghe; khởi động lại Desktop rồi kiểm tra lại.".to_string() },
-    });
-
-    let gmail = gmail_oauth_status_record(&connection)?;
-    checks.push(SystemDiagnosticCheck {
-        id: "gmail_config".to_string(), label: "Gmail OAuth configuration".to_string(), status: if gmail.configured { "ok" } else { "error" }.to_string(),
-        message: if gmail.configured { "Client ID và Client Secret đã sẵn sàng.".to_string() } else { "Thiếu Client ID hoặc Client Secret trong Credential Manager.".to_string() },
-    });
-    checks.push(SystemDiagnosticCheck {
-        id: "gmail_connection".to_string(), label: "Gmail authorization".to_string(), status: if gmail.connected { "ok" } else if gmail.status == "authorizing" { "warning" } else { "not_tested" }.to_string(),
-        message: if gmail.connected { format!("Đã kết nối {}.", gmail.account_email) } else if gmail.status == "authorizing" { "Đang chờ hoàn tất trang Google OAuth; có thể mở lại URL dự phòng.".to_string() } else { "Chưa có refresh token; cần cấp quyền Google một lần.".to_string() },
-    });
-
-    let running_sessions: i64 = connection.query_row("SELECT COUNT(*) FROM browser_sessions WHERE status='running'", [], |row| row.get(0)).unwrap_or(0);
-    checks.push(SystemDiagnosticCheck {
-        id: "browser_sessions".to_string(), label: "Managed Browser sessions".to_string(), status: if running_sessions > 0 { "ok" } else { "not_tested" }.to_string(),
-        message: if running_sessions > 0 { format!("Có {running_sessions} browser session đang chạy.") } else { "Chưa có session đang chạy; đây không phải lỗi trước khi bắt đầu campaign.".to_string() },
-    });
-    let waiting_medium: i64 = connection.query_row("SELECT COUNT(*) FROM provisioning_jobs WHERE platform_id='medium' AND stage='email_verification' AND status IN ('waiting_user','running')", [], |row| row.get(0)).unwrap_or(0);
-    checks.push(SystemDiagnosticCheck {
-        id: "medium_checkpoint".to_string(), label: "Medium verification checkpoint".to_string(), status: if waiting_medium > 0 { "warning" } else { "not_tested" }.to_string(),
-        message: if waiting_medium > 0 { format!("Có {waiting_medium} job đang chờ Gmail worker.") } else { "Không có Medium job đang chờ email ở thời điểm kiểm tra.".to_string() },
-    });
-    let queued_index: i64 = connection.query_row("SELECT COUNT(*) FROM indexing_queue WHERE status IN ('queued','retry')", [], |row| row.get(0)).unwrap_or(0);
-    checks.push(SystemDiagnosticCheck {
-        id: "indexing".to_string(), label: "Indexing queue".to_string(), status: "not_tested".to_string(),
-        message: format!("Có {queued_index} URL đang chờ. Diagnostic chỉ xác minh hàng đợi; adapter index live cần provider hợp lệ."),
-    });
-    Ok(checks)
-}
-
-#[tauri::command]
-fn save_proxy_record(app_handle: tauri::AppHandle, proxy: ProxyRecord) -> Result<ProxyRecord, String> {
-    if proxy.host.trim().is_empty() || !(1..=65535).contains(&proxy.port) { return Err("Proxy cần host và port hợp lệ.".to_string()); }
-    if !["http", "https", "socks5"].contains(&proxy.protocol.as_str()) { return Err("Proxy protocol phải là http, https hoặc socks5.".to_string()); }
-    let connection = open_database(&app_handle)?;
-    ensure_schema(&connection)?;
-    let timestamp = now_string();
-    if !proxy.password.trim().is_empty() {
-        save_secret(&proxy_secret_account(&proxy.id), proxy.password.trim()).map_err(|e| format!("Không lưu được mật khẩu proxy an toàn: {e}"))?;
-    }
-    connection.execute("INSERT INTO proxy_records (id,name,protocol,host,port,username,country_code,status,latency_ms,exit_ip,last_error,last_checked_at,is_enabled,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'untested',0,'','','',?8,?9,?9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,protocol=excluded.protocol,host=excluded.host,port=excluded.port,username=excluded.username,country_code=excluded.country_code,is_enabled=excluded.is_enabled,updated_at=excluded.updated_at",
-        params![proxy.id,proxy.name,proxy.protocol,proxy.host,proxy.port,proxy.username,proxy.country_code,proxy.is_enabled as i64,timestamp]).map_err(|e| e.to_string())?;
-    get_proxy_records(app_handle)?.into_iter().find(|item| item.id == proxy.id).ok_or_else(|| "Không đọc lại được proxy vừa lưu.".to_string())
-}
-
-#[tauri::command]
-fn test_proxy_record(app_handle: tauri::AppHandle, proxy_id: String) -> Result<ProxyRecord, String> {
-    let connection = open_database(&app_handle)?;
-    ensure_schema(&connection)?;
-    let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == proxy_id).ok_or_else(|| "Không tìm thấy proxy.".to_string())?;
-    let address = format!("{}://{}:{}", proxy.protocol, proxy.host, proxy.port);
-    let mut reqwest_proxy = reqwest::Proxy::all(&address).map_err(|e| e.to_string())?;
-    if !proxy.username.is_empty() {
-        let password = read_secret(&proxy_secret_account(&proxy.id)).unwrap_or_default();
-        reqwest_proxy = reqwest_proxy.basic_auth(&proxy.username, &password);
-    }
-    let started = std::time::Instant::now();
-    let result = reqwest::blocking::Client::builder().proxy(reqwest_proxy).timeout(std::time::Duration::from_secs(12)).build().and_then(|client| client.get("https://api.ipify.org?format=json").send()).and_then(|response| response.error_for_status()).and_then(|response| response.json::<serde_json::Value>());
-    let timestamp = now_string();
-    let (status, exit_ip, error) = match result { Ok(value) => ("healthy", value["ip"].as_str().unwrap_or("").to_string(), String::new()), Err(error) => ("failed", String::new(), error.to_string()) };
-    connection.execute("UPDATE proxy_records SET status=?1,latency_ms=?2,exit_ip=?3,last_error=?4,last_checked_at=?5,updated_at=?5 WHERE id=?6", params![status,started.elapsed().as_millis() as i64,exit_ip,error,timestamp,proxy.id]).map_err(|e| e.to_string())?;
-    get_proxy_records(app_handle)?.into_iter().find(|item| item.id == proxy.id).ok_or_else(|| "Không đọc được kết quả proxy.".to_string())
-}
-
-fn browser_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSessionRecord> {
-    Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)? })
-}
-
-#[tauri::command]
-fn get_browser_sessions(app_handle: tauri::AppHandle) -> Result<Vec<BrowserSessionRecord>, String> {
-    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
-    let mut statement = connection.prepare("SELECT id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at FROM browser_sessions ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
-    let rows = statement.query_map([], browser_session_from_row).map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
-    if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Managed Browser chỉ mở URL http/https.".to_string()); }
-    // A campaign retry reuses the account's persistent Chrome profile. Chromium
-    // otherwise forwards the new URL to an older process, which may still have a
-    // stale bundled extension loaded and leaves the new worker unable to run.
-    // Stop only sessions that own this exact account profile before relaunching.
-    let previous_sessions = get_browser_sessions(app_handle.clone())?;
-    for previous in previous_sessions.into_iter().filter(|session| {
-        session.status == "running" && session.account_id == request.account_id
-    }) {
-        #[cfg(target_os = "windows")]
-        {
-            let mut command = Command::new("taskkill");
-            command.creation_flags(CREATE_NO_WINDOW);
-            let _ = command.args(["/PID", &previous.process_id.to_string(), "/T", "/F"]).output();
-        }
-        #[cfg(not(target_os = "windows"))]
-        let _ = Command::new("kill").arg(previous.process_id.to_string()).output();
-
-        let connection = open_database(&app_handle)?;
-        connection.execute(
-            "UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Đã thay phiên cũ để nạp Bridge mới cho campaign.',updated_at=?1 WHERE id=?2",
-            params![now_string(), previous.id],
-        ).map_err(|error| error.to_string())?;
-    }
-    let executable = browser_executable(&app_handle)?;
-    let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("browser-profiles").join(&request.account_id);
-    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let extension_directory = bundled_extension_directory(&app_handle)?;
-    let mut command = Command::new(executable);
-    command.arg(format!("--user-data-dir={}", root.display()))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
-        .arg(format!("--disable-extensions-except={}", extension_directory.display()))
-        .arg(format!("--load-extension={}", extension_directory.display()));
-    if !request.visible { command.arg("--start-minimized"); }
-    if !request.proxy_id.is_empty() {
-        let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == request.proxy_id).ok_or_else(|| "Proxy được chọn không tồn tại.".to_string())?;
-        if proxy.status != "healthy" || !proxy.is_enabled { return Err("Proxy phải được bật và kiểm tra Healthy trước khi chạy browser.".to_string()); }
-        command.arg(format!("--proxy-server={}://{}:{}", proxy.protocol, proxy.host, proxy.port));
-    }
-    let child = command.arg(&request.url).spawn().map_err(|e| format!("Không khởi chạy được Managed Browser: {e}"))?;
-    let timestamp = now_string();
-    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent profile và Bridge tích hợp.".to_string(), created_at: timestamp.clone(), updated_at: timestamp };
-    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
-    connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at]).map_err(|e| e.to_string())?;
-    Ok(session)
-}
-
-#[tauri::command]
-fn open_managed_browser_url(app_handle: tauri::AppHandle, session_id: String, url: String) -> Result<BrowserSessionRecord, String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("Chỉ cho phép mở URL http/https.".to_string()); }
-    let mut session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
-    if session.status != "running" { return Err("Browser session không còn chạy.".to_string()); }
-    let executable = browser_executable(&app_handle)?;
-    Command::new(executable).arg(format!("--user-data-dir={}", session.profile_directory)).arg(&url).spawn().map_err(|e| format!("Không mở được URL trong Managed Browser: {e}"))?;
-    let timestamp = now_string();
-    session.current_url = url;
-    session.last_message = "Đã mở URL trong persistent browser profile.".to_string();
-    session.updated_at = timestamp.clone();
-    let connection = open_database(&app_handle)?;
-    connection.execute("UPDATE browser_sessions SET current_url=?1,last_message=?2,updated_at=?3 WHERE id=?4", params![session.current_url,session.last_message,timestamp,session.id]).map_err(|e| e.to_string())?;
-    Ok(session)
-}
-
-#[tauri::command]
-fn stop_managed_browser(app_handle: tauri::AppHandle, session_id: String) -> Result<BrowserSessionRecord, String> {
-    let session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = Command::new("taskkill");
-        command.creation_flags(CREATE_NO_WINDOW);
-        let _ = command.args(["/PID", &session.process_id.to_string(), "/T", "/F"]).output();
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = Command::new("kill").arg(session.process_id.to_string()).output();
-    let connection = open_database(&app_handle)?; let timestamp = now_string();
-    connection.execute("UPDATE browser_sessions SET status='stopped',last_message='Managed Browser đã dừng.',updated_at=?1 WHERE id=?2", params![timestamp,session_id]).map_err(|e| e.to_string())?;
-    get_browser_sessions(app_handle)?.into_iter().find(|item| item.id == session.id).ok_or_else(|| "Không đọc được browser session.".to_string())
+    let connection = open_database…11534 tokens truncated…em.id == session.id).ok_or_else(|| "Không đọc được browser session.".to_string())
 }
 
 #[tauri::command]
@@ -3170,6 +2800,36 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS idx_browser_sessions_job ON browser_sessions(job_id, updated_at);
 
+            CREATE TABLE IF NOT EXISTS browser_identity_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL DEFAULT '',
+                proxy_id TEXT NOT NULL DEFAULT '',
+                profile_directory TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                retention_days INTEGER NOT NULL DEFAULT 30,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                last_used_at TEXT NOT NULL DEFAULT '',
+                last_cleanup_at TEXT NOT NULL DEFAULT '',
+                archive_path TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS browser_storage_policy (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                max_total_bytes INTEGER NOT NULL DEFAULT 536870912000,
+                min_free_bytes INTEGER NOT NULL DEFAULT 10737418240,
+                min_free_percent INTEGER NOT NULL DEFAULT 15,
+                auto_cleanup INTEGER NOT NULL DEFAULT 1,
+                archive_after_days INTEGER NOT NULL DEFAULT 30,
+                warning_profile_bytes INTEGER NOT NULL DEFAULT 314572800,
+                cleanup_profile_bytes INTEGER NOT NULL DEFAULT 524288000,
+                hard_profile_bytes INTEGER NOT NULL DEFAULT 786432000
+            );
+            INSERT OR IGNORE INTO browser_storage_policy (id) VALUES (1);
+
             CREATE TABLE IF NOT EXISTS gmail_oauth_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 client_id TEXT NOT NULL DEFAULT '',
@@ -3194,6 +2854,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "gmail_oauth_state", "current_auth_url", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "client_secret_protected", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "refresh_token_protected", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(connection, "browser_sessions", "identity_id", "TEXT NOT NULL DEFAULT 'identity-primary'")?;
 
     // Builds before 293 incorrectly launched OAuth inside Managed Chromium.
     // Retire that legacy database row so it no longer appears as a running
@@ -5151,6 +4812,11 @@ pub fn run() {
             save_proxy_record,
             test_proxy_record,
             get_browser_sessions,
+            get_browser_storage_overview,
+            save_browser_storage_policy,
+            cleanup_browser_identity,
+            archive_browser_identity,
+            restore_browser_identity,
             launch_managed_browser,
             open_managed_browser_url,
             stop_managed_browser,
