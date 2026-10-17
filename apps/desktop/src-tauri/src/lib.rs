@@ -131,9 +131,13 @@ fn open_external_url(url: String) -> Result<String, String> {
     }
 
     #[cfg(target_os = "windows")]
-    // Pass the URL as one argument instead of through cmd.exe. OAuth URLs contain
-    // '&' query separators which cmd may interpret as shell operators.
-    let result = Command::new("explorer.exe").arg(target).spawn();
+    // Ask the Windows URL protocol handler to open the complete URL in the
+    // user's default browser. `explorer.exe <url>` can incorrectly open the
+    // Documents folder on some Windows installations.
+    let result = Command::new("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(target)
+        .spawn();
 
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(target).spawn();
