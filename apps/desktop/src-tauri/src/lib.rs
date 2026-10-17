@@ -131,9 +131,9 @@ fn open_external_url(url: String) -> Result<String, String> {
     }
 
     #[cfg(target_os = "windows")]
-    let result = Command::new("cmd.exe")
-        .args(["/C", "start", "", target])
-        .spawn();
+    // Pass the URL as one argument instead of through cmd.exe. OAuth URLs contain
+    // '&' query separators which cmd may interpret as shell operators.
+    let result = Command::new("explorer.exe").arg(target).spawn();
 
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(target).spawn();
@@ -2538,10 +2538,13 @@ fn start_gmail_oauth(app_handle: tauri::AppHandle) -> Result<GmailOAuthStatus, S
             }
         }
     });
-    if let Err(error) = open_oauth_in_managed_browser(&app_handle, auth_url.as_str()) {
+    // Google blocks sign-in from automation-controlled Chrome/Chromium. OAuth must
+    // be completed in the user's normal system browser; the managed runtime is
+    // reserved for platform provisioning after a refresh token is available.
+    if let Err(error) = open_external_url(auth_url.to_string()) {
         connection.execute(
             "UPDATE gmail_oauth_state SET last_message=?1,updated_at=?2 WHERE id=1",
-            params![format!("Managed Chromium không tự mở được trang Google ({error}). Hãy bấm Mở trang Google OAuth trong EntityManager."), now_string()],
+            params![format!("Windows không tự mở được trang Google OAuth ({error}). Hãy bấm Mở trang Google OAuth hoặc copy URL dự phòng."), now_string()],
         ).map_err(|db_error| db_error.to_string())?;
     }
     gmail_oauth_status_record(&connection)
@@ -2569,19 +2572,6 @@ fn complete_gmail_oauth(app_handle: &tauri::AppHandle, client_id: &str, code: &s
         params![email, protected_refresh_token, now_string()],
     ).map_err(|error| error.to_string())?;
     Ok(email)
-}
-
-fn open_oauth_in_managed_browser(app_handle: &tauri::AppHandle, url: &str) -> Result<(), String> {
-    launch_managed_browser(app_handle.clone(), BrowserLaunchRequest {
-        session_id: "browser-gmail-oauth".to_string(),
-        campaign_id: "gmail-oauth".to_string(),
-        job_id: "gmail-oauth".to_string(),
-        account_id: "gmail-oauth".to_string(),
-        platform_id: "gmail-oauth".to_string(),
-        url: url.to_string(),
-        proxy_id: String::new(),
-        visible: true,
-    }).map(|_| ())
 }
 
 fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
