@@ -1,10 +1,13 @@
+Warning: truncated output (original token count: 52542)
+Total output lines: 3542
+
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
-import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, BrowserSessionRecord, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, ProxyRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
+import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, BrowserSessionRecord, BrowserStorageOverview, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, ProxyRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
 import { demoEntityProfileSeed, demoProjectSeed, platformLibrarySeed } from "@entitymanager/shared/seed";
 import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
@@ -347,6 +350,19 @@ function signupUrlForPlatform(platformId: string, fallbackUrl = "") {
   return urls[platformId] ?? fallbackUrl;
 }
 
+function formatStorage(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
+}
+
+function identityIdFor(moneySite: MoneySiteForm, profile: EntityProfileRecord) {
+  const source = `${moneySite.domain || "site"}-${profile.id || profile.email || "primary"}`.toLowerCase();
+  const safe = source.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return `identity-${safe || "primary"}`;
+}
+
 function App() {
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
@@ -395,6 +411,8 @@ function App() {
   const [campaignLaunching, setCampaignLaunching] = useState(false);
   const [proxyRecords, setProxyRecords] = useState<ProxyRecord[]>([]);
   const [browserSessions, setBrowserSessions] = useState<BrowserSessionRecord[]>([]);
+  const [browserStorage, setBrowserStorage] = useState<BrowserStorageOverview | null>(null);
+  const [storageBusy, setStorageBusy] = useState("");
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [browserVisible, setBrowserVisible] = useState(true);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
@@ -698,7 +716,7 @@ function App() {
 
   async function loadLocalData() {
     try {
-      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions, storedGmailOAuth] = await Promise.all([
+      const [storedMoneySite, storedSettings, storedPlatforms, storedRecipes, storedEntityProfile, storedAccounts, storedRuns, storedQueue, storedDryRunHistory, storedDryRunAudit, storedEvidence, storedValidation, storedIndexingQueueCount, storedProvisioningCampaigns, storedProvisioningJobs, storedProxies, storedBrowserSessions, storedBrowserStorage, storedGmailOAuth] = await Promise.all([
         invoke<MoneySiteForm>("get_money_site"),
         invoke<IntegrationSettingForm[]>("get_integration_settings"),
         invoke<PlatformLibraryRecord[]>("get_platforms"),
@@ -716,6 +734,7 @@ function App() {
         invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
         invoke<ProxyRecord[]>("get_proxy_records"),
         invoke<BrowserSessionRecord[]>("get_browser_sessions"),
+        invoke<BrowserStorageOverview>("get_browser_storage_overview"),
         invoke<GmailOAuthStatus>("get_gmail_oauth_status")
       ]);
 
@@ -736,6 +755,7 @@ function App() {
       setProvisioningJobs(storedProvisioningJobs);
       setProxyRecords(storedProxies);
       setBrowserSessions(storedBrowserSessions);
+      setBrowserStorage(storedBrowserStorage);
       setGmailOAuth(storedGmailOAuth);
       setGmailOAuthDraft((current) => ({ ...current, clientId: storedGmailOAuth.clientId }));
       setStatusMessage("Loaded from local SQLite");
@@ -1064,7 +1084,8 @@ function App() {
       platformId: job.platformId,
       url: job.signupUrl || job.profileUrl,
       proxyId: selectedProxyId,
-      visible: browserVisible
+      visible: browserVisible,
+      identityId: identityIdFor(moneySite, entityProfile)
     } });
     setBrowserSessions((current) => upsertById(current, session));
     return session;
@@ -1100,7 +1121,8 @@ function App() {
         platformId: "control-center",
         url: "https://accounts.google.com/",
         proxyId: "",
-        visible
+        visible,
+        identityId: identityIdFor(moneySite, entityProfile)
       } });
       setBrowserSessions((current) => upsertById(current, session));
       setStatusMessage(visible ? "Đã mở Chromium được quản lý." : "Đã khởi chạy Chromium ở chế độ ẩn.");
@@ -1127,6 +1149,36 @@ function App() {
     } catch (error) {
       setStatusMessage(`Không mở được Gmail bootstrap: ${String(error)}`);
     }
+  }
+
+  async function refreshBrowserStorage() {
+    setStorageBusy("refresh");
+    try {
+      setBrowserStorage(await invoke<BrowserStorageOverview>("get_browser_storage_overview"));
+      setStatusMessage("Đã đo lại dung lượng Browser Identity.");
+    } catch (error) { setStatusMessage(`Không đo được dung lượng: ${String(error)}`); }
+    finally { setStorageBusy(""); }
+  }
+
+  async function saveStorageLimit(maxGb: number) {
+    if (!browserStorage) return;
+    setStorageBusy("policy");
+    try {
+      const policy = { ...browserStorage.policy, maxTotalBytes: Math.round(maxGb * 1024 ** 3) };
+      setBrowserStorage(await invoke<BrowserStorageOverview>("save_browser_storage_policy", { policy }));
+      setStatusMessage(`Đã lưu trần dung lượng ${maxGb} GB. Tool không chiếm sẵn dung lượng này.`);
+    } catch (error) { setStatusMessage(`Không lưu được Storage Policy: ${String(error)}`); }
+    finally { setStorageBusy(""); }
+  }
+
+  async function maintainBrowserIdentity(command: "cleanup_browser_identity" | "archive_browser_identity" | "restore_browser_identity", identityId: string) {
+    setStorageBusy(`${command}:${identityId}`);
+    try {
+      const overview = await invoke<BrowserStorageOverview>(command, { identityId });
+      setBrowserStorage(overview);
+      setStatusMessage(overview.message);
+    } catch (error) { setStatusMessage(`Không thể bảo trì Browser Identity: ${String(error)}`); }
+    finally { setStorageBusy(""); }
   }
 
   async function startFullProvisioningCampaign() {
@@ -2009,175 +2061,7 @@ function App() {
                 <span className="muted-text">View mode</span>
                 <div className="view-mode-switch" role="group" aria-label="Platform view mode">
                   <button
-                    className={platformViewMode === "compact" ? "secondary-action active-view" : "secondary-action"}
-                    type="button"
-                    aria-pressed={platformViewMode === "compact"}
-                    onClick={() => setPlatformViewMode("compact")}
-                  >Compact cards</button>
-                  <button
-                    className={platformViewMode === "table" ? "secondary-action active-view" : "secondary-action"}
-                    type="button"
-                    aria-pressed={platformViewMode === "table"}
-                    onClick={() => setPlatformViewMode("table")}
-                  >Table</button>
-                </div>
-              </div>
-
-              {platformViewMode === "compact" ? (
-                <div className="platform-library platform-library-compact">
-                  {filteredPlatforms.map((platform) => (
-                    <article className="platform-card platform-card-compact" key={platform.id}>
-                      <div className="platform-card-header">
-                        <div className="platform-card-title">
-                          <p className="eyebrow">{platform.type} / {platform.entityValue}</p>
-                          <h2>{platform.name}</h2>
-                          <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
-                        </div>
-                        <div className="authority-score authority-score-compact">
-                          <span>Authority</span>
-                          <strong>{platform.authorityScore}</strong>
-                        </div>
-                      </div>
-                      <p className="platform-notes platform-notes-compact">{platform.notes}</p>
-                      <div className="platform-meta platform-meta-compact">
-                        <span>{platform.difficulty}</span>
-                        <span>{platform.automationMode.replace("_", " ")}</span>
-                        <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
-                        <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
-                      </div>
-                      <div className="platform-edit-grid platform-edit-grid-compact">
-                        <label>
-                          Authority
-                          <input type="number" min="0" max="100" value={platform.authorityScore}
-                            onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
-                        </label>
-                        <label>
-                          Automation
-                          <select value={platform.automationMode}
-                            onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
-                            <option value="auto">auto</option>
-                            <option value="semi_auto">semi auto</option>
-                            <option value="manual_review">manual review</option>
-                          </select>
-                        </label>
-                        <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save</button>
-                      </div>
-                    </article>
-                  ))}
-                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
-                </div>
-              ) : (
-                <div className="platform-table-wrap">
-                  <table className="platform-library-table">
-                    <thead>
-                      <tr>
-                        <th>Platform</th>
-                        <th>Type / value</th>
-                        <th>Authority</th>
-                        <th>Difficulty</th>
-                        <th>Automation</th>
-                        <th>Requirements</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPlatforms.map((platform) => (
-                        <tr key={platform.id}>
-                          <td className="platform-table-name">
-                            <strong>{platform.name}</strong>
-                            <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
-                            <span>{platform.notes}</span>
-                          </td>
-                          <td>{platform.type}<span className="table-subtext">{platform.entityValue}</span></td>
-                          <td>
-                            <label className="table-field-label" aria-label={platform.name + " authority score"}>
-                              <input type="number" min="0" max="100" value={platform.authorityScore}
-                                onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
-                            </label>
-                          </td>
-                          <td><span className={"difficulty-pill difficulty-" + platform.difficulty}>{platform.difficulty}</span></td>
-                          <td>
-                            <select aria-label={platform.name + " automation mode"} value={platform.automationMode}
-                              onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
-                              <option value="auto">auto</option>
-                              <option value="semi_auto">semi auto</option>
-                              <option value="manual_review">manual review</option>
-                            </select>
-                          </td>
-                          <td>
-                            <div className="table-requirements">
-                              <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
-                              <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
-                            </div>
-                          </td>
-                          <td><button className="secondary-action table-save-button" type="button" onClick={() => savePlatform(platform)}>Save</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
-                </div>
-              )}
-            </article>
-          </section>
-        )}
-
-        {activeModule === "Platform Validation" && (
-          <section className="single-panel platform-validation-page">
-            <section className="metrics-grid">
-              <article className="metric-card neutral"><span>Platforms</span><strong>{validationStats.total}</strong></article>
-              <article className="metric-card good"><span>Dry-run OK</span><strong>{validationStats.dryRunOk}</strong></article>
-              <article className="metric-card good"><span>Text Saved</span><strong>{validationStats.textSaved}</strong></article>
-              <article className={validationStats.needsFix ? "metric-card warning" : "metric-card neutral"}><span>Needs Fix</span><strong>{validationStats.needsFix}</strong></article>
-            </section>
-
-            <article className="panel">
-              <div className="panel-header">
-                <div>
-                  <p className="eyebrow">Platform Validation Pack</p>
-                  <h2>Checklist test từng platform</h2>
-                </div>
-                <div className="queue-actions">
-                  <span className="badge">{validationStats.mediaUploaded}/{validationStats.total} media uploaded</span>
-                  <button className="secondary-action" type="button" onClick={() => void refreshPlatformValidation()}>Refresh</button>
-                </div>
-              </div>
-              <p className="muted-text">Dùng màn này để ghi nhận anh đã test tới đâu: chạy dry-run, lưu text, upload avatar/banner, hoặc đánh dấu cần sửa recipe. Extension build mới sẽ tự đồng bộ kết quả về Desktop; màn này tự refresh mỗi 5 giây và vẫn cho phép anh sửa tay khi cần.</p>
-
-              <div className="data-table-wrap">
-                <table className="data-table platform-validation-table">
-                  <thead>
-                    <tr>
-                      <th>Platform</th>
-                      <th>Status</th>
-                      <th>Checklist timestamps</th>
-                      <th>Test URL</th>
-                      <th>Notes</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {validationPack.map((record) => (
-                      <tr key={record.platformId}>
-                        <td>
-                          <strong>{record.platformName}</strong>
-                          <small>{record.platformId}</small>
-                        </td>
-                        <td>
-                          <select value={record.status} onChange={(event) => updatePlatformValidation(record.platformId, { status: event.target.value as PlatformValidationStatus })}>
-                            {validationStatuses.map((status) => (
-                              <option key={status} value={status}>{validationStatusLabels[status]}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <small>Dry-run: {record.dryRunCheckedAt ? new Date(record.dryRunCheckedAt).toLocaleString("vi-VN") : "chưa có"}</small>
-                          <small>Text: {record.textSavedAt ? new Date(record.textSavedAt).toLocaleString("vi-VN") : "chưa có"}</small>
-                          <small>Media: {record.mediaUploadedAt ? new Date(record.mediaUploadedAt).toLocaleString("vi-VN") : "chưa có"}</small>
-                        </td>
-                        <td>
-                          <input
-                            aria-label={record.platformName + " last tested URL"}
+                    className={platformViewMode === "compa…2542 tokens truncated…d.platformName + " last tested URL"}
                             placeholder="https://..."
                             value={record.lastTestedUrl}
                             onChange={(event) => updatePlatformValidation(record.platformId, { lastTestedUrl: event.target.value })}
@@ -3324,6 +3208,34 @@ function App() {
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="setting-card">
+              <div className="panel-header">
+                <div><p className="eyebrow">Persistent Identity Storage</p><h3>Browser Identity & dung lượng</h3></div>
+                <span className={`badge ${browserStorage?.safetyStatus === "healthy" ? "good" : "warning"}`}>{browserStorage?.safetyStatus ?? "loading"}</span>
+              </div>
+              <p className="platform-notes">Một identity dùng chung phiên đăng nhập cho các platform của cùng entity. Tool giữ cookie/Local Storage để chăm sóc lâu dài; không tạo một profile Chromium mới cho từng platform.</p>
+              {browserStorage && <>
+                <div className="settings-grid">
+                  <label>Trần tổng dung lượng (GB)<input type="number" min="10" step="10" defaultValue={Math.round(browserStorage.policy.maxTotalBytes / 1024 ** 3)} onBlur={(event) => void saveStorageLimit(Number(event.currentTarget.value))} /></label>
+                  <label>Dự phòng ổ đĩa tối thiểu<input readOnly value={`${formatStorage(browserStorage.policy.minFreeBytes)} hoặc ${browserStorage.policy.minFreePercent}%`} /></label>
+                  <label>Đang dùng<input readOnly value={`${formatStorage(browserStorage.totalProfileBytes)} / ${formatStorage(browserStorage.policy.maxTotalBytes)}`} /></label>
+                  <label>Ổ đĩa còn trống<input readOnly value={`${formatStorage(browserStorage.freeDiskBytes)} / ${formatStorage(browserStorage.diskCapacityBytes)}`} /></label>
+                </div>
+                <p className="platform-notes">{browserStorage.message}</p>
+                <div className="settings-actions"><button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void refreshBrowserStorage()}>{storageBusy === "refresh" ? "Đang đo..." : "Đo lại dung lượng"}</button></div>
+                <div className="browser-session-list">
+                  {browserStorage.identities.map((identity) => <div className="browser-session-row" key={identity.id}>
+                    <div><strong>{identity.name} {identity.isPinned ? "· pinned" : ""}</strong><span>{identity.status} · {formatStorage(identity.sizeBytes)} · giữ {identity.retentionDays} ngày</span><small>{identity.email || identity.id}</small></div>
+                    <div className="session-actions">
+                      {identity.status === "archived" ? <button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void maintainBrowserIdentity("restore_browser_identity", identity.id)}>Khôi phục</button> : <>
+                        <button className="secondary-action" type="button" disabled={Boolean(storageBusy)} onClick={() => void maintainBrowserIdentity("cleanup_browser_identity", identity.id)}>Dọn cache</button>
+                        <button className="secondary-action" type="button" disabled={Boolean(storageBusy) || identity.isPinned} title={identity.isPinned ? "Identity chính đang được ghim để tránh archive nhầm" : "Nén profile khi dự án tạm nghỉ"} onClick={() => void maintainBrowserIdentity("archive_browser_identity", identity.id)}>Archive</button>
+                      </>}
+                    </div>
+                  </div>)}
+                </div>
+              </>}
             </div>
             <div className="setting-card">
               <div className="panel-header"><div><p className="eyebrow">System Diagnostics</p><h3>Kiểm tra nền tảng tự động hóa</h3></div><button className="secondary-action" type="button" disabled={diagnosticsRunning} onClick={() => void runSystemDiagnostics()}>{diagnosticsRunning ? "Đang kiểm tra..." : "Chạy kiểm tra toàn bộ"}</button></div>
