@@ -1646,12 +1646,11 @@ function App() {
     }
     try {
       setGmailActionRunning("oauth");
-      setGmailActionMessage("Đang tạo phiên OAuth và mở trang Google...");
+      setGmailActionMessage("Đang tạo phiên OAuth và mở Chrome/Edge mặc định của Windows...");
       const current = await invoke<GmailOAuthStatus>("start_gmail_oauth");
       setGmailOAuth(current);
-      setBrowserSessions(await invoke<BrowserSessionRecord[]>("get_browser_sessions"));
-      setStatusMessage("Trang Google OAuth đã mở. Hãy chấp thuận quyền một lần rồi quay lại EntityManager.");
-      setGmailActionMessage(current.authorizationUrl ? "Đang chờ Google xác nhận. Nếu trình duyệt không tự mở, bấm “Mở trang Google OAuth”." : current.lastMessage);
+      setStatusMessage("Trang Google OAuth đã mở trong trình duyệt Windows thông thường. Hãy chấp thuận quyền một lần rồi quay lại EntityManager.");
+      setGmailActionMessage(current.authorizationUrl ? "Đang chờ Google xác nhận trong Chrome/Edge mặc định. Không đăng nhập bằng Chrome for Testing." : current.lastMessage);
     } catch (error) {
       setStatusMessage(`Không bắt đầu được Gmail OAuth: ${String(error)}`);
       setGmailActionMessage(`Không bắt đầu được OAuth: ${String(error)}`);
@@ -1698,7 +1697,7 @@ function App() {
     }
     try {
       await invoke<string>("open_external_url", { url: gmailOAuth.authorizationUrl });
-      setGmailActionMessage("Đã yêu cầu Windows mở trang Google. Nếu cửa sổ nằm phía sau, kiểm tra thanh tác vụ Chrome/Edge.");
+      setGmailActionMessage("Đã yêu cầu Windows mở trang Google trong Chrome/Edge mặc định. Nếu cửa sổ nằm phía sau, kiểm tra thanh tác vụ.");
     } catch (error) {
       setGmailActionMessage(`Windows không mở được URL: ${String(error)}. Có thể copy URL dự phòng bên dưới.`);
     }
@@ -3262,7 +3261,7 @@ function App() {
                 </div>
                 <span className={`badge ${gmailOAuth.connected ? "good" : "warning"}`}>{gmailOAuth.connected ? "Connected" : gmailOAuth.configured ? "configured" : "thiếu Client Secret"}</span>
               </div>
-              <p className="platform-notes">OAuth không lưu mật khẩu Gmail. Anh chấp thuận quyền đọc một lần; refresh token được giữ trong Windows Credential Manager và worker kiểm tra email Medium mỗi 20 giây.</p>
+              <p className="platform-notes">OAuth không lưu mật khẩu Gmail. Trang cấp quyền luôn mở bằng Chrome/Edge mặc định của Windows vì Google chặn đăng nhập trong Chrome for Testing. Anh chấp thuận quyền đọc một lần; refresh token được giữ trong Windows Credential Manager và worker kiểm tra email Medium mỗi 20 giây.</p>
               <label className="oauth-file-import">
                 <span>Nhập nhanh file OAuth JSON tải từ Google Cloud</span>
                 <input type="file" accept="application/json,.json" onChange={(event) => {
@@ -3306,7 +3305,7 @@ function App() {
                 <div><p className="eyebrow">Managed Browser Control Center</p><h3>Điều khiển Chromium tập trung</h3></div>
                 <span className="badge">{browserSessions.filter((session) => session.status === "running").length} running</span>
               </div>
-              <p className="platform-notes">Chromium chạy bằng profile riêng và có thể ẩn trong khi worker tiếp tục. Google không cho đăng nhập OAuth trong webview nhúng, vì vậy cửa sổ chỉ xuất hiện khi anh chủ động bấm Hiện.</p>
+              <p className="platform-notes">Chromium chạy bằng profile riêng và có thể ẩn trong khi worker tiếp tục. Managed Chromium dùng cho Medium và các platform; riêng Google OAuth luôn mở bằng trình duyệt Windows thông thường để tránh lỗi “browser or app may not be secure”.</p>
               <div className="settings-actions">
                 <button className="primary-action" type="button" onClick={() => void launchBrowserControl(true)}>Mở Chromium quản lý</button>
                 <button className="secondary-action" type="button" onClick={() => void launchBrowserControl(false)}>Khởi chạy ẩn</button>
