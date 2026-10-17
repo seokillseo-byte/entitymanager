@@ -23,11 +23,16 @@ declare const chrome: {
     sendMessage(tabId: number, message: unknown, callback?: (response: unknown) => void): void;
     update(tabId: number, updateProperties: { url: string }, callback?: () => void): void;
   };
+  alarms: {
+    create(name: string, alarmInfo: { delayInMinutes?: number; periodInMinutes?: number }): void;
+    onAlarm: { addListener(callback: (alarm: { name: string }) => void): void };
+  };
 };
 
 const activeAutomation = new Set<number>();
 const retryTimers = new Map<number, ReturnType<typeof setTimeout>>();
-const retryDelays = [0, 1200, 3000, 6000, 10000];
+const retryDelays = [0, 1200, 3000, 6000, 10000, 20000, 30000];
+const mediumWatchdogAlarm = "entitymanager-medium-watchdog";
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url || !/^https:\/\/(?:www\.)?medium\.com\//i.test(tab.url)) return;
@@ -40,8 +45,18 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   });
 });
 
-chrome.runtime.onInstalled.addListener(scanOpenMediumTabs);
-chrome.runtime.onStartup.addListener(scanOpenMediumTabs);
+chrome.runtime.onInstalled.addListener(startMediumWatchdog);
+chrome.runtime.onStartup.addListener(startMediumWatchdog);
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === mediumWatchdogAlarm) scanOpenMediumTabs();
+});
+
+startMediumWatchdog();
+
+function startMediumWatchdog(): void {
+  chrome.alarms.create(mediumWatchdogAlarm, { delayInMinutes: 0.1, periodInMinutes: 0.5 });
+  scanOpenMediumTabs();
+}
 
 function scanOpenMediumTabs(): void {
   chrome.tabs.query({ url: ["https://medium.com/*", "https://www.medium.com/*"] }, (tabs) => {
@@ -154,12 +169,18 @@ async function postPlatformValidation(report: PlatformValidationSyncReport, call
 }
 
 async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promise<boolean> {
+  let jobReady = false;
   try {
     const jobResponse = await fetch("http://127.0.0.1:17321/provisioning/job/platform?platformId=medium");
     if (!jobResponse.ok) return false;
+    jobReady = true;
     const job = await jobResponse.json() as { stage?: string; profileUrl?: string };
     const payloadResponse = await fetch("http://127.0.0.1:17321/account/submit-verify/platform?platformId=medium");
-    if (!payloadResponse.ok) return false;
+    if (!payloadResponse.ok) {
+      const detail = await safeResponseError(payloadResponse);
+      await postProvisioningCheckpoint("medium", "signup", "waiting_user", `Bridge chưa lấy được payload Medium: ${detail}`, "");
+      return false;
+    }
     const payload = await payloadResponse.json() as { formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
     const authPage = /\/(?:signin|signup|login|register)(?:[/?#]|$)/i.test(currentUrl) || /operation=(?:register|login)/i.test(currentUrl);
     if (authPage) {
@@ -188,9 +209,25 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
       return result.success;
     }
     return false;
-  } catch {
-    // Desktop/content may still be starting. The bounded retry scheduler will try again.
+  } catch (error) {
+    if (jobReady) {
+      const detail = error instanceof Error ? error.message : String(error);
+      try {
+        await postProvisioningCheckpoint("medium", "signup", "waiting_user", `Medium worker lỗi: ${detail}`, currentUrl);
+      } catch {
+        // The Desktop bridge may be restarting; the watchdog will retry.
+      }
+    }
     return false;
+  }
+}
+
+async function safeResponseError(response: Response): Promise<string> {
+  try {
+    const data = await response.json() as { error?: string };
+    return data.error || `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
   }
 }
 
