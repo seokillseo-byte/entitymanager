@@ -211,6 +211,47 @@ export interface BrowserSessionRecord {
   lastMessage: string;
   createdAt: string;
   updatedAt: string;
+  identityId: string;
+}
+
+export type BrowserIdentityStatus = "active" | "archived" | "needs_reauth";
+
+export interface BrowserIdentityProfile {
+  id: string;
+  name: string;
+  email: string;
+  proxyId: string;
+  profileDirectory: string;
+  status: BrowserIdentityStatus;
+  retentionDays: number;
+  isPinned: boolean;
+  sizeBytes: number;
+  lastUsedAt: string;
+  lastCleanupAt: string;
+  archivePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrowserStoragePolicy {
+  maxTotalBytes: number;
+  minFreeBytes: number;
+  minFreePercent: number;
+  autoCleanup: boolean;
+  archiveAfterDays: number;
+  warningProfileBytes: number;
+  cleanupProfileBytes: number;
+  hardProfileBytes: number;
+}
+
+export interface BrowserStorageOverview {
+  policy: BrowserStoragePolicy;
+  identities: BrowserIdentityProfile[];
+  totalProfileBytes: number;
+  freeDiskBytes: number;
+  diskCapacityBytes: number;
+  safetyStatus: "healthy" | "warning" | "blocked";
+  message: string;
 }
 
 export interface WorkflowRunRecord {
