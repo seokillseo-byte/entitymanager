@@ -57,8 +57,9 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
     const choice = Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button']")).filter(visible)
       .find((element) => /sign up with email|continue with email|email/i.test((element.innerText || element.textContent || "").trim()));
     choice?.click();
-    if (choice) await new Promise((resolve) => setTimeout(resolve, 900));
-    emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
+    if (choice) {
+      emailInput = await waitForMediumEmailInput(visible, 5000);
+    }
   }
   if (!emailInput) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô email Medium sau khi mở phương thức đăng ký email." };
   // Medium currently uses more than one signup flow. Some accounts see email-only
@@ -77,6 +78,21 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
   if (!submit) return { success: false, waitingForVerification: false, message: `Đã điền ${nameInput ? `${displayName} và ` : ""}${email}, nhưng chưa tìm thấy nút Continue/Create account phù hợp.` };
   submit.click();
   return { success: true, waitingForVerification: true, message: `${nameInput ? `Đã điền Full name (${displayName}), ` : ""}đã điền email (${email}) và bấm Continue/Create account; đang chờ Medium xác minh email.` };
+}
+
+async function waitForMediumEmailInput(
+  visible: (element: Element) => boolean,
+  timeoutMs: number
+): Promise<HTMLInputElement | undefined> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const input = Array.from(document.querySelectorAll<HTMLInputElement>(
+      "input[type='email'], input[name='email'], input[autocomplete='email']"
+    )).find(visible);
+    if (input) return input;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return undefined;
 }
 
 function findMediumFullNameInput(visible: (element: Element) => boolean): HTMLInputElement | undefined {

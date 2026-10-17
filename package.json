@@ -18,6 +18,7 @@
     "test:selector-health": "node --test apps/desktop/src/selectorHealth.test.mjs",
     "test:dry-run-diagnostics": "node --test apps/desktop/src/dryRunDiagnostics.test.mjs",
     "test:diagnostic-report-validation": "node --test apps/desktop/src/validateDryRunDiagnosticReport.test.mjs",
+    "test:medium-routes": "pnpm extension:build && node --test apps/extension/tests/mediumRoutes.test.mjs",
     "test:command-contract": "node scripts/audit-command-contract.mjs"
   },
   "devDependencies": {

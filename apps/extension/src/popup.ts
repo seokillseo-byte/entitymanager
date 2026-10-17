@@ -1,4 +1,5 @@
 import type { AccountSubmitVerifyPayload, BridgeStorage, CaptchaInjectionPayload, DryRunHistoryReport, InjectCaptchaMessage, InjectionReport, InjectionResponse, PlatformValidationStatus, PlatformValidationSyncReport, ProvisioningCheckpointResult, ProvisioningJobRecord, SubmitVerifyMessage, SubmitVerifyReport, SubmitVerifyResponse } from "./types";
+import { isMediumAuthenticationUrl } from "./mediumRoutes";
 
 declare const chrome: {
   runtime: {
@@ -272,7 +273,8 @@ async function runOneClickOrchestrator(): Promise<void> {
 
 function detectAuthenticationGate(currentUrl: string, platformId: string): string {
   const url = currentUrl.toLowerCase();
-  const isAuthPage = /\/(signin|sign-in|login|log-in|signup|sign-up|register|join)(?:[/?#]|$)/.test(url)
+  const isAuthPage = (platformId === "medium" && isMediumAuthenticationUrl(currentUrl))
+    || /\/(signin|sign-in|login|log-in|signup|sign-up|register|join)(?:[/?#]|$)/.test(url)
     || url.includes("operation=register")
     || url.includes("operation=login");
   if (!isAuthPage) return "";
