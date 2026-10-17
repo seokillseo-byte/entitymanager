@@ -2861,7 +2861,8 @@ fn ensure_identity(app_handle: &tauri::AppHandle, connection: &Connection, ident
 
 fn get_identities(connection: &Connection) -> Result<Vec<BrowserIdentityProfile>, String> {
     let mut statement = connection.prepare("SELECT id,name,email,proxy_id,profile_directory,status,retention_days,is_pinned,size_bytes,last_used_at,last_cleanup_at,archive_path,created_at,updated_at FROM browser_identity_profiles ORDER BY is_pinned DESC,updated_at DESC").map_err(|e| e.to_string())?;
-    statement.query_map([], identity_from_row).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    let identities = statement.query_map([], identity_from_row).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(identities)
 }
 
 #[tauri::command]
