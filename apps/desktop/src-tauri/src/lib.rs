@@ -2463,6 +2463,33 @@ fn save_gmail_oauth_config(app_handle: tauri::AppHandle, config: GmailOAuthConfi
         "UPDATE gmail_oauth_state SET client_id=?1,client_secret_protected=?2,status='configured',last_message='Đã lưu cấu hình OAuth; chưa kết nối Gmail.',updated_at=?3 WHERE id=1",
         params![client_id, protected_secret, timestamp],
     ).map_err(|error| error.to_string())?;
+    drop(connection);
+
+    // If an installer/database migration lost only the SQLite status while the
+    // encrypted refresh token survived in Windows Credential Manager, validate
+    // it and restore Connected without asking the user to authorize again.
+    if has_secret(GMAIL_REFRESH_TOKEN_KEY) {
+        if let Ok(access_token) = gmail_access_token(&app_handle) {
+            if let Ok(response) = reqwest::blocking::Client::new()
+                .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+                .bearer_auth(access_token)
+                .send()
+                .and_then(|response| response.error_for_status())
+                .and_then(|response| response.json::<serde_json::Value>())
+            {
+                let email = response["emailAddress"].as_str().unwrap_or("");
+                if let Ok(connection) = open_database(&app_handle) {
+                    let _ = connection.execute(
+                        "UPDATE gmail_oauth_state SET account_email=?1,status='connected',last_message='Đã khôi phục Gmail OAuth từ refresh token được mã hóa.',last_checked_at=?2,current_auth_url='',updated_at=?2 WHERE id=1",
+                        params![email, now_string()],
+                    );
+                }
+            }
+        }
+    }
+
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
     gmail_oauth_status_record(&connection)
 }
 
@@ -2588,7 +2615,7 @@ fn gmail_access_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
     let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
     let status = gmail_oauth_status_record(&connection)?;
-    if !status.connected { return Err("Gmail OAuth chưa kết nối.".to_string()); }
+    if !status.configured { return Err("Gmail OAuth chưa được cấu hình.".to_string()); }
     let refresh_token = read_gmail_refresh_token(app_handle)?;
     let client_secret = read_gmail_client_secret(app_handle)?;
     let response = reqwest::blocking::Client::new().post("https://oauth2.googleapis.com/token").form(&[
@@ -2680,11 +2707,12 @@ fn start_gmail_verification_worker(app_handle: tauri::AppHandle) {
 #[tauri::command]
 fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiagnosticCheck>, String> {
     let mut checks = Vec::new();
+    let active_database_path = database_path(&app_handle)?;
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
     checks.push(SystemDiagnosticCheck {
         id: "sqlite".to_string(), label: "SQLite local database".to_string(), status: "ok".to_string(),
-        message: "Đã mở database và cập nhật schema thành công.".to_string(),
+        message: format!("Đã mở database bền vững tại {} và cập nhật schema thành công.", active_database_path.display()),
     });
 
     let resource_result = bundled_extension_directory(&app_handle);
@@ -2869,14 +2897,32 @@ fn open_database(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
 }
 
 fn database_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let directory = app_handle
+    let legacy_directory = app_handle
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
 
+    fs::create_dir_all(&legacy_directory).map_err(|error| error.to_string())?;
+    let legacy_database = legacy_directory.join("entitymanager.db");
+
+    #[cfg(target_os = "windows")]
+    let directory = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| legacy_directory.clone())
+        .join("EntityManagerData");
+
+    #[cfg(not(target_os = "windows"))]
+    let directory = legacy_directory.clone();
+
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
 
-    Ok(directory.join("entitymanager.db"))
+    let durable_database = directory.join("entitymanager.db");
+    if !durable_database.exists() && legacy_database.exists() && legacy_database != durable_database {
+        fs::copy(&legacy_database, &durable_database)
+            .map_err(|error| format!("Không di chuyển được SQLite sang thư mục dữ liệu bền vững: {error}"))?;
+    }
+
+    Ok(durable_database)
 }
 
 fn ensure_schema(connection: &Connection) -> Result<(), String> {
