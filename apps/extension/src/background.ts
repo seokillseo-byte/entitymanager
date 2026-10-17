@@ -1,4 +1,5 @@
 import type { DryRunHistoryReport, InjectionReport, PlatformValidationSyncReport, SubmitVerifyReport } from "./types";
+import { isMediumAuthenticationUrl } from "./mediumRoutes";
 
 declare const chrome: {
   runtime: {
@@ -182,7 +183,7 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
       return false;
     }
     const payload = await payloadResponse.json() as { formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
-    const authPage = /\/(?:signin|signup|login|register)(?:[/?#]|$)/i.test(currentUrl) || /operation=(?:register|login)/i.test(currentUrl);
+    const authPage = isMediumAuthenticationUrl(currentUrl);
     if (authPage) {
       const result = await sendTabMessage<{ success: boolean; waitingForVerification: boolean; message: string }>(tabId, {
         type: "ENTITYMANAGER_MEDIUM_SIGNUP",
