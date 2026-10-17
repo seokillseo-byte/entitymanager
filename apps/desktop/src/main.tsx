@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 52542)
-Total output lines: 3542
-
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
@@ -2061,7 +2058,175 @@ function App() {
                 <span className="muted-text">View mode</span>
                 <div className="view-mode-switch" role="group" aria-label="Platform view mode">
                   <button
-                    className={platformViewMode === "compa…2542 tokens truncated…d.platformName + " last tested URL"}
+                    className={platformViewMode === "compact" ? "secondary-action active-view" : "secondary-action"}
+                    type="button"
+                    aria-pressed={platformViewMode === "compact"}
+                    onClick={() => setPlatformViewMode("compact")}
+                  >Compact cards</button>
+                  <button
+                    className={platformViewMode === "table" ? "secondary-action active-view" : "secondary-action"}
+                    type="button"
+                    aria-pressed={platformViewMode === "table"}
+                    onClick={() => setPlatformViewMode("table")}
+                  >Table</button>
+                </div>
+              </div>
+
+              {platformViewMode === "compact" ? (
+                <div className="platform-library platform-library-compact">
+                  {filteredPlatforms.map((platform) => (
+                    <article className="platform-card platform-card-compact" key={platform.id}>
+                      <div className="platform-card-header">
+                        <div className="platform-card-title">
+                          <p className="eyebrow">{platform.type} / {platform.entityValue}</p>
+                          <h2>{platform.name}</h2>
+                          <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
+                        </div>
+                        <div className="authority-score authority-score-compact">
+                          <span>Authority</span>
+                          <strong>{platform.authorityScore}</strong>
+                        </div>
+                      </div>
+                      <p className="platform-notes platform-notes-compact">{platform.notes}</p>
+                      <div className="platform-meta platform-meta-compact">
+                        <span>{platform.difficulty}</span>
+                        <span>{platform.automationMode.replace("_", " ")}</span>
+                        <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                        <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
+                      </div>
+                      <div className="platform-edit-grid platform-edit-grid-compact">
+                        <label>
+                          Authority
+                          <input type="number" min="0" max="100" value={platform.authorityScore}
+                            onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
+                        </label>
+                        <label>
+                          Automation
+                          <select value={platform.automationMode}
+                            onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
+                            <option value="auto">auto</option>
+                            <option value="semi_auto">semi auto</option>
+                            <option value="manual_review">manual review</option>
+                          </select>
+                        </label>
+                        <button className="secondary-action" type="button" onClick={() => savePlatform(platform)}>Save</button>
+                      </div>
+                    </article>
+                  ))}
+                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
+                </div>
+              ) : (
+                <div className="platform-table-wrap">
+                  <table className="platform-library-table">
+                    <thead>
+                      <tr>
+                        <th>Platform</th>
+                        <th>Type / value</th>
+                        <th>Authority</th>
+                        <th>Difficulty</th>
+                        <th>Automation</th>
+                        <th>Requirements</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPlatforms.map((platform) => (
+                        <tr key={platform.id}>
+                          <td className="platform-table-name">
+                            <strong>{platform.name}</strong>
+                            <a href={platform.homepageUrl} target="_blank" rel="noreferrer">{platform.homepageUrl}</a>
+                            <span>{platform.notes}</span>
+                          </td>
+                          <td>{platform.type}<span className="table-subtext">{platform.entityValue}</span></td>
+                          <td>
+                            <label className="table-field-label" aria-label={platform.name + " authority score"}>
+                              <input type="number" min="0" max="100" value={platform.authorityScore}
+                                onChange={(event) => updatePlatform(platform.id, { authorityScore: Number(event.target.value) })} />
+                            </label>
+                          </td>
+                          <td><span className={"difficulty-pill difficulty-" + platform.difficulty}>{platform.difficulty}</span></td>
+                          <td>
+                            <select aria-label={platform.name + " automation mode"} value={platform.automationMode}
+                              onChange={(event) => updatePlatform(platform.id, { automationMode: event.target.value as AutomationMode })}>
+                              <option value="auto">auto</option>
+                              <option value="semi_auto">semi auto</option>
+                              <option value="manual_review">manual review</option>
+                            </select>
+                          </td>
+                          <td>
+                            <div className="table-requirements">
+                              <span>{platform.requiresCaptcha ? "CAPTCHA" : "No CAPTCHA"}</span>
+                              <span>{platform.requiresEmail ? "Email required" : "No email"}</span>
+                            </div>
+                          </td>
+                          <td><button className="secondary-action table-save-button" type="button" onClick={() => savePlatform(platform)}>Save</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!filteredPlatforms.length && <p className="muted-text">No platforms match these filters.</p>}
+                </div>
+              )}
+            </article>
+          </section>
+        )}
+
+        {activeModule === "Platform Validation" && (
+          <section className="single-panel platform-validation-page">
+            <section className="metrics-grid">
+              <article className="metric-card neutral"><span>Platforms</span><strong>{validationStats.total}</strong></article>
+              <article className="metric-card good"><span>Dry-run OK</span><strong>{validationStats.dryRunOk}</strong></article>
+              <article className="metric-card good"><span>Text Saved</span><strong>{validationStats.textSaved}</strong></article>
+              <article className={validationStats.needsFix ? "metric-card warning" : "metric-card neutral"}><span>Needs Fix</span><strong>{validationStats.needsFix}</strong></article>
+            </section>
+
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Platform Validation Pack</p>
+                  <h2>Checklist test từng platform</h2>
+                </div>
+                <div className="queue-actions">
+                  <span className="badge">{validationStats.mediaUploaded}/{validationStats.total} media uploaded</span>
+                  <button className="secondary-action" type="button" onClick={() => void refreshPlatformValidation()}>Refresh</button>
+                </div>
+              </div>
+              <p className="muted-text">Dùng màn này để ghi nhận anh đã test tới đâu: chạy dry-run, lưu text, upload avatar/banner, hoặc đánh dấu cần sửa recipe. Extension build mới sẽ tự đồng bộ kết quả về Desktop; màn này tự refresh mỗi 5 giây và vẫn cho phép anh sửa tay khi cần.</p>
+
+              <div className="data-table-wrap">
+                <table className="data-table platform-validation-table">
+                  <thead>
+                    <tr>
+                      <th>Platform</th>
+                      <th>Status</th>
+                      <th>Checklist timestamps</th>
+                      <th>Test URL</th>
+                      <th>Notes</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {validationPack.map((record) => (
+                      <tr key={record.platformId}>
+                        <td>
+                          <strong>{record.platformName}</strong>
+                          <small>{record.platformId}</small>
+                        </td>
+                        <td>
+                          <select value={record.status} onChange={(event) => updatePlatformValidation(record.platformId, { status: event.target.value as PlatformValidationStatus })}>
+                            {validationStatuses.map((status) => (
+                              <option key={status} value={status}>{validationStatusLabels[status]}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <small>Dry-run: {record.dryRunCheckedAt ? new Date(record.dryRunCheckedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                          <small>Text: {record.textSavedAt ? new Date(record.textSavedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                          <small>Media: {record.mediaUploadedAt ? new Date(record.mediaUploadedAt).toLocaleString("vi-VN") : "chưa có"}</small>
+                        </td>
+                        <td>
+                          <input
+                            aria-label={record.platformName + " last tested URL"}
                             placeholder="https://..."
                             value={record.lastTestedUrl}
                             onChange={(event) => updatePlatformValidation(record.platformId, { lastTestedUrl: event.target.value })}
@@ -3298,80 +3463,3 @@ function buildProfileAngle(platform: PlatformLibraryRecord, profile: EntityProfi
   if (platform.entityValue === "local") {
     return `Reinforce NAP consistency for ${profile.brandName} using address, phone, and official website data.`;
   }
-
-  if (platform.entityValue === "media") {
-    return `Use branded visuals and proof assets to make ${profile.brandName} recognizable across media platforms.`;
-  }
-
-  if (platform.entityValue === "authority") {
-    return `Build high-trust authority proof around ${profile.legalName || profile.brandName} with clear ownership and expertise signals.`;
-  }
-
-  return `Create a consistent ${profile.profileType} profile for ${profile.brandName} and connect it back to the money site.`;
-}
-
-function requiredAssetsForPlatform(platform: PlatformLibraryRecord): string[] {
-  const assets = ["brand bio", "logo"];
-
-  if (platform.entityValue === "author") {
-    assets.push("author bio");
-  }
-
-  if (platform.entityValue === "local") {
-    assets.push("NAP");
-  }
-
-  if (["media", "video", "audio", "portfolio"].includes(platform.type)) {
-    assets.push("media asset");
-  }
-
-  return assets;
-}
-
-function workflowStepsForPlatform(platform: PlatformLibraryRecord): string[] {
-  const steps = ["Prepare profile data", "Create or review account", "Add brand/EEAT details", "Attach evidence URL"];
-
-  if (platform.requiresCaptcha) {
-    steps.splice(2, 0, "Solve CAPTCHA/manual gate");
-  }
-
-  if (platform.automationMode === "manual_review") {
-    steps.push("Manual QA before publishing");
-  }
-
-  return steps;
-}
-
-function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
-  const exists = items.some((item) => item.id === next.id);
-
-  if (!exists) {
-    return [next, ...items];
-  }
-
-  return items.map((item) => (item.id === next.id ? next : item));
-}
-
-function upsertByPlatformId<T extends { platformId: string }>(items: T[], next: T): T[] {
-  const exists = items.some((item) => item.platformId === next.platformId);
-
-  if (!exists) {
-    return [next, ...items];
-  }
-
-  return items.map((item) => (item.platformId === next.platformId ? next : item));
-}
-
-function maskToken(token: string): string {
-  if (token.length <= 12) {
-    return "stored token";
-  }
-
-  return `${token.slice(0, 6)}...${token.slice(-6)}`;
-}
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
