@@ -13,6 +13,12 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 const SECRET_SERVICE: &str = "EntityManager";
 const BUILTIN_SELECTOR_RECIPE_VERSION: i64 = 1_797_000_000;
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
@@ -2840,7 +2846,9 @@ fn set_managed_browser_visibility(app_handle: tauri::AppHandle, session_id: Stri
     {
         let show_code = if visible { 5 } else { 0 };
         let script = format!("$signature='[DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'; Add-Type -MemberDefinition $signature -Name Win32ShowWindow -Namespace EntityManager; $p=Get-Process -Id {} -ErrorAction Stop; [EntityManager.Win32ShowWindow]::ShowWindowAsync($p.MainWindowHandle,{}) | Out-Null", session.process_id, show_code);
-        let output = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("Không đổi được trạng thái cửa sổ browser: {e}"))?;
+        let mut command = Command::new("powershell.exe");
+        command.creation_flags(CREATE_NO_WINDOW);
+        let output = command.args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("Không đổi được trạng thái cửa sổ browser: {e}"))?;
         if !output.status.success() { return Err("Chrome chưa tạo cửa sổ có thể ẩn/hiện; hãy thử lại sau vài giây.".to_string()); }
     }
     #[cfg(not(target_os = "windows"))]
@@ -3114,6 +3122,14 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "gmail_oauth_state", "current_auth_url", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "client_secret_protected", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "refresh_token_protected", "TEXT NOT NULL DEFAULT ''")?;
+
+    // Builds before 293 incorrectly launched OAuth inside Managed Chromium.
+    // Retire that legacy database row so it no longer appears as a running
+    // platform browser after OAuth has moved to the Windows default browser.
+    connection.execute(
+        "UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Legacy Gmail OAuth browser session retired; OAuth now uses the Windows default browser.',updated_at=?1 WHERE platform_id='gmail-oauth' AND status='running'",
+        params![now_string()],
+    ).map_err(|error| error.to_string())?;
 
     Ok(())
 }
@@ -4266,8 +4282,10 @@ fn has_secret(setting_type: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_windows_dpapi(script: &str, input: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+    let mut command = Command::new("powershell.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    let mut child = command
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
