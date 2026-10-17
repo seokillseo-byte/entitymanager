@@ -61,20 +61,22 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
     emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
   }
   if (!emailInput) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô email Medium sau khi mở phương thức đăng ký email." };
+  // Medium currently uses more than one signup flow. Some accounts see email-only
+  // first, while older/localized flows show Full name and Email together. Name is
+  // optional here because it is filled in the profile stage after verification.
   const nameInput = findMediumFullNameInput(visible);
-  if (!nameInput) return { success: false, waitingForVerification: false, message: "Không tìm thấy ô Your full name của Medium; chưa bấm Create account." };
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setControlledInputValue(nameInput, displayName, setter);
+  if (nameInput) setControlledInputValue(nameInput, displayName, setter);
   setControlledInputValue(emailInput, email, setter);
   await new Promise((resolve) => setTimeout(resolve, 250));
-  if (!nameInput.value.trim() || !emailInput.value.trim()) {
-    return { success: false, waitingForVerification: false, message: "Medium chưa ghi nhận đủ Full name và Email; chưa bấm Create account." };
+  if (!emailInput.value.trim() || (nameInput && !nameInput.value.trim())) {
+    return { success: false, waitingForVerification: false, message: `Medium chưa ghi nhận ${nameInput ? "đủ Full name và Email" : "Email"}; chưa bấm Continue.` };
   }
   const submit = Array.from(document.querySelectorAll<HTMLButtonElement>("button[type='submit'], button")).filter(visible)
     .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
-  if (!submit) return { success: false, waitingForVerification: false, message: `Đã điền ${displayName} và ${email}, nhưng chưa tìm thấy nút Create account phù hợp.` };
+  if (!submit) return { success: false, waitingForVerification: false, message: `Đã điền ${nameInput ? `${displayName} và ` : ""}${email}, nhưng chưa tìm thấy nút Continue/Create account phù hợp.` };
   submit.click();
-  return { success: true, waitingForVerification: true, message: `Đã điền Full name (${displayName}), email (${email}) và bấm Create account; đang chờ Medium xác minh email.` };
+  return { success: true, waitingForVerification: true, message: `${nameInput ? `Đã điền Full name (${displayName}), ` : ""}đã điền email (${email}) và bấm Continue/Create account; đang chờ Medium xác minh email.` };
 }
 
 function findMediumFullNameInput(visible: (element: Element) => boolean): HTMLInputElement | undefined {
