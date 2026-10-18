@@ -11,6 +11,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
 #[cfg(target_os = "windows")]
@@ -23,6 +24,7 @@ const SECRET_SERVICE: &str = "EntityManager";
 const BUILTIN_SELECTOR_RECIPE_VERSION: i64 = 1_797_000_000;
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
 static GMAIL_VERIFICATION_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+static BROWSER_WORKER_RUNTIME: OnceLock<Mutex<Option<BrowserWorkerRuntimeState>>> = OnceLock::new();
 
 const GMAIL_CLIENT_SECRET_KEY: &str = "gmail_oauth_client_secret";
 const GMAIL_REFRESH_TOKEN_KEY: &str = "gmail_oauth_refresh_token";
@@ -432,6 +434,54 @@ struct BrowserSessionRecord {
     created_at: String,
     updated_at: String,
     identity_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct BrowserWorkerRuntimeState {
+    port: u16,
+    token: String,
+    process_id: i64,
+    started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserWorkerStatus {
+    status: String,
+    protocol_version: String,
+    process_id: i64,
+    started_at: String,
+    heartbeat_at: String,
+    active_sessions: i64,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserWorkerHealthResponse {
+    protocol_version: String,
+    pid: i64,
+    started_at: String,
+    heartbeat_at: String,
+    active_sessions: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserWorkerSessionResponse {
+    id: String,
+    status: String,
+    visible: bool,
+    current_url: String,
+    title: String,
+    last_message: String,
+    last_heartbeat_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserWorkerPreviewResponse {
+    image_base64: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2818,6 +2868,14 @@ fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiag
         Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
     });
 
+    checks.push(match browser_worker_resource_files(&app_handle) {
+        Ok((node, worker)) => SystemDiagnosticCheck {
+            id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "ok".to_string(),
+            message: format!("Worker runtime đã đóng gói: {} + {}.", node.display(), worker.display()),
+        },
+        Err(error) => SystemDiagnosticCheck { id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "error".to_string(), message: error },
+    });
+
     let bridge_ready = "127.0.0.1:17321".parse().ok().and_then(|address| TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).ok()).is_some();
     checks.push(SystemDiagnosticCheck {
         id: "bridge".to_string(), label: "Desktop ↔ Extension bridge".to_string(), status: if bridge_ready { "ok" } else { "warning" }.to_string(),
@@ -3058,6 +3116,147 @@ fn restore_browser_identity(app_handle: tauri::AppHandle, identity_id: String) -
 
 fn browser_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSessionRecord> {
     Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)?, identity_id: row.get(14)? })
+}
+
+fn browser_worker_resource_files(app_handle: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let resource_root = app_handle.path().resource_dir().map_err(|error| error.to_string())?;
+    let candidates = [
+        resource_root.join("resources").join("browser-worker"),
+        resource_root.join("browser-worker"),
+    ];
+    for directory in candidates {
+        let node = directory.join(if cfg!(target_os = "windows") { "node.exe" } else { "node" });
+        let worker = directory.join("worker.cjs");
+        if node.is_file() && worker.is_file() { return Ok((node, worker)); }
+    }
+    Err(format!("Không tìm thấy Playwright Browser Worker trong resource directory {}.", resource_root.display()))
+}
+
+fn browser_worker_health(runtime: &BrowserWorkerRuntimeState) -> Result<BrowserWorkerStatus, String> {
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3)).build().map_err(|error| error.to_string())?
+        .get(format!("http://127.0.0.1:{}/v1/health", runtime.port))
+        .bearer_auth(&runtime.token).send().map_err(|error| error.to_string())?
+        .error_for_status().map_err(|error| error.to_string())?
+        .json::<BrowserWorkerHealthResponse>().map_err(|error| error.to_string())?;
+    Ok(BrowserWorkerStatus {
+        status: "ready".to_string(), protocol_version: response.protocol_version,
+        process_id: response.pid, started_at: response.started_at,
+        heartbeat_at: response.heartbeat_at, active_sessions: response.active_sessions,
+        message: "Playwright Browser Worker đã sẵn sàng và heartbeat hợp lệ.".to_string(),
+    })
+}
+
+fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<BrowserWorkerStatus, String> {
+    let state = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None));
+    if let Some(runtime) = state.lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone() {
+        if let Ok(status) = browser_worker_health(&runtime) { return Ok(status); }
+    }
+    let (node, worker) = browser_worker_resource_files(app_handle)?;
+    let chromium = browser_executable(app_handle)?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| format!("Không cấp được cổng cho Browser Worker: {error}"))?;
+    let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+    drop(listener);
+    let token: String = rand::thread_rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
+    let mut command = Command::new(node);
+    command.arg(worker).arg("--port").arg(port.to_string()).arg("--token").arg(&token)
+        .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
+    let runtime = BrowserWorkerRuntimeState { port, token, process_id: child.id() as i64, started_at: now_string() };
+    *state.lock().map_err(|_| "Không lưu được Browser Worker runtime.".to_string())? = Some(runtime.clone());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if let Ok(status) = browser_worker_health(&runtime) { return Ok(status); }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    Err(format!("Playwright Browser Worker PID {} đã chạy nhưng không gửi heartbeat trong 15 giây.", runtime.process_id))
+}
+
+#[tauri::command]
+fn start_browser_worker_runtime(app_handle: tauri::AppHandle) -> Result<BrowserWorkerStatus, String> {
+    ensure_browser_worker_runtime(&app_handle)
+}
+
+#[tauri::command]
+fn get_browser_worker_status(app_handle: tauri::AppHandle) -> Result<BrowserWorkerStatus, String> {
+    let state = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None));
+    let runtime = state.lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone()
+        .ok_or_else(|| "Playwright Browser Worker chưa khởi động.".to_string())?;
+    browser_worker_health(&runtime).map_err(|error| format!("Browser Worker mất heartbeat: {error}"))
+}
+
+#[tauri::command]
+fn launch_playwright_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRequest) -> Result<BrowserSessionRecord, String> {
+    if !(request.url.starts_with("https://") || request.url.starts_with("http://")) { return Err("Browser Worker chỉ mở URL http/https.".to_string()); }
+    ensure_browser_worker_runtime(&app_handle)?;
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone()
+        .ok_or_else(|| "Browser Worker chưa sẵn sàng.".to_string())?;
+    let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
+    let identity_id = if request.identity_id.trim().is_empty() { default_identity_id() } else { request.identity_id.clone() };
+    ensure_identity(&app_handle, &connection, &identity_id)?;
+    let identity = get_identities(&connection)?.into_iter().find(|item| item.id == identity_id).ok_or_else(|| "Browser Identity không tồn tại.".to_string())?;
+    restore_identity_if_needed(&connection, &identity)?;
+    let storage = get_browser_storage_overview(app_handle.clone())?;
+    if storage.safety_status == "blocked" { return Err(format!("Storage Guard chặn khởi chạy: {}", storage.message)); }
+    // Build 301 and earlier could leave SQLite sessions marked running after the
+    // launcher/extension process had already disappeared. A newly started native
+    // worker owns a different PID, so reconcile those stale records before the
+    // one-writer-per-identity guard is evaluated.
+    let stale_sessions = get_browser_sessions(app_handle.clone())?.into_iter().filter(|item| {
+        item.status == "running" && item.identity_id == identity_id && item.process_id != runtime.process_id
+    }).collect::<Vec<_>>();
+    for stale in stale_sessions {
+        #[cfg(target_os = "windows")]
+        {
+            let mut command = Command::new("taskkill"); command.creation_flags(CREATE_NO_WINDOW);
+            let _ = command.args(["/PID", &stale.process_id.to_string(), "/T", "/F"]).output();
+        }
+        connection.execute("UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Đã đối soát phiên launcher cũ trước khi chuyển sang Playwright Worker.',updated_at=?1 WHERE id=?2", params![now_string(), stale.id]).map_err(|error| error.to_string())?;
+    }
+    let existing = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.status == "running" && item.identity_id == identity_id && item.id != request.session_id);
+    if existing.is_some() { return Err("Browser Identity này đang được một worker khác sử dụng; hãy chờ hoặc dừng phiên hiện tại.".to_string()); }
+    let proxy_value = if request.proxy_id.is_empty() { serde_json::Value::Null } else {
+        let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == request.proxy_id).ok_or_else(|| "Proxy được chọn không tồn tại.".to_string())?;
+        if proxy.status != "healthy" || !proxy.is_enabled { return Err("Proxy phải được bật và Healthy trước khi chạy worker.".to_string()); }
+        json!({ "server": format!("{}://{}:{}", proxy.protocol, proxy.host, proxy.port), "username": proxy.username, "password": read_secret(&proxy_secret_account(&proxy.id)).unwrap_or_default() })
+    };
+    let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(60)).build().map_err(|error| error.to_string())?
+        .post(format!("http://127.0.0.1:{}/v1/sessions", runtime.port)).bearer_auth(&runtime.token)
+        .json(&json!({ "sessionId": request.session_id.clone(), "profileDirectory": identity.profile_directory.clone(), "url": request.url.clone(), "visible": request.visible, "proxy": proxy_value }))
+        .send().map_err(|error| format!("Browser Worker không nhận lệnh launch: {error}"))?.error_for_status()
+        .map_err(|error| format!("Browser Worker từ chối launch: {error}"))?.json::<BrowserWorkerSessionResponse>().map_err(|error| error.to_string())?;
+    if response.status != "running" { return Err(format!("Browser Worker chưa sẵn sàng: {}", response.last_message)); }
+    let timestamp = now_string();
+    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id,
+        account_id: request.account_id, platform_id: request.platform_id, profile_directory: identity.profile_directory,
+        proxy_id: request.proxy_id, process_id: runtime.process_id, status: response.status,
+        visibility: if response.visible { "visible" } else { "hidden" }.to_string(), current_url: response.current_url,
+        last_message: format!("{} Heartbeat {} · {}", response.last_message, response.last_heartbeat_at, response.title),
+        created_at: timestamp.clone(), updated_at: timestamp.clone(), identity_id: identity_id.clone() };
+    connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at,identity_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at,identity_id=excluded.identity_id", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at,session.identity_id]).map_err(|error| error.to_string())?;
+    Ok(session)
+}
+
+#[tauri::command]
+fn get_browser_worker_preview(app_handle: tauri::AppHandle, session_id: String) -> Result<String, String> {
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone().ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
+    let preview = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|error| error.to_string())?
+        .get(format!("http://127.0.0.1:{}/v1/sessions/{}/preview", runtime.port, session_id)).bearer_auth(&runtime.token)
+        .send().map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?
+        .json::<BrowserWorkerPreviewResponse>().map_err(|error| error.to_string())?;
+    Ok(format!("data:image/jpeg;base64,{}", preview.image_base64))
+}
+
+#[tauri::command]
+fn stop_playwright_browser(app_handle: tauri::AppHandle, session_id: String) -> Result<BrowserSessionRecord, String> {
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone().ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
+    reqwest::blocking::Client::new().post(format!("http://127.0.0.1:{}/v1/sessions/{}/stop", runtime.port, session_id)).bearer_auth(&runtime.token)
+        .send().map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?;
+    let connection = open_database(&app_handle)?; let timestamp = now_string();
+    connection.execute("UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Playwright Worker đã dừng phiên.',updated_at=?1 WHERE id=?2", params![timestamp,session_id]).map_err(|error| error.to_string())?;
+    get_browser_sessions(app_handle)?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không đọc được browser session.".to_string())
 }
 
 #[tauri::command]
@@ -5500,6 +5699,11 @@ pub fn run() {
             cleanup_browser_identity,
             archive_browser_identity,
             restore_browser_identity,
+            start_browser_worker_runtime,
+            get_browser_worker_status,
+            launch_playwright_browser,
+            get_browser_worker_preview,
+            stop_playwright_browser,
             launch_managed_browser,
             open_managed_browser_url,
             stop_managed_browser,

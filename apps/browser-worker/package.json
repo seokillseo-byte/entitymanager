@@ -1,0 +1,16 @@
+{
+  "name": "@entitymanager/browser-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node22 --external:playwright-core --outfile=dist/worker.cjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": { "playwright-core": "1.56.1" },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.6.3"
+  }
+}

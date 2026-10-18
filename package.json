@@ -10,6 +10,7 @@
     "desktop:build": "pnpm --filter @entitymanager/desktop tauri:build",
     "extension:build": "pnpm --filter @entitymanager/extension build",
     "extension:stage": "node scripts/stage-extension-resource.mjs",
+    "browser-worker:build": "pnpm --filter @entitymanager/browser-worker build",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @entitymanager/database db:generate",
@@ -19,7 +20,8 @@
     "test:dry-run-diagnostics": "node --test apps/desktop/src/dryRunDiagnostics.test.mjs",
     "test:diagnostic-report-validation": "node --test apps/desktop/src/validateDryRunDiagnosticReport.test.mjs",
     "test:medium-routes": "pnpm extension:build && node --test apps/extension/tests/mediumRoutes.test.mjs",
-    "test:command-contract": "node scripts/audit-command-contract.mjs"
+    "test:command-contract": "node scripts/audit-command-contract.mjs",
+    "test:browser-worker": "pnpm browser-worker:build && node scripts/test-browser-worker.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

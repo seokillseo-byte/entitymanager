@@ -316,3 +316,15 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Recorded concurrent workers, stable proxy assignment, multi-provider CAPTCHA, Gmail OAuth, 300-platform maturity, Browser Control Center, minimal UI, and durable checkpoints.
 - Replaced stale next-step and master-prompt direction with Phase 1.39A.
 - Next implementation: Phase 1.39A — Native Playwright Worker Foundation + Browser Control Center skeleton.
+
+# 2026-10-18 — Phase 1.39A Native Playwright Worker Foundation
+
+- Added `apps/browser-worker`, an authenticated localhost Playwright worker with health/heartbeat, persistent-context launch, stop, session listing, and JPEG preview endpoints.
+- Added portable Node and `playwright-core` staging so the worker is bundled in the Windows installer together with Managed Chromium.
+- Added Tauri commands to start/health-check the worker, launch a Playwright-controlled persistent Browser Identity, capture preview, and stop the worker session.
+- Browser sessions are only written as `running` after the worker confirms the page is ready.
+- Added stale Build 301 launcher-session reconciliation before the one-writer-per-identity guard.
+- Routed Create All Entities and the existing resume action through the same Playwright launch command.
+- Added a minimal Browser Control Center status card, heartbeat, active session count, and per-session preview.
+- Added an authenticated Browser Worker protocol contract test and Windows CI packaging steps.
+- Pending: Windows Rust/Tauri compilation and packaged worker smoke test through PR CI.

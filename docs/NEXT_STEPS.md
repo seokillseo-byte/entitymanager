@@ -15,6 +15,8 @@ Read [PRODUCT_MASTER_PLAN.md](PRODUCT_MASTER_PLAN.md). It supersedes stale phase
 
 **Phase 1.39A — Native Playwright Worker Foundation + Browser Control Center skeleton**
 
+Implementation is in progress. Source now includes the worker protocol, Playwright persistent-context launcher, authenticated heartbeat, preview endpoint, Desktop worker commands, minimal Control Center, runtime staging, and contract test. Windows CI/package validation remains required before Phase 1.39A can be accepted.
+
 Required deliverables:
 
 1. Select and document the packaged worker runtime strategy.
