@@ -175,38 +175,53 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
     const jobResponse = await fetch("http://127.0.0.1:17321/provisioning/job/platform?platformId=medium");
     if (!jobResponse.ok) return false;
     jobReady = true;
-    const job = await jobResponse.json() as { stage?: string; profileUrl?: string };
+    const job = await jobResponse.json() as { stage?: string; status?: string; profileUrl?: string; accountId?: string };
     const payloadResponse = await fetch("http://127.0.0.1:17321/account/submit-verify/platform?platformId=medium");
     if (!payloadResponse.ok) {
       const detail = await safeResponseError(payloadResponse);
       await postProvisioningCheckpoint("medium", "signup", "waiting_user", `Bridge chưa lấy được payload Medium: ${detail}`, "");
       return false;
     }
-    const payload = await payloadResponse.json() as { formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
+    const payload = await payloadResponse.json() as { queueId?: string; accountId?: string; formValues?: { email?: string; displayName?: string }; [key: string]: unknown };
     const authPage = isMediumAuthenticationUrl(currentUrl);
     if (authPage) {
+      if (job.stage === "email_verification") return true;
+      const authMode = job.stage === "signup" ? "signup" : "signin";
       const result = await sendTabMessage<{ success: boolean; waitingForVerification: boolean; message: string }>(tabId, {
         type: "ENTITYMANAGER_MEDIUM_SIGNUP",
         email: payload.formValues?.email || "",
-        displayName: payload.formValues?.displayName || ""
+        displayName: payload.formValues?.displayName || "",
+        authMode
       });
-      await postProvisioningCheckpoint("medium", result.waitingForVerification ? "email_verification" : "signup", result.waitingForVerification ? "waiting_user" : "running", result.message, "");
+      await postProvisioningCheckpoint("medium", result.waitingForVerification ? "email_verification" : job.stage || "signup", result.waitingForVerification ? "waiting_user" : "running", result.message, "");
       return result.waitingForVerification;
     }
 
-    if (!/medium\.com\/me\/(?:settings|about)/i.test(currentUrl) && job.profileUrl) {
+    const profilePage = /medium\.com\/me\/(?:settings|about)/i.test(currentUrl);
+    const authState = await sendTabMessage<{ authenticated: boolean; confidence: "high" | "low"; message: string }>(tabId, { type: "ENTITYMANAGER_MEDIUM_AUTH_STATE" });
+    if (!profilePage && !authState.authenticated && authState.confidence === "high") {
+      await postProvisioningCheckpoint("medium", "login", "running", "Phiên Medium đã hết; đang tự yêu cầu magic link đăng nhập mới.", "");
+      chrome.tabs.update(tabId, { url: "https://medium.com/m/signin?operation=login" });
+      return true;
+    }
+
+    if (!profilePage && job.profileUrl) {
       await postProvisioningCheckpoint("medium", "profile_text", "running", "Đã xác minh đăng nhập; background worker đang mở trang profile Medium.", "");
       chrome.tabs.update(tabId, { url: job.profileUrl });
       return true;
     }
 
-    if (/medium\.com\/me\/(?:settings|about)/i.test(currentUrl)) {
-      const result = await sendTabMessage<{ success: boolean; message: string; evidenceUrl: string }>(tabId, {
-        type: "ENTITYMANAGER_SUBMIT_VERIFY",
-        payload,
-        fillOnly: false
+    if (profilePage) {
+      const result = await sendTabMessage<{ success: boolean; message: string; evidenceUrl: string; mediaUploaded: boolean }>(tabId, {
+        type: "ENTITYMANAGER_MEDIUM_PROFILE",
+        payload
       });
-      await postProvisioningCheckpoint("medium", result.success ? "profile_media" : "profile_text", result.success ? "running" : "waiting_user", result.message, result.evidenceUrl || "");
+      if (result.success) {
+        await completeSubmitVerify(payload.queueId || "", payload.accountId || job.accountId || "", result.evidenceUrl, result.message);
+        await postProvisioningCheckpoint("medium", "completed", "completed", `${result.message} Đã lưu evidence và đưa URL vào indexing queue.`, result.evidenceUrl);
+      } else {
+        await postProvisioningCheckpoint("medium", result.mediaUploaded ? "evidence" : "profile_media", "waiting_user", result.message, result.evidenceUrl || "");
+      }
       return result.success;
     }
     return false;
@@ -221,6 +236,16 @@ async function runMediumBackgroundStep(tabId: number, currentUrl: string): Promi
     }
     return false;
   }
+}
+
+async function completeSubmitVerify(queueId: string, accountId: string, evidenceUrl: string, message: string): Promise<void> {
+  if (!queueId || !accountId || !evidenceUrl) throw new Error("Thiếu queue/account/evidence để hoàn tất Medium.");
+  const response = await fetch("http://127.0.0.1:17321/account/submit-verify/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ queueId, accountId, success: true, evidenceUrl, message })
+  });
+  if (!response.ok) throw new Error(`Desktop không thể hoàn tất account Medium: ${await safeResponseError(response)}`);
 }
 
 async function safeResponseError(response: Response): Promise<string> {
