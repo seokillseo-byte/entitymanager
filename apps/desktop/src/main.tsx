@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, CheckSquare, ChevronDown, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, ListChecks, Play, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -376,6 +376,7 @@ function identityIdFor(moneySite: MoneySiteForm, profile: EntityProfileRecord) {
 }
 
 function App() {
+  const dispatcherBusy = useRef(false);
   const [activeModule, setActiveModule] = useState<EntityModule>("Overview");
   const [moneySite, setMoneySite] = useState<MoneySiteForm>(fallbackMoneySite);
   const [settings, setSettings] = useState<IntegrationSettingForm[]>(fallbackSettings);
@@ -426,7 +427,7 @@ function App() {
   const [browserStorage, setBrowserStorage] = useState<BrowserStorageOverview | null>(null);
   const [storageBusy, setStorageBusy] = useState("");
   const [selectedProxyId, setSelectedProxyId] = useState("");
-  const [browserVisible, setBrowserVisible] = useState(true);
+  const [browserVisible, setBrowserVisible] = useState(false);
   const [browserWorker, setBrowserWorker] = useState<BrowserWorkerStatus | null>(null);
   const [browserPreviews, setBrowserPreviews] = useState<Record<string, string>>({});
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
@@ -492,6 +493,46 @@ function App() {
     }, 3000);
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(async () => {
+      if (dispatcherBusy.current || campaignLaunching) return;
+      dispatcherBusy.current = true;
+      try {
+        const [campaignSnapshot, jobSnapshot, sessionSnapshot] = await Promise.all([
+          invoke<ProvisioningCampaignRecord[]>("get_provisioning_campaigns"),
+          invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
+          invoke<BrowserSessionRecord[]>("get_browser_sessions")
+        ]);
+        const campaign = campaignSnapshot.find((item) => item.status === "running");
+        if (!campaign) return;
+        const job = jobSnapshot.find((item) => item.campaignId === campaign.id && item.status === "running");
+        if (!job) return;
+        const liveSession = sessionSnapshot.find((item) => item.jobId === job.id && item.status === "running");
+        if (liveSession) return;
+
+        setStatusMessage(`${job.platformName}: dispatcher đang khởi chạy Browser Worker cho bước ${job.stage.replace(/_/g, " ")}.`);
+        const launched = await launchBrowserForJob(job);
+        setBrowserSessions((current) => upsertById(current, launched));
+        setStatusMessage(`${job.platformName}: Browser Worker đã sẵn sàng; campaign đang tiếp tục tại ${job.stage.replace(/_/g, " ")}.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+          const jobs = await invoke<ProvisioningJobRecord[]>("get_provisioning_jobs");
+          const running = jobs.find((item) => item.status === "running");
+          if (running) {
+            const paused = { ...running, status: "waiting_user" as const, lastMessage: `Dispatcher tạm dừng: ${message}`, attemptCount: running.attemptCount + 1, updatedAt: new Date().toISOString() };
+            await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: paused });
+            setProvisioningJobs((current) => upsertById(current, paused));
+          }
+        } catch { /* status polling will retry */ }
+        setStatusMessage(`Campaign tạm dừng an toàn: ${message}`);
+      } finally {
+        dispatcherBusy.current = false;
+      }
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [browserVisible, campaignLaunching, entityProfile, moneySite, selectedProxyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -685,6 +726,17 @@ function App() {
     const selected = accountCreationPlan.filter((plan) => campaignPlatformIds.includes(plan.platformId));
     return selected.length ? selected : accountCreationPlan.slice(0, 4);
   }, [accountCreationPlan, campaignPlatformIds]);
+
+  const activeProvisioningCampaign = provisioningCampaigns[0] ?? null;
+  const activeProvisioningJobs = useMemo(() => (
+    activeProvisioningCampaign
+      ? provisioningJobs.filter((job) => job.campaignId === activeProvisioningCampaign.id)
+      : []
+  ), [activeProvisioningCampaign, provisioningJobs]);
+  const activeCompletedJobs = activeProvisioningJobs.filter((job) => job.status === "completed").length;
+  const activeCampaignProgress = activeProvisioningCampaign
+    ? Math.round((activeCompletedJobs / Math.max(activeProvisioningCampaign.totalJobs, 1)) * 100)
+    : 0;
 
   const campaignDataRows = useMemo(() => ([
     ["Brand name", entityProfile.brandName],
@@ -2727,17 +2779,17 @@ function App() {
                 <div className="campaign-progress-heading">
                   <div>
                     <p className="eyebrow">TIẾN ĐỘ TỔNG</p>
-                    <h2>{provisioningCampaigns[0]?.name || `${entityProfile.brandName || moneySite.domain} — sẵn sàng chạy`}</h2>
+                    <h2>{activeProvisioningCampaign?.name || `${entityProfile.brandName || moneySite.domain} — sẵn sàng chạy`}</h2>
                   </div>
-                  <strong>{provisioningCampaigns[0] ? `${Math.round((provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id && job.status === "completed").length / Math.max(provisioningCampaigns[0].totalJobs, 1)) * 100)}%` : "0%"}</strong>
+                  <strong>{activeCampaignProgress}%</strong>
                 </div>
-                <div className="campaign-progress-track"><span style={{ width: `${provisioningCampaigns[0] ? Math.round((provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id && job.status === "completed").length / Math.max(provisioningCampaigns[0].totalJobs, 1)) * 100) : 0}%` }} /></div>
+                <div className="campaign-progress-track"><span style={{ width: `${activeCampaignProgress}%` }} /></div>
                 <div className="campaign-kpis">
-                  <span><b>{provisioningJobs.filter((job) => job.status === "completed").length}</b> hoàn thành</span>
-                  <span><b>{provisioningJobs.filter((job) => job.status === "running").length}</b> đang chạy</span>
-                  <span><b>{provisioningJobs.filter((job) => job.status === "queued").length}</b> đang chờ</span>
-                  <span><b>{provisioningJobs.filter((job) => job.status === "waiting_user").length}</b> cần xử lý</span>
-                  <span><b>{provisioningJobs.filter((job) => job.status === "failed").length}</b> thất bại</span>
+                  <span><b>{activeCompletedJobs}</b> hoàn thành</span>
+                  <span><b>{activeProvisioningJobs.filter((job) => job.status === "running").length}</b> đang chạy</span>
+                  <span><b>{activeProvisioningJobs.filter((job) => job.status === "queued").length}</b> đang chờ</span>
+                  <span><b>{activeProvisioningJobs.filter((job) => job.status === "waiting_user").length}</b> cần xử lý</span>
+                  <span><b>{activeProvisioningJobs.filter((job) => job.status === "failed").length}</b> thất bại</span>
                 </div>
               </article>
 
@@ -2753,7 +2805,7 @@ function App() {
               <div className="platform-live-table">
                 <div className="platform-live-row platform-live-head"><span>Platform</span><span>Bước hiện tại</span><span>Trạng thái</span><span>Kết quả</span></div>
                 {campaignPlans.map((plan) => {
-                  const job = provisioningJobs.find((item) => item.platformId === plan.platformId);
+                  const job = activeProvisioningJobs.find((item) => item.platformId === plan.platformId);
                   const account = accounts.find((item) => item.platformId === plan.platformId);
                   return <button type="button" className="platform-live-row" key={plan.platformId} onClick={() => selectExecutionPlatform(plan.platformId)}>
                     <strong>{plan.platformName}</strong>
