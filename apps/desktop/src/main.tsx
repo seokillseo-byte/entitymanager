@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Bot, Brain, CheckSquare, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, Bot, Brain, CheckSquare, ChevronDown, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, ListChecks, Play, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
@@ -12,22 +12,27 @@ import { buildDryRunDiagnosticReport } from "./dryRunDiagnostics.mjs";
 import { validateDryRunDiagnosticReport } from "./validateDryRunDiagnosticReport.mjs";
 import "./styles.css";
 
-const modules: EntityModule[] = [
-  "Overview",
-  "Money Sites",
-  "Entity Profile",
-  "Entity Builder",
-  "Entity Care",
-  "EEAT Planner",
-  "Entity Graph",
-  "Evidence Bank",
-  "Platform Library",
-  "Platform Validation",
-  "Selector Recipes",
-  "API Integrations",
-  "Reports",
-  "Settings"
+const primaryNavigation: Array<{ module: EntityModule; label: string }> = [
+  { module: "Overview", label: "Tổng quan" },
+  { module: "Entity Builder", label: "Tạo Entity" },
+  { module: "Entity Care", label: "Chăm sóc Entity" },
+  { module: "Platform Library", label: "Platform" },
+  { module: "Evidence Bank", label: "Indexing" },
+  { module: "Settings", label: "Cài đặt" }
 ];
+
+const advancedNavigation: Array<{ module: EntityModule; label: string }> = [
+  { module: "Money Sites", label: "Money Sites" },
+  { module: "Entity Profile", label: "Entity Profile" },
+  { module: "EEAT Planner", label: "EEAT Planner" },
+  { module: "Entity Graph", label: "Entity Graph" },
+  { module: "Platform Validation", label: "Platform Validation" },
+  { module: "Selector Recipes", label: "Selector Recipes" },
+  { module: "API Integrations", label: "API Integrations" },
+  { module: "Reports", label: "Reports & Logs" }
+];
+
+const moduleLabels = Object.fromEntries([...primaryNavigation, ...advancedNavigation].map((item) => [item.module, item.label])) as Record<EntityModule, string>;
 
 const icons = {
   Overview: LayoutDashboard,
@@ -1912,8 +1917,8 @@ function App() {
           </div>
         </div>
 
-        <nav className="nav-list">
-          {modules.map((module) => {
+        <nav className="nav-list" aria-label="Điều hướng chính">
+          {primaryNavigation.map(({ module, label }) => {
             const Icon = icons[module];
             return (
               <button
@@ -1922,22 +1927,36 @@ function App() {
                 onClick={() => setActiveModule(module)}
               >
                 <Icon size={18} />
-                <span>{module}</span>
+                <span>{label}</span>
               </button>
             );
           })}
+          <details className="advanced-nav">
+            <summary><ChevronDown size={16} /><span>Developer / Advanced</span></summary>
+            <div className="advanced-nav-list">
+              {advancedNavigation.map(({ module, label }) => {
+                const Icon = icons[module];
+                return (
+                  <button className={module === activeModule ? "nav-item active" : "nav-item"} key={module} onClick={() => setActiveModule(module)}>
+                    <Icon size={16} />
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
         </nav>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Phase 1 Desktop Foundation</p>
-            <h1>{activeModule}</h1>
+            <p className="eyebrow">ENTITY AUTOMATION WORKSPACE</p>
+            <h1>{moduleLabels[activeModule]}</h1>
           </div>
-          <button className="primary-action" onClick={() => setActiveModule("Money Sites")}>
-            <Sparkles size={18} />
-            New Money Site
+          <button className="primary-action" onClick={() => setActiveModule("Entity Builder")}>
+            <Play size={18} />
+            Tạo Entity
           </button>
         </header>
 
@@ -2663,34 +2682,97 @@ function App() {
 
         {activeModule === "Entity Builder" && (
           <section className="single-panel entity-builder-vn">
-            <article className="panel builder-control-center">
-              <div className="builder-control-heading">
+            <section className="entity-command-hero">
+              <div className="entity-command-title">
                 <div>
-                  <p className="eyebrow">ENTITY BUILDER CONTROL CENTER</p>
-                  <h2>Theo dõi chiến dịch gọn trên một màn hình</h2>
-                  <p className="muted-text">Workspace platform luôn hiển thị. Tick thêm đúng khu vực anh muốn xem; các phần còn lại sẽ được thu gọn để trang không còn quá dài.</p>
+                  <p className="eyebrow">ONE-CLICK ENTITY CAMPAIGN</p>
+                  <h2>Tạo và theo dõi toàn bộ Entity</h2>
+                  <p>Chọn dữ liệu, platform và nhấn một nút. Tool sẽ điều phối account, NAP/EEAT, media, evidence và indexing.</p>
                 </div>
-                <div className="builder-active-platform">
-                  <span>Đang theo dõi</span>
-                  <strong>{activeExecutionPlan?.platformName ?? "Chưa chọn platform"}</strong>
-                  <em>{activeExecutionValidation?.certifiedAt ? "CERTIFIED" : activeExecutionValidation ? validationStatusLabels[activeExecutionValidation.status] : "Chưa test"}</em>
-                </div>
+                <button className="primary-action entity-launch-action" type="button" disabled={campaignLaunching} onClick={() => void startFullProvisioningCampaign()}>
+                  <Play size={18} />
+                  {campaignLaunching ? "Đang khởi tạo..." : `Tạo toàn bộ Entity (${campaignPlans.length})`}
+                </button>
               </div>
-              <div className="builder-panel-toggles">
-                {([
-                  ["guide", "Hướng dẫn bắt đầu"],
-                  ["campaign", "Thiết lập campaign"],
-                  ["accounts", `Tài khoản đã lưu (${accounts.length})`],
-                  ["plans", "Toàn bộ kế hoạch platform"],
-                  ["activity", `Queue & lịch sử (${automationQueue.length})`]
-                ] as Array<[BuilderPanelId, string]>).map(([panel, label]) => (
-                  <label className={builderPanels[panel] ? "builder-panel-toggle active" : "builder-panel-toggle"} key={panel}>
-                    <input type="checkbox" checked={builderPanels[panel]} onChange={() => toggleBuilderPanel(panel)} />
-                    <span>{label}</span>
-                  </label>
-                ))}
+
+              <div className="campaign-setup-strip">
+                <button type="button" className="setup-field setup-field-button" onClick={() => setActiveModule("Money Sites")}>
+                  <span>Money Site</span><strong>{moneySite.domain || "Chưa thiết lập"}</strong>
+                </button>
+                <button type="button" className="setup-field setup-field-button" onClick={() => setActiveModule("Entity Profile")}>
+                  <span>Entity Profile</span><strong>{entityProfile.brandName || "Chưa thiết lập"}</strong>
+                </button>
+                <div className="setup-field"><span>Platform đã chọn</span><strong>{campaignPlans.length} platform</strong></div>
+                <div className="setup-field"><span>Số luồng</span><strong>1 luồng ổn định</strong></div>
+                <label className="setup-field">
+                  <span>Proxy strategy</span>
+                  <select value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
+                    <option value="">Direct — IP máy tính</option>
+                    {proxyRecords.filter((item) => item.isEnabled).map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name}</option>)}
+                  </select>
+                </label>
+                <div className="setup-field"><span>CAPTCHA</span><strong>{settings.find((item) => item.settingType === "captcha" && item.isEnabled)?.provider || "Chưa bật"}</strong></div>
+                <label className="setup-field">
+                  <span>Browser</span>
+                  <select value={browserVisible ? "manual" : "preview"} onChange={(event) => setBrowserVisible(event.target.value === "manual")}>
+                    <option value="preview">Theo dõi trong Tool</option>
+                    <option value="manual">Mở cửa sổ khi cần</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section className="campaign-live-grid">
+              <article className="panel campaign-overview-card">
+                <div className="campaign-progress-heading">
+                  <div>
+                    <p className="eyebrow">TIẾN ĐỘ TỔNG</p>
+                    <h2>{provisioningCampaigns[0]?.name || `${entityProfile.brandName || moneySite.domain} — sẵn sàng chạy`}</h2>
+                  </div>
+                  <strong>{provisioningCampaigns[0] ? `${Math.round((provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id && job.status === "completed").length / Math.max(provisioningCampaigns[0].totalJobs, 1)) * 100)}%` : "0%"}</strong>
+                </div>
+                <div className="campaign-progress-track"><span style={{ width: `${provisioningCampaigns[0] ? Math.round((provisioningJobs.filter((job) => job.campaignId === provisioningCampaigns[0].id && job.status === "completed").length / Math.max(provisioningCampaigns[0].totalJobs, 1)) * 100) : 0}%` }} /></div>
+                <div className="campaign-kpis">
+                  <span><b>{provisioningJobs.filter((job) => job.status === "completed").length}</b> hoàn thành</span>
+                  <span><b>{provisioningJobs.filter((job) => job.status === "running").length}</b> đang chạy</span>
+                  <span><b>{provisioningJobs.filter((job) => job.status === "queued").length}</b> đang chờ</span>
+                  <span><b>{provisioningJobs.filter((job) => job.status === "waiting_user").length}</b> cần xử lý</span>
+                  <span><b>{provisioningJobs.filter((job) => job.status === "failed").length}</b> thất bại</span>
+                </div>
+              </article>
+
+              <article className="panel worker-health-card">
+                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Worker</span><strong>{browserWorker?.status === "ready" ? "Đang hoạt động" : browserWorker?.status === "starting" ? "Đang khởi động" : browserWorker?.status === "failed" ? "Có lỗi" : "Đang nghỉ"}</strong></div></div>
+                <p>{browserWorker?.message || "Worker sẽ tự khởi động khi campaign bắt đầu."}</p>
+                <small>{browserWorker?.heartbeatAt ? `Cập nhật ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")} · ${browserWorker.activeSessions} phiên` : "Chưa có heartbeat"}</small>
+              </article>
+            </section>
+
+            <article className="panel platform-live-panel">
+              <div className="panel-header"><div><p className="eyebrow">PLATFORM ĐANG XỬ LÝ</p><h2>Trạng thái theo thời gian thực</h2></div><span className="badge">{campaignPlans.length} platform</span></div>
+              <div className="platform-live-table">
+                <div className="platform-live-row platform-live-head"><span>Platform</span><span>Bước hiện tại</span><span>Trạng thái</span><span>Kết quả</span></div>
+                {campaignPlans.map((plan) => {
+                  const job = provisioningJobs.find((item) => item.platformId === plan.platformId);
+                  const account = accounts.find((item) => item.platformId === plan.platformId);
+                  return <button type="button" className="platform-live-row" key={plan.platformId} onClick={() => selectExecutionPlatform(plan.platformId)}>
+                    <strong>{plan.platformName}</strong>
+                    <span>{job ? job.stage.replace(/_/g, " ") : "Sẵn sàng"}</span>
+                    <em className={`live-status ${job?.status || "queued"}`}>{job ? job.status.replace(/_/g, " ") : "Chưa chạy"}</em>
+                    <span>{account?.evidenceUrl ? <a href={account.evidenceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Profile URL</a> : "—"}</span>
+                  </button>;
+                })}
               </div>
             </article>
+
+            <details className="panel advanced-builder-tools">
+              <summary><ListChecks size={18} /> Tùy chọn và chi tiết nâng cao</summary>
+              <div className="builder-panel-toggles">
+                {([ ["guide", "Hướng dẫn"], ["campaign", "Thiết lập chi tiết"], ["accounts", `Tài khoản (${accounts.length})`], ["plans", "Kế hoạch platform"], ["activity", `Queue & log (${automationQueue.length})`] ] as Array<[BuilderPanelId, string]>).map(([panel, label]) => (
+                  <label className={builderPanels[panel] ? "builder-panel-toggle active" : "builder-panel-toggle"} key={panel}><input type="checkbox" checked={builderPanels[panel]} onChange={() => toggleBuilderPanel(panel)} /><span>{label}</span></label>
+                ))}
+              </div>
+            </details>
 
             {builderPanels.guide && (
             <article className="panel builder-guide">
