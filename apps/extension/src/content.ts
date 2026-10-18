@@ -11,8 +11,17 @@ declare const chrome: {
         ) => boolean | void
       ): void;
     };
+    sendMessage(message: unknown, callback?: (response: unknown) => void): void;
+    lastError?: { message?: string };
   };
 };
+
+if (/^https:\/\/(?:www\.)?medium\.com\//i.test(window.location.href)) {
+  chrome.runtime.sendMessage(
+    { type: "ENTITYMANAGER_MEDIUM_PAGE_READY", url: window.location.href },
+    () => void chrome.runtime.lastError
+  );
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string; displayName?: string; authMode?: "signup" | "signin" };

@@ -781,12 +781,16 @@ function App() {
     }
   }
 
-  async function startExtensionBridge() {
+  async function startExtensionBridge(strict = false): Promise<string> {
     try {
       const message = await invoke<string>("start_extension_bridge_server");
       setStatusMessage(message);
-    } catch {
-      setStatusMessage("Preview mode: Extension bridge server is not running.");
+      return message;
+    } catch (error) {
+      const message = `Extension bridge server không khởi động được: ${error instanceof Error ? error.message : String(error)}`;
+      setStatusMessage(message);
+      if (strict) throw new Error(message);
+      return message;
     }
   }
 
@@ -1205,6 +1209,7 @@ function App() {
     }
     setCampaignLaunching(true);
     try {
+      await startExtensionBridge(true);
       const timestamp = new Date().toISOString();
       const campaignId = `provisioning-${Date.now()}`;
       const campaign: ProvisioningCampaignRecord = {
@@ -1220,6 +1225,19 @@ function App() {
       const jobs: ProvisioningJobRecord[] = [];
       for (const [position, plan] of campaignPlans.entries()) {
         const account = await saveAccountFromPlan(plan);
+        await saveQueueItem(buildQueueItem(
+          account,
+          "submit_verify",
+          "waiting",
+          JSON.stringify({
+            action: "full_account_provisioning",
+            platformId: plan.platformId,
+            requiresCaptchaToken: false,
+            executionSteps: ["signup", "email_verification", "fill_text", "upload_media", "submit_verify", "evidence", "indexing"],
+            evidenceCapture: "current_url",
+            message: `Managed Browser payload prepared for ${plan.platformName}.`
+          })
+        ));
         const platform = platforms.find((item) => item.id === plan.platformId);
         const guide = guidedRunnerForPlatform(plan.platformId, platform?.homepageUrl ?? "");
         const job: ProvisioningJobRecord = {
@@ -1244,8 +1262,11 @@ function App() {
       setProvisioningCampaigns((current) => [savedCampaign, ...current]);
       setProvisioningJobs((current) => [...jobs, ...current.filter((item) => item.campaignId !== campaignId)]);
       const first = jobs[0];
-      await launchBrowserForJob(first);
+      const launchedSession = await launchBrowserForJob(first);
       setStatusMessage(`Đã bắt đầu chiến dịch ${campaignPlans.length} platform bằng Managed Browser. ${first.platformName} đang chạy với browser profile riêng${selectedProxyId ? " và proxy cố định" : " bằng kết nối trực tiếp"}.`);
+      if (browserVisible && launchedSession.visibility !== "visible") {
+        throw new Error("Managed Chromium đã chạy nhưng cửa sổ chưa ở chế độ hiển thị.");
+      }
     } catch (error) {
       setStatusMessage(`Không thể khởi tạo chiến dịch: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -1293,6 +1314,7 @@ function App() {
     if (!activeExecutionPlan || !activePlatformGuide?.primaryUrl || orchestratorStarting) return;
     setOrchestratorStarting(true);
     try {
+      await startExtensionBridge(true);
       const account = await saveAccountFromPlan(activeExecutionPlan);
       const queueItem = buildQueueItem(
         account,
@@ -1308,8 +1330,41 @@ function App() {
         })
       );
       await saveQueueItem(queueItem);
-      await openExternalPlatformUrl(activePlatformGuide.primaryUrl, activeExecutionPlan.platformName);
-      setStatusMessage(`${activeExecutionPlan.platformName}: phiên chạy tự động đã sẵn sàng. Khi trang mở, bấm biểu tượng EntityManager Bridge rồi chọn “Chạy tự động toàn bộ”.`);
+      const timestamp = new Date().toISOString();
+      let job = provisioningJobs.find((item) => item.platformId === activeExecutionPlan.platformId && ["running", "waiting_user"].includes(item.status));
+      if (!job) {
+        const campaignId = `provisioning-${Date.now()}`;
+        const campaign = await invoke<ProvisioningCampaignRecord>("save_provisioning_campaign", { campaign: {
+          id: campaignId,
+          name: `${entityProfile.brandName || moneySite.domain || "Entity"} · ${activeExecutionPlan.platformName}`,
+          status: "running",
+          totalJobs: 1,
+          currentPosition: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        } });
+        job = await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: {
+          id: `${campaignId}-${activeExecutionPlan.platformId}`,
+          campaignId,
+          accountId: account.id,
+          platformId: activeExecutionPlan.platformId,
+          platformName: activeExecutionPlan.platformName,
+          position: 0,
+          stage: "signup",
+          status: "running",
+          signupUrl: signupUrlForPlatform(activeExecutionPlan.platformId, activePlatformGuide.primaryUrl),
+          profileUrl: activePlatformGuide.primaryUrl,
+          evidenceUrl: "",
+          lastMessage: "Đang khởi chạy Managed Browser và đánh thức Bridge.",
+          attemptCount: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        } });
+        setProvisioningCampaigns((current) => [campaign, ...current]);
+        setProvisioningJobs((current) => [job!, ...current]);
+      }
+      const session = await launchBrowserForJob(job);
+      setStatusMessage(`${activeExecutionPlan.platformName}: Managed Chromium ${session.visibility === "visible" ? "đã hiển thị" : "đang chạy ẩn"}; Bridge sẽ tự nhận trang và tiếp tục, không cần bấm extension.`);
     } catch (error) {
       setStatusMessage(`Không thể khởi tạo phiên tự động: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -2828,7 +2883,7 @@ function App() {
                       <div>
                         <p className="eyebrow">ONE-CLICK AUTOMATION ORCHESTRATOR</p>
                         <strong>Tự chạy dry-run → lưu NAP/EEAT → upload media → xác minh evidence</strong>
-                        <span>Desktop chuẩn bị đúng queue và mở website. Do giới hạn bảo mật của Chrome, anh mở extension trên tab đó và bấm “Chạy tự động toàn bộ” một lần để cấp quyền thao tác.</span>
+                        <span>Desktop chuẩn bị queue, mở Managed Chromium và tự đánh thức Bridge. Không cần mở hoặc bấm extension thủ công.</span>
                         <span><b>{indexingQueueCount}</b> URL đang chờ trong Indexing Queue. Evidence công khai mới sẽ được tự đưa vào queue sau khi xác minh.</span>
                       </div>
                       <button className="primary-action" type="button" disabled={orchestratorStarting} onClick={() => void startOneClickOrchestrator()}>
