@@ -17,9 +17,11 @@ $nodeExe = Join-Path $extractRoot "node-v$nodeVersion-win-x64\node.exe"
 if (-not (Test-Path $nodeExe)) { throw "Portable node.exe was not found after extraction." }
 Copy-Item $nodeExe (Join-Path $destination "node.exe") -Force
 Copy-Item $workerBundle (Join-Path $destination "worker.cjs") -Force
-$playwrightPackage = (& pnpm --filter "@entitymanager/browser-worker" exec node -e "console.log(require.resolve('playwright-core/package.json'))" | Select-Object -Last 1).Trim()
-if (-not (Test-Path $playwrightPackage)) { throw "Could not resolve playwright-core package for staging." }
-$playwrightRoot = Split-Path $playwrightPackage -Parent
+$playwrightRoot = Join-Path $repoRoot "apps\browser-worker\node_modules\playwright-core"
+if (-not (Test-Path (Join-Path $playwrightRoot "package.json"))) {
+  throw "Could not find apps/browser-worker/node_modules/playwright-core. Run pnpm install before staging the Browser Worker."
+}
+$playwrightRoot = (Resolve-Path $playwrightRoot).Path
 $runtimeModules = Join-Path $destination "node_modules"
 New-Item -ItemType Directory -Path $runtimeModules -Force | Out-Null
 Copy-Item $playwrightRoot (Join-Path $runtimeModules "playwright-core") -Recurse -Force
