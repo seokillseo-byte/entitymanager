@@ -56,6 +56,9 @@ jobs:
           pnpm browser-worker:build
           ./scripts/stage-browser-worker.ps1
 
+      - name: Smoke test staged portable Browser Worker
+        run: node scripts/test-staged-browser-worker.mjs
+
       - name: Build Windows installer
         run: pnpm desktop:build
 
