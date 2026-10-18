@@ -45,7 +45,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Selector health unit tests
-        run: pnpm test:selector-health && pnpm test:dry-run-diagnostics && pnpm test:medium-routes && pnpm test:command-contract
+        run: pnpm test:selector-health && pnpm test:dry-run-diagnostics && pnpm test:medium-routes && pnpm test:command-contract && pnpm test:browser-worker
 
       - name: Build Chrome extension package
         run: pnpm extension:build
@@ -56,6 +56,12 @@ jobs:
       - name: Stage managed Chromium runtime
         shell: pwsh
         run: ./scripts/stage-managed-chromium.ps1
+
+      - name: Build and stage Playwright Browser Worker
+        shell: pwsh
+        run: |
+          pnpm browser-worker:build
+          ./scripts/stage-browser-worker.ps1
 
       - name: Zip Chrome extension
         shell: pwsh
@@ -97,7 +103,7 @@ jobs:
           body: |
             Automated Windows desktop build for EntityManager.
 
-            Download the NSIS installer asset and run it on Windows. Managed Chromium and EntityManager Bridge are included automatically. The extension ZIP is only a fallback for a personal Chrome profile.
+            Download the NSIS installer asset and run it on Windows. Managed Chromium and the Playwright Browser Worker are included automatically. The extension ZIP is fallback only.
           files: |
             apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
             apps/desktop/src-tauri/target/release/bundle/msi/*.msi
