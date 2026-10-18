@@ -442,6 +442,7 @@ struct BrowserWorkerRuntimeState {
     token: String,
     process_id: i64,
     started_at: String,
+    log_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3158,20 +3159,36 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     let port = listener.local_addr().map_err(|error| error.to_string())?.port();
     drop(listener);
     let token: String = rand::thread_rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
+    let log_directory = app_handle.path().app_log_dir().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&log_directory).map_err(|error| format!("Không tạo được thư mục log Browser Worker: {error}"))?;
+    let log_path = log_directory.join("browser-worker.log");
+    let stdout_log = fs::File::create(&log_path).map_err(|error| format!("Không mở được log Browser Worker: {error}"))?;
+    let stderr_log = stdout_log.try_clone().map_err(|error| format!("Không chuẩn bị được stderr log Browser Worker: {error}"))?;
     let mut command = Command::new(node);
-    command.arg(worker).arg("--port").arg(port.to_string()).arg("--token").arg(&token)
-        .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command.arg(&worker).arg("--port").arg(port.to_string()).arg("--token").arg(&token)
+        .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::from(stdout_log)).stderr(Stdio::from(stderr_log));
+    if let Some(worker_directory) = worker.parent() { command.current_dir(worker_directory); }
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
-    let child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
-    let runtime = BrowserWorkerRuntimeState { port, token, process_id: child.id() as i64, started_at: now_string() };
+    let mut child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
+    let runtime = BrowserWorkerRuntimeState { port, token, process_id: child.id() as i64, started_at: now_string(), log_path: log_path.clone() };
     *state.lock().map_err(|_| "Không lưu được Browser Worker runtime.".to_string())? = Some(runtime.clone());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // Windows Defender can inspect the newly installed portable Node runtime on
+    // first launch. Give that cold start enough time, but fail immediately when
+    // the child exits and surface its real stderr instead of a generic timeout.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
     while std::time::Instant::now() < deadline {
         if let Ok(status) = browser_worker_health(&runtime) { return Ok(status); }
+        if let Ok(Some(exit_status)) = child.try_wait() {
+            *state.lock().map_err(|_| "Không cập nhật được Browser Worker runtime.".to_string())? = None;
+            let details = fs::read_to_string(&log_path).unwrap_or_default();
+            return Err(format!("Playwright Browser Worker đã thoát ({exit_status}). {} Log: {}", if details.trim().is_empty() { "Không có stderr." } else { "Đã ghi nhận lỗi khởi động." }, log_path.display()));
+        }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
-    Err(format!("Playwright Browser Worker PID {} đã chạy nhưng không gửi heartbeat trong 15 giây.", runtime.process_id))
+    let _ = child.kill();
+    *state.lock().map_err(|_| "Không cập nhật được Browser Worker runtime.".to_string())? = None;
+    Err(format!("Playwright Browser Worker PID {} không gửi heartbeat sau 45 giây. Xem log: {}", runtime.process_id, runtime.log_path.display()))
 }
 
 #[tauri::command]
