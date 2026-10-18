@@ -307,3 +307,12 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - For a GitHub dry-run, require only the profile fields relevant to the GitHub profile settings page; do not mark username and email as missing when those controls are not on that page.
 - Dry-run remains inspection-only: it does not fill fields or click the submit button.
 - Validation: GitHub Actions will verify the Windows desktop and extension builds.
+
+# 2026-10-18 — Canonical Product Plan and Architecture Reset
+
+- Added `docs/PRODUCT_MASTER_PLAN.md` as the single source of truth.
+- Confirmed the complete scope: Entity Builder, persistent authentication, Entity Care, evidence, and indexing/discovery.
+- Confirmed Playwright Worker Pool as the primary automation engine and Chrome Extension as fallback only.
+- Recorded concurrent workers, stable proxy assignment, multi-provider CAPTCHA, Gmail OAuth, 300-platform maturity, Browser Control Center, minimal UI, and durable checkpoints.
+- Replaced stale next-step and master-prompt direction with Phase 1.39A.
+- Next implementation: Phase 1.39A — Native Playwright Worker Foundation + Browser Control Center skeleton.
