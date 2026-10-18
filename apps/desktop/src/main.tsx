@@ -452,6 +452,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const intervalId = window.setInterval(async () => {
+      try {
+        const [sessions, jobs, campaigns, queueCount] = await Promise.all([
+          invoke<BrowserSessionRecord[]>("get_browser_sessions"),
+          invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
+          invoke<ProvisioningCampaignRecord[]>("get_provisioning_campaigns"),
+          invoke<number>("get_indexing_queue_count")
+        ]);
+        setBrowserSessions(sessions);
+        setProvisioningJobs(jobs);
+        setProvisioningCampaigns(campaigns);
+        setIndexingQueueCount(queueCount);
+      } catch {
+        // Desktop may be closing; the next interval retries without interrupting the operator.
+      }
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void fetch("https://api.github.com/repos/seokillseo-byte/entitymanager/releases?per_page=20", {
       headers: { Accept: "application/vnd.github+json" },
@@ -2652,7 +2672,11 @@ function App() {
                   <div className="panel-header"><div><p className="eyebrow">MANAGED BROWSER</p><h3>Browser Runtime</h3></div><span className="badge">{browserSessions.filter((item) => item.status === "running").length} running</span></div>
                   <label className="checkbox-row"><input type="checkbox" checked={browserVisible} onChange={(event) => setBrowserVisible(event.target.checked)} /><span>Hiển thị browser khi khởi chạy</span></label>
                   <label>Proxy cho campaign<select value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}><option value="">Direct — IP máy tính</option>{proxyRecords.filter((item) => item.isEnabled).map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name} · {proxy.status} {proxy.exitIp ? `· ${proxy.exitIp}` : ""}</option>)}</select></label>
-                  <p className="muted-text">Mỗi account dùng persistent profile riêng và tự nạp EntityManager Bridge. Proxy đã gán được giữ cố định trong toàn bộ phiên. Gmail chỉ cần đăng nhập lần đầu; tool không lưu mật khẩu Google.</p>
+                  <p className="muted-text">Mỗi entity/project dùng một Browser Identity bền vững cho các platform và tự nạp EntityManager Bridge. Proxy đã gán được giữ cố định trong toàn bộ phiên. Gmail OAuth không lưu mật khẩu Google.</p>
+                  {provisioningJobs.find((job) => ["running", "waiting_user"].includes(job.status)) && (() => {
+                    const job = provisioningJobs.find((item) => ["running", "waiting_user"].includes(item.status))!;
+                    return <div className={`status-message ${job.status === "waiting_user" ? "warning" : "success"}`} role="status"><strong>{job.platformName} · {job.stage}</strong><span>{job.lastMessage}</span></div>;
+                  })()}
                   <div className="browser-session-list">{browserSessions.slice(0, 6).map((session) => <div className="browser-session-row" key={session.id}><div><strong>{session.platformId}</strong><span>{session.status} · {session.visibility} · PID {session.processId || "—"}</span><small>{session.lastMessage}</small></div>{session.status === "running" && <div className="session-actions"><button className="secondary-action" type="button" onClick={() => void openGmailBootstrap(session.id)}>Gmail</button><button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(session.id, session.visibility !== "visible")}>{session.visibility === "visible" ? "Ẩn" : "Hiện"}</button><button className="secondary-action" type="button" onClick={() => void stopBrowser(session.id)}>Dừng</button></div>}</div>)}</div>
                 </section>
 

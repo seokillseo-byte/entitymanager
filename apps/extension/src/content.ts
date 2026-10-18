@@ -15,10 +15,20 @@ declare const chrome: {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string; displayName?: string };
+  const typedMessage = message as { type?: string; payload?: unknown; dryRun?: boolean; fillOnly?: boolean; email?: string; displayName?: string; authMode?: "signup" | "signin" };
+
+  if (typedMessage.type === "ENTITYMANAGER_MEDIUM_AUTH_STATE") {
+    sendResponse(detectMediumAuthenticationState());
+    return false;
+  }
 
   if (typedMessage.type === "ENTITYMANAGER_MEDIUM_SIGNUP") {
-    void automateMediumEmailSignup(typedMessage.email || "", typedMessage.displayName || "").then(sendResponse);
+    void automateMediumEmailAuth(typedMessage.email || "", typedMessage.displayName || "", typedMessage.authMode || "signup").then(sendResponse);
+    return true;
+  }
+
+  if (typedMessage.type === "ENTITYMANAGER_MEDIUM_PROFILE" && typedMessage.payload) {
+    void automateMediumProfile(typedMessage.payload as AccountSubmitVerifyPayload).then(sendResponse);
     return true;
   }
 
@@ -43,9 +53,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-async function automateMediumEmailSignup(email: string, displayName: string): Promise<{ success: boolean; waitingForVerification: boolean; message: string }> {
+function detectMediumAuthenticationState(): { authenticated: boolean; confidence: "high" | "low"; message: string } {
+  const authenticatedMarker = document.querySelector("a[href^='/me/'], a[href*='medium.com/me/'], button[aria-label*='account' i], button[aria-label*='profile' i], [data-testid*='user' i]");
+  const authPrompt = Array.from(document.querySelectorAll<HTMLElement>("a, button, [role='button']")).find((element) => /sign in|sign up|get started|join medium/i.test((element.innerText || element.textContent || "").trim()));
+  if (authenticatedMarker) return { authenticated: true, confidence: "high", message: "Medium session còn hiệu lực." };
+  if (authPrompt) return { authenticated: false, confidence: "high", message: "Medium đang hiển thị cổng đăng nhập; cần magic link." };
+  return { authenticated: false, confidence: "low", message: "Chưa tìm thấy dấu hiệu phiên Medium; sẽ kiểm tra lại qua trang Settings." };
+}
+
+async function automateMediumEmailAuth(email: string, displayName: string, authMode: "signup" | "signin"): Promise<{ success: boolean; waitingForVerification: boolean; message: string }> {
   if (!email.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có email để đăng ký Medium." };
-  if (!displayName.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có Display Name để điền ô Your full name của Medium." };
+  if (authMode === "signup" && !displayName.trim()) return { success: false, waitingForVerification: false, message: "Entity Profile chưa có Display Name để đăng ký Medium." };
   const visible = (element: Element) => {
     const node = element as HTMLElement;
     const style = window.getComputedStyle(node);
@@ -54,8 +72,9 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
   };
   let emailInput = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='email'], input[name='email'], input[autocomplete='email']")).find(visible);
   if (!emailInput) {
+    const choicePattern = authMode === "signin" ? /sign in with email|continue with email|email/i : /sign up with email|continue with email|email/i;
     const choice = Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button']")).filter(visible)
-      .find((element) => /sign up with email|continue with email|email/i.test((element.innerText || element.textContent || "").trim()));
+      .find((element) => choicePattern.test((element.innerText || element.textContent || "").trim()));
     choice?.click();
     if (choice) {
       emailInput = await waitForMediumEmailInput(visible, 5000);
@@ -67,7 +86,7 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
   // optional here because it is filled in the profile stage after verification.
   const nameInput = findMediumFullNameInput(visible);
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  if (nameInput) setControlledInputValue(nameInput, displayName, setter);
+  if (nameInput && displayName.trim()) setControlledInputValue(nameInput, displayName, setter);
   setControlledInputValue(emailInput, email, setter);
   await new Promise((resolve) => setTimeout(resolve, 250));
   if (!emailInput.value.trim() || (nameInput && !nameInput.value.trim())) {
@@ -77,7 +96,7 @@ async function automateMediumEmailSignup(email: string, displayName: string): Pr
     .find((button) => /continue|sign up|create account|send|email/i.test((button.innerText || button.textContent || "").trim()) && !button.disabled);
   if (!submit) return { success: false, waitingForVerification: false, message: `Đã điền ${nameInput ? `${displayName} và ` : ""}${email}, nhưng chưa tìm thấy nút Continue/Create account phù hợp.` };
   submit.click();
-  return { success: true, waitingForVerification: true, message: `${nameInput ? `Đã điền Full name (${displayName}), ` : ""}đã điền email (${email}) và bấm Continue/Create account; đang chờ Medium xác minh email.` };
+  return { success: true, waitingForVerification: true, message: `${authMode === "signin" ? "Đã yêu cầu magic link đăng nhập" : "Đã yêu cầu email tạo tài khoản"} cho ${email}; Gmail worker đang chờ email mới.` };
 }
 
 async function waitForMediumEmailInput(
@@ -113,6 +132,57 @@ function setControlledInputValue(input: HTMLInputElement, value: string, setter?
   input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+}
+
+async function automateMediumProfile(payload: AccountSubmitVerifyPayload): Promise<{ success: boolean; message: string; evidenceUrl: string; mediaUploaded: boolean }> {
+  const filledFields = fillFormValues(payload);
+  const mediaResults: string[] = [];
+  for (const [fieldName, selectors, value] of [
+    ["profileImage", payload.fieldSelectors.profileImage, payload.formValues.profileImage],
+    ["avatarImageUrl", payload.fieldSelectors.avatarImageUrl, payload.formValues.avatarImageUrl],
+    ["bannerImageUrl", payload.fieldSelectors.bannerImageUrl, payload.formValues.bannerImageUrl]
+  ] as Array<[string, string[], string]>) {
+    if (!value?.trim()) continue;
+    const input = selectors.flatMap((selector) => Array.from(document.querySelectorAll<HTMLInputElement>(selector)))
+      .find((candidate) => candidate.type === "file" && !candidate.disabled);
+    if (!input) continue;
+    try {
+      const response = await fetch(value);
+      if (!response.ok) continue;
+      const blob = await response.blob();
+      if (blob.size > 5 * 1024 * 1024) continue;
+      const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], `entitymanager-${fieldName}.${extension}`, { type: blob.type || "image/jpeg" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      mediaResults.push(fieldName);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    } catch {
+      // A missing media control must not discard text already filled.
+    }
+  }
+  const save = findClickableElement([...payload.verifySelectors, ...payload.submitSelectors]);
+  if (save) {
+    save.scrollIntoView({ block: "center" });
+    save.click();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  const profileLink = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href^='/@'], a[href*='medium.com/@']"))
+    .map((anchor) => anchor.href).find((href) => /^https:\/\/(?:www\.)?medium\.com\/@[^/?#]+/i.test(href));
+  const username = payload.formValues.username.trim().replace(/^@/, "");
+  const evidenceUrl = profileLink || (username ? `https://medium.com/@${username}` : "");
+  const requiredText = ["displayName", "bio"].filter((field) => payload.requiredFields.includes(field as keyof AccountSubmitVerifyPayload["formValues"]));
+  const textReady = requiredText.every((field) => filledFields.includes(field));
+  const avatarExpected = Boolean(payload.formValues.profileImage.trim() || payload.formValues.avatarImageUrl.trim());
+  const mediaReady = !avatarExpected || mediaResults.some((field) => field === "profileImage" || field === "avatarImageUrl");
+  return {
+    success: textReady && mediaReady && Boolean(save) && Boolean(evidenceUrl),
+    evidenceUrl,
+    mediaUploaded: mediaResults.length > 0,
+    message: `Medium profile: text ${filledFields.length ? `đã điền ${filledFields.join(", ")}` : "chưa nhận diện"}; media ${mediaResults.length ? `đã chọn ${mediaResults.join(", ")}` : avatarExpected ? "thiếu control avatar" : "không bắt buộc"}; ${save ? "đã bấm lưu" : "chưa tìm thấy nút lưu"}.`
+  };
 }
 
 function injectCaptchaToken(payload: CaptchaInjectionPayload): InjectionResponse {
