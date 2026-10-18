@@ -1,5 +1,7 @@
 # EntityManager
 
+> Project direction: read [docs/PRODUCT_MASTER_PLAN.md](docs/PRODUCT_MASTER_PLAN.md) before changing architecture or starting a new phase. It is the canonical source of truth.
+
 EntityManager is planned as a Windows desktop Entity Builder + Entity Care + EEAT Growth Platform for SEO money sites.
 
 The user-facing product must run on PC as a desktop app: the user should be able to click an `.exe` file and access the tool. It should not require the user to manually run a development server, Docker, or command-line workflow for normal use.
@@ -41,7 +43,8 @@ V1 should focus on a stable Windows desktop application:
 - Background task engine for local queues and workflow state.
 - Adapter-based platform system.
 - AI/CAPTCHA/email/proxy integrations designed as configurable providers.
-- Future Chrome Extension support for semi-auto browser workflows.
+- A packaged Playwright worker pool as the primary browser automation engine.
+- Chrome Extension Bridge retained only as a fallback for exceptional platform flows.
 
 PostgreSQL, Redis, and Docker may still be useful for development, testing, or a future server edition, but they should not be required for the normal PC `.exe` user experience.
 

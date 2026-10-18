@@ -1,364 +1,54 @@
 # Next Steps
 
-## Current Status
+## Canonical Direction
 
-Phase 1 desktop foundation has been started.
+Read [PRODUCT_MASTER_PLAN.md](PRODUCT_MASTER_PLAN.md). It supersedes stale phase notes and extension-first automation plans.
 
-Important product target clarified: EntityManager must be a Windows PC desktop tool. The user should open the tool by clicking an `.exe` file.
+## Current State
 
-## Immediate Next Recommended Step
+- Tauri/React Windows desktop application, local SQLite, secure provider settings, account/workflow/evidence foundations, Gmail OAuth, proxy records, CAPTCHA adapters, selector recipes, Chrome Extension Bridge, packaged Chromium, and GitHub Releases exist.
+- Build 301 confirmed a structural problem: Chromium launch and account automation still rely on extension lifecycle behavior. The UI has multiple orchestration entry points, and a recorded `running` browser session does not prove a controllable browser worker exists.
+- The repository has no Playwright/Puppeteer/CDP automation worker dependency. Current Managed Browser code is primarily a Chromium process launcher.
+- Extension-first patching is frozen. The extension remains a fallback only.
 
-Phase 1.26 is in progress: reconcile the complete dry-run history with local SQLite, ensure diagnostic export reads every row (not just the newest 100), and keep the operation read-only. After Windows checks and both official release assets are verified, continue to the next phase: review real dry-run outcomes and improve platform selector recipes only from observed evidence.
+## Immediate Implementation
 
-Continue Phase 1: verify and harden the desktop application foundation.
+**Phase 1.39A — Native Playwright Worker Foundation + Browser Control Center skeleton**
 
-Recommended next work:
+Required deliverables:
 
-- Verify Tauri dev shell opens on Windows.
-- Verify Windows build notes are accurate on a Windows machine.
-- Add local app settings storage design.
-- Connect the React dashboard to real SQLite-backed records.
-- Add seed data for platform library and demo project.
+1. Select and document the packaged worker runtime strategy.
+2. Add a versioned Desktop-worker protocol.
+3. Start Chromium through Playwright persistent context.
+4. Require startup handshake and heartbeat before marking a session `running`.
+5. Support stop, crash detection, recovery, and safe persistent profile reuse.
+6. Add hidden mode and CDP screenshot/preview transport.
+7. Add minimal Browser Control Center worker cards.
+8. Route Create All Entities through one backend campaign entry point.
+9. Keep the old extension path behind an explicit fallback flag.
+10. Add unit/contract tests and Windows packaging verification.
 
-Phase 1.1 source work started:
+## Acceptance Criteria
 
-- Added structured demo project seed data.
-- Added starter Platform Library seed candidates.
-- Added Settings/API config preview data.
-- Updated dashboard to read seed data instead of only static placeholders.
-- Added Tauri command skeleton for local settings config path.
-- Added Prisma seed script for demo money site and starter platforms.
+- Clicking Create All Entities starts the actual worker without requiring the secondary Medium button.
+- Visible mode produces one controlled browser; hidden mode produces no uncontrolled desktop windows.
+- Desktop displays `starting`, `ready`, `running`, `blocked`, `failed`, or `stopped` from real worker state.
+- A heartbeat timeout cannot remain falsely labelled `running`.
+- Desktop can show a current-page preview for each active worker.
+- Restarting Desktop can reconcile or recover persisted jobs.
+- The Windows installer contains the worker and required Chromium assets.
+- Chrome Extension is not required for the foundation smoke test.
 
-Phase 1.2 source work started:
+## Following Phases
 
-- Added real Tauri commands for local SQLite access using `rusqlite`.
-- Added `get_money_site` and `save_money_site` commands.
-- Added `get_integration_settings` and `save_integration_setting` commands.
-- Added a Money Sites screen with a form that saves through Tauri when running in desktop mode.
-- Added a Settings screen with editable provider/API key records.
-- Kept browser/Vite preview usable with seed-data fallback.
-- Added Tauri v2 desktop capability config for the `main` window.
-- Removed the empty Tauri bundle icon array to avoid packaging-time config failure.
-- Added GitHub Actions workflow `Build Windows EXE` so the `.exe` can be built in GitHub and downloaded as an artifact.
-- Added Tauri icon generation and bundle metadata for cleaner Windows packaging.
-- Added automatic GitHub Release publishing for successful Windows installer builds.
+1. Phase 1.39B — Multi-thread Scheduler + Proxy Assignment.
+2. Phase 1.39C — CAPTCHA Gateway + Gmail verification checkpoints.
+3. Phase 1.39D — Medium full end-to-end certification.
+4. Phase 1.40 — Curated Platform Catalog 300 + certification system.
+5. Phase 1.41 — Adapter SDK and ranked platform expansion.
+6. Phase 2 — Entity Care Automation.
+7. Phase 3 — EEAT Planner, Evidence Graph, and Indexing Intelligence.
 
-Implemented foundation:
+## Release Rule
 
-- Monorepo structure.
-- Tauri desktop app as the main product shell.
-- React dashboard UI inside the desktop app.
-- Local SQLite schema for normal `.exe` usage.
-- Prisma database package.
-- Shared TypeScript domain types.
-- Local workflow state skeleton.
-- Environment/settings storage template for AI, CAPTCHA, email, proxy, and indexing API keys.
-- Basic dashboard shell inspired by the user's preferred EntityAtlas/EntityCodex UI direction.
-
-## Phase 1 Deliverables
-
-- `package.json` workspace root. Done.
-- `pnpm-workspace.yaml`. Done.
-- `apps/desktop` Tauri app. Started.
-- `packages/database` local SQLite schema setup. Started.
-- `packages/shared` shared types. Started.
-- `packages/workflow` local workflow engine skeleton. Started.
-- `.env.example` or local settings template. Done.
-- Development commands in README. Done.
-- Windows `.exe` build notes. Done.
-
-## Verification Completed In Current Workspace
-
-- `pnpm typecheck` passes.
-- `pnpm --filter @entitymanager/desktop build` passes.
-- `pnpm db:generate` passes when HOME is set to a writable workspace path in this Linux sandbox.
-- After Phase 1.1, `pnpm typecheck` still passes.
-- After Phase 1.1, `pnpm --filter @entitymanager/desktop build` still passes.
-- After Phase 1.2, `pnpm typecheck` still passes.
-- After Phase 1.2, `pnpm --filter @entitymanager/desktop build` still passes.
-
-Tauri `.exe` packaging still needs verification on Windows because this execution environment is Linux.
-
-Rust/Tauri backend compile still needs verification on a machine with `cargo`; this sandbox does not have `cargo` installed.
-
-If `apps/desktop/src-tauri/target/release/bundle/nsis/` is missing after `pnpm desktop:build`, the Tauri build failed before packaging. Capture the full Windows log with `pnpm desktop:build 2>&1 | Tee-Object build.log`.
-
-For normal testing, prefer GitHub Releases. Each successful `Build Windows EXE` run publishes a release with the Windows installer attached.
-
-`pnpm db:push` should be verified on Windows/local dev. In the current Linux sandbox, Prisma validation passes but `db:push` returns a blank schema-engine error under Node 24.
-
-## Desktop Architecture Decision
-
-Preferred V1 architecture:
-
-- UI: React dashboard inside Tauri.
-- Shell: Tauri for Windows `.exe`.
-- Database: SQLite local file.
-- Queue: local task table/state machine first.
-- Browser automation: Playwright or extension bridge later, depending on packaging reliability.
-- Chrome Extension: future support for semi-auto workflows on difficult sites.
-
-PostgreSQL, Redis, and Docker should not be required for normal end users. They can be reserved for development, testing, or a future server edition.
-
-## First Screens To Build
-
-- Dashboard / Overview
-- Money Sites
-- Entity Profile
-- Entity Builder
-- Entity Care
-- EEAT Planner
-- Entity Graph
-- Evidence Bank
-- Platform Library
-- API Integrations
-- Reports
-- Settings
-
-## Next Implementation Phase
-
-Phase 1.3 completed the real Platform Library:
-
-- SQLite table and Tauri commands for platforms. Done.
-- Seeded platform records for social, blog 2.0, profile, forum, citation, portfolio, video, audio, and document-sharing entities. Started.
-- Platform Library screen with filters, scoring, automation mode, difficulty, and entity value. Done.
-- Preparation for Account Creation and Entity Care workflows.
-
-Next recommended build task:
-
-- Validate Platform Library in the GitHub-built `.exe`.
-- Add Entity Profile Builder backed by SQLite. Done.
-- Add Account Creation workflow scaffolding using Platform Library records. Done.
-
-Phase 1.4 validation and next build task:
-
-- Validate Entity Profile save/load in the GitHub-built `.exe`.
-- Validate Entity Builder account plan generation from Platform Library records.
-- Add persistent Account records with statuses such as planned, created, needs manual review, failed, and verified. Done.
-- Add workflow run history for account creation tasks.
-- Add evidence URL capture and verification flow.
-
-Phase 1.5 validation and next build task:
-
-- Validate account record save/load in the GitHub-built `.exe`.
-- Validate status changes for planned, created, needs manual review, failed, and verified.
-- Add workflow run history tied to account records. Done.
-- Add first automation queue model for CAPTCHA/email/manual gates. Done.
-
-Phase 1.6 validation and next build task:
-
-- Validate workflow history creation when saving account records and changing statuses.
-- Validate automation queue items for CAPTCHA, email, manual review, and evidence gates.
-- Add integration adapter interfaces for CAPTCHA and email providers. Started.
-- Add encrypted/local-safe handling strategy for provider API keys before any real API calls. Started with masked placeholders.
-
-Phase 1.7 validation and next build task:
-
-- Validate Settings save/load with masked secret placeholders.
-- Validate dry-run adapter checks for AI, CAPTCHA, email, proxy, and indexing providers.
-- Replace placeholder masking with OS-backed encrypted secret storage. Done for newly saved keys.
-- Implement first live AI provider adapter behind the dry-run interface. Done for Google Gemini live test.
-- Validate encrypted key save/load in the packaged Windows `.exe`.
-- Validate Gemini Live Test with a real API key and quota-enabled account.
-- Implement first live CAPTCHA provider adapter behind the adapter interface.
-- Implement first live email provider adapter behind the adapter interface.
-
-Phase 1.8 validation and next build task:
-
-- Confirm Windows Credential Manager stores AI/Gemini keys and SQLite only stores masked metadata.
-- Confirm Settings reload shows `secure` key status after saving a key.
-- Confirm Live Test succeeds for Gemini with a valid key, and returns useful failure messages for disabled providers, missing keys, quota errors, and unsupported providers.
-- Add CAPTCHA provider adapter next, preferably 2Captcha or CapSolver, and route CAPTCHA queue items toward the configured provider. Done.
-
-Phase 1.9 validation and next build task:
-
-- Confirm CAPTCHA provider key is saved securely and Settings reload shows `secure`.
-- Confirm CAPTCHA Live Test checks provider access through 2Captcha or CapSolver balance endpoint.
-- Confirm CAPTCHA queue payloads can be edited as JSON with `captchaType`, `websiteUrl`, and `websiteKey`.
-- Confirm Send CAPTCHA keeps incomplete queue items in `waiting` status with a useful message.
-- Confirm Send CAPTCHA submits valid reCAPTCHA v2 queue items to the configured provider and stores the provider task id in queue payload.
-- Add CAPTCHA result polling with provider `getTaskResult`. Done.
-- Add solved token capture into queue payload for later browser/extension injection. Done.
-
-Phase 1.10 validation and next build task:
-
-- Confirm CAPTCHA queue payload retains `providerTaskId` after Send CAPTCHA.
-- Confirm Poll Result calls 2Captcha/CapSolver `getTaskResult`.
-- Confirm pending provider responses keep the queue item in `waiting`.
-- Confirm ready provider responses save `solutionToken` and mark the queue item as `resolved`.
-- Confirm queue payload includes `automationHook.target = browser_or_extension` and `action = inject_recaptcha_token`.
-- Build the browser automation/extension bridge that can read a resolved CAPTCHA queue item and inject `solutionToken` into `g-recaptcha-response`. Done.
-
-Phase 1.11 validation and next build task:
-
-- Confirm Bridge Payload is blocked until CAPTCHA queue status is `resolved` and `solutionToken` exists.
-- Confirm Bridge Payload returns `queueId`, `accountId`, `platformName`, `websiteUrl`, `websiteKey`, `solutionToken`, `tokenField`, action, and next step.
-- Confirm Mark Injected updates queue payload with injection metadata and creates a workflow history row.
-- Confirm Mark Failed keeps the workflow honest with a failed injection event and review-ready account notes.
-- Build the real Chrome Extension/browser automation side that reads the bridge contract and injects the token into the page DOM. Done as a manual Bridge Payload MVP.
-
-Phase 1.12 validation and next build task:
-
-- Run `pnpm extension:build` or `pnpm --filter @entitymanager/extension build`.
-- Load `apps/extension/dist` in Chrome as an unpacked extension.
-- In Desktop, resolve a CAPTCHA queue item, click Bridge Payload, and copy the JSON payload.
-- Paste the payload into the extension popup and keep callback URL as `http://127.0.0.1:17321/captcha/injection/complete`.
-- Open the target signup page or a test page with `g-recaptcha-response`, then click Inject Active Tab.
-- Confirm the extension injects the token, reports back to Desktop, updates queue payload injection metadata, and creates a workflow history row.
-- Add the submit/verify account step after a successful token injection. Done.
-- Replace manual JSON paste with automatic payload fetching from Desktop or a native messaging channel. Done with a local HTTP MVP.
-
-Phase 1.13 validation and next build task:
-
-- Confirm Desktop starts the local bridge server at `http://127.0.0.1:17321`.
-- Confirm `GET /captcha/injection/next` returns the oldest resolved CAPTCHA queue item with a `solutionToken` and no completed injection marker.
-- Confirm the extension Fetch Next Payload action fills the popup JSON automatically.
-- Confirm Inject Active Tab posts back to `POST /captcha/injection/complete`.
-- Confirm successful injection creates a `submit_verify` queue item.
-- Confirm Mark Verified resolves `submit_verify`, marks the account `verified`, and writes workflow history.
-- Confirm Mark Submit Failed marks the queue failed and moves the account to manual review.
-- Build platform-specific submit/verify browser automation with evidence URL capture. Done as an extension MVP.
-
-Phase 1.14 validation and next build task:
-
-- Confirm CAPTCHA injection success creates a `submit_verify` queue payload with selector lists.
-- Confirm `GET /account/submit-verify/next` returns a ready submit/verify payload.
-- Confirm the extension `Submit/Verify Tab` action clicks a visible submit/verify control when one matches platform or generic selectors.
-- Confirm `POST /account/submit-verify/complete` resolves the queue, saves current URL as evidence, marks account verified, and writes workflow history.
-- Confirm failed selector matching reports a failed submit/verify callback and moves the account to manual review.
-- Add platform-specific field-fill recipes for account forms before clicking submit. Done.
-- Add pre-submit safety checks so the extension can explain missing fields, CAPTCHA not injected, or unsupported platform state. Done.
-
-Phase 1.15 validation and next build task:
-
-- Confirm submit/verify payload includes username, email, display name, bio, website URL, field selectors, required fields, and CAPTCHA safety flag.
-- Confirm Desktop derives payload values from Account, Entity Profile, and Money Site records.
-- Confirm extension fills matching fields before attempting submit.
-- Confirm extension blocks submit and reports missing `value`, `selector`, `field`, or `captchaToken` checks.
-- Confirm successful submit/verify callback saves evidence URL, resolves queue, and marks the account verified.
-- Add a Desktop editor for per-platform selector/value override recipes. Done.
-- Add browser-side dry-run mode so users can preview what would be filled/clicked before real submit. Done.
-
-Phase 1.16 validation and next build task:
-
-- Confirm Desktop shows the `Selector Recipes` module in navigation.
-- Confirm recipes are seeded from Platform Library into SQLite.
-- Confirm saving a recipe persists field selector JSON, submit selectors, verify selectors, required fields, and CAPTCHA requirement.
-- Confirm submit/verify payloads prioritize saved selector recipes.
-- Confirm extension Dry-run Preview shows planned fields, planned click selector, and missing checks without filling or clicking.
-- Confirm Submit/Verify Tab still performs real fill/click only after safety checks pass.
-- Add recipe import/export for moving tuned selectors between machines.
-- Add dry-run history so failed selector checks can be reviewed and converted into recipe edits.
-
-## First Data Models To Design
-
-- User, optional for later auth/license
-- Project
-- MoneySite
-- BrandProfile
-- NapProfile
-- AuthorProfile
-- Service
-- Product
-- MediaAsset
-- SeoTarget
-- Platform
-- Account
-- WorkflowRun
-- WorkflowTask
-- Evidence
-- ContentUrl
-- CarePlan
-- EeatRecommendation
-- IntegrationSetting
-
-## Important Reminder
-
-At the end of every coding session, update this file and `docs/WORK_LOG.md`.
-
-
-## Phase 1.17 — Recipe Import/Export + Dry-run History
-
-- Export saved selector recipes to a portable JSON file.
-- Paste/import recipe JSON and persist valid recipes in SQLite.
-- Save extension dry-run previews to local SQLite through the desktop bridge.
-- Review recent previews, planned selectors, missing checks, platform/account and URL in Selector Recipes.
-- Next: verify import/export round-trip and selector-failure scenarios in the Windows .exe; distribute only after GitHub Actions succeeds.
-
-## Phase 1.18 — Selector Failure Analytics & Recipe Suggestions
-
-- Aggregate dry-run failures by platform and identify repeated missing checks.
-- Draft generic selector fallbacks for repeated field-selector failures and submit-button failures.
-- Keep suggested changes in the editor only; users must review them and click Save Recipe before SQLite is changed.
-- Validate analytics against repeated dry-run reports, verify suggestions do not auto-submit forms, and check the Windows installer build in GitHub Actions.
-- Next: add selector health trend and per-platform success-rate reporting after the Phase 1.18 build is verified.
-
-
-
-## Phase 1.19 — Selector Health Trends & Success Rate Dashboard
-
-- Show overall and rolling 30-day dry-run success rates per platform.
-- Compare failed previews before and after a recipe's saved update timestamp.
-- Do not mark a recipe as improved merely because it was saved. Require at least one successful dry-run newer than that update.
-- Validation: confirm rates from mixed successful/failed history, confirm post-update successful dry-run is required for improvement status, and verify Windows build through GitHub Actions.
-- Next: add automated tests for trend aggregation and verify the dashboard against real extension callbacks in the packaged Windows app.
-
-
-## Phase 1.20 — Selector Health Tests & Release Verification
-
-- Run `pnpm test:selector-health` for deterministic coverage of success rate, the 30-day window, empty history, saved recipes without a follow-up dry-run, failed post-update runs, and successful post-update confirmation.
-- Run the full `pnpm typecheck` and Windows Tauri installer build in GitHub Actions.
-- If CI fails, inspect the failing job/log, fix the root cause, and rerun Actions before releasing.
-- Publish/accept a new `.exe` only after the workflow finishes green and the release asset is present. Until then, keep the last verified installer as the stable fallback.
-- Next: validate the dashboard using dry-run callbacks from the packaged Windows app and add regression coverage for malformed or legacy history records.
-
-
-## Phase 1.21 — Packaged App Validation & Legacy Data Tests
-
-- Normalize legacy/malformed dry-run history on load and refresh; never invent timestamps for records with missing or invalid dates.
-- Regression tests cover missing fields, malformed records, invalid timestamps, and exclusion from 30-day and recipe before/after calculations.
-- Packaged validation checklist: launch the current Windows `.exe`, run extension Dry-run Preview against a test form, confirm the extension reports callback success, and verify the same ID, platform/account, planned fields, selector, missing checks, URL, and timestamp appear in Desktop history.
-- Compare dashboard total/success/failure and 30-day counts with the exact SQLite `dry_run_history` rows; include at least one old record, one record with missing fields (if safely reproducible), and one invalid timestamp.
-- This session cannot run the Windows installer or inspect the user's local SQLite database. Treat packaged validation as pending until confirmed on Windows.
-- Run `pnpm test:selector-health`, extension/desktop/shared typechecks, and the Windows GitHub Actions installer workflow. Only distribute a new `.exe` after Actions is green and the release asset exists.
-- Next: add a read-only in-app diagnostic export that summarizes dry-run SQLite rows and computed dashboard totals for easier reconciliation.
-
-
-## Phase 1.22 — Dashboard Chrome Extension Download
-
-- Overview dashboard now includes a direct link to download `EntityManager-Chrome-Extension.zip` from the latest GitHub Release.
-- The Windows Actions workflow builds the extension package and attaches the ZIP to each successful release, as well as uploading it as a separate Actions artifact.
-- Install instructions are displayed in the dashboard: extract ZIP, open `chrome://extensions`, enable Developer mode, select Load unpacked, and choose the extracted folder.
-- Verify the next Actions run builds and uploads the ZIP, then confirm the latest release has the extension asset and that the dashboard link downloads it.
-- If a new installer is needed to show this dashboard panel, wait for the same workflow to finish green before installing it.
-
-
-## Phase 1.23 — Read-only Dry-run Diagnostics Export
-
-- Add an in-app export in Selector Recipes for a JSON diagnostic report built from the dry-run history already loaded from local SQLite.
-- Include overall and per-platform totals, success/failure rates, rolling 30-day counts, original history records, and a count of missing/invalid timestamps; never fabricate timestamps or write to SQLite during export.
-- Clearly warn that exported history can include local account IDs and page URLs; users should inspect the file before sharing it.
-- Add deterministic tests for summary totals, platform grouping, rolling-window counts, invalid timestamps, and empty history. Run these tests in the Windows release workflow.
-- Validation: run both selector-health and diagnostics tests, typecheck, and Windows release build; verify the latest release still includes both EXE and ZIP assets.
-- Next: use an exported report from the packaged app to reconcile dashboard totals with SQLite; then continue to Phase 1.24 based on the findings.
-
-
-## Phase 1.24 — Diagnostic Report Integrity & Reconciliation Aid
-
-- Add a read-only in-app verifier for exported dry-run diagnostic JSON.
-- Validate schema/version, export timestamp, record array, overall totals, success rate, 30-day counts, invalid timestamp count, and per-platform summaries against included raw records.
-- Keep verification separate from SQLite writes and explicitly explain that internal consistency does not prove the export includes every database row.
-- Add deterministic tests for valid reports, edited totals, edited platform summaries, malformed JSON/schema, empty history, and invalid record timestamps.
-- Require this test in Windows PR verification; publish only after all required checks pass and the release contains both EXE and Extension ZIP.
-- Next: export diagnostics from the packaged Windows app and compare the included record IDs/counts with the app's visible history; inspect any mismatch before changing analytics rules.
-
-
-## Phase 1.25 — SQLite-to-Diagnostics Reconciliation
-
-- Add a read-only Tauri command that queries the actual SQLite dry-run history row count, distinct IDs, oldest timestamp, and newest timestamp independently of the UI's recent-history query.
-- Display loaded-history count versus database count in Selector Recipes, and refresh both together.
-- Include source audit metadata in exported diagnostics so reports state how many SQLite rows existed and whether all rows were included.
-- Validate source counts, included-record count, distinct-ID bounds, timestamp metadata, and the complete/partial flag; keep report verification read-only.
-- Keep the recent-history UI limit explicit: the current view loads up to 100 newest records. If SQLite has more, export must say it is partial instead of implying it covers the entire database.
-- Run diagnostic export and validator tests, typecheck, and Windows installer build. Confirm both latest release assets remain present before distributing.
-- Next: inspect real exported diagnostics from the installed Windows app and compare the source counts with its visible history; only consider removing or paginating the 100-record cap after assessing actual local usage.
+Do not publish completion claims from source builds alone. Windows CI must be green, the official installer must exist, and the user must receive plain-language packaged-app test steps.

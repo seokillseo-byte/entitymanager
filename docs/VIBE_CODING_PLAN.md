@@ -1,5 +1,7 @@
 # EntityManager Vibe Coding Plan
 
+> Historical phase document. For current architecture and roadmap, follow [PRODUCT_MASTER_PLAN.md](PRODUCT_MASTER_PLAN.md). In particular, Playwright Worker Pool is now the primary automation engine and the Chrome Extension is fallback only.
+
 ## Core Principle
 
 Build in small professional phases. Each phase must leave the repository in a runnable, understandable, and documented state.
