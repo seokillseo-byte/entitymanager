@@ -63,6 +63,9 @@ jobs:
           pnpm browser-worker:build
           ./scripts/stage-browser-worker.ps1
 
+      - name: Smoke test staged portable Browser Worker
+        run: node scripts/test-staged-browser-worker.mjs
+
       - name: Zip Chrome extension
         shell: pwsh
         run: Compress-Archive -Path apps/extension/dist/* -DestinationPath EntityManager-Chrome-Extension.zip -Force
