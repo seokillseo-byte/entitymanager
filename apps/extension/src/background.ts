@@ -14,6 +14,7 @@ declare const chrome: {
     };
     onInstalled: { addListener(callback: () => void): void };
     onStartup: { addListener(callback: () => void): void };
+    getManifest(): { version: string };
     lastError?: { message?: string };
   };
   tabs: {
@@ -56,6 +57,7 @@ startMediumWatchdog();
 
 function startMediumWatchdog(): void {
   chrome.alarms.create(mediumWatchdogAlarm, { delayInMinutes: 0.1, periodInMinutes: 0.5 });
+  void reportBridgeHeartbeat();
   scanOpenMediumTabs();
 }
 
@@ -84,8 +86,16 @@ function scheduleMediumAutomation(tabId: number, currentUrl: string, attempt = 0
   retryTimers.set(tabId, timer);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const typedMessage = message as { type?: string; report?: InjectionReport | SubmitVerifyReport; dryRunReport?: DryRunHistoryReport; validationReport?: PlatformValidationSyncReport; callbackUrl?: string };
+
+  if (typedMessage.type === "ENTITYMANAGER_MEDIUM_PAGE_READY") {
+    const tab = (sender as { tab?: { id?: number; url?: string } }).tab;
+    if (tab?.id) scheduleMediumAutomation(tab.id, tab.url || "https://medium.com/");
+    void reportBridgeHeartbeat();
+    sendResponse({ success: Boolean(tab?.id) });
+    return false;
+  }
 
   if (typedMessage.type === "ENTITYMANAGER_REPORT_DRY_RUN" && typedMessage.dryRunReport) {
     void postDryRunHistory(typedMessage.dryRunReport, typedMessage.callbackUrl)
@@ -125,6 +135,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+async function reportBridgeHeartbeat(): Promise<void> {
+  try {
+    await fetch("http://127.0.0.1:17321/bridge/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: chrome.runtime.getManifest().version, source: "managed_chromium", timestamp: new Date().toISOString() })
+    });
+  } catch {
+    // Desktop may still be starting. The alarm and page-ready event retry this.
+  }
+}
 
 async function postReport(report: InjectionReport | SubmitVerifyReport, callbackUrl: string | undefined, label: string): Promise<string> {
   if (!callbackUrl?.trim()) {

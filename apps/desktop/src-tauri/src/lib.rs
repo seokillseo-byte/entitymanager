@@ -4416,6 +4416,22 @@ fn handle_extension_bridge_stream(mut stream: TcpStream, app_handle: tauri::AppH
         return;
     }
 
+    if request.starts_with("POST /bridge/heartbeat ") {
+        let version = request.split("\r\n\r\n").nth(1)
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+            .and_then(|value| value.get("version").and_then(|item| item.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        if let Ok(connection) = open_database(&app_handle) {
+            let _ = ensure_schema(&connection);
+            let _ = connection.execute(
+                "UPDATE provisioning_jobs SET last_message=?1,updated_at=?2 WHERE status IN ('running','waiting_user') AND platform_id='medium'",
+                params![format!("Bridge v{version} đã kết nối; đang tự động xử lý trang Medium."), now_string()],
+            );
+        }
+        let _ = write_http_response(&mut stream, 200, &json!({ "ok": true, "version": version }).to_string());
+        return;
+    }
+
     if request.starts_with("GET /captcha/injection/next ") {
         let response = match get_next_captcha_injection_payload_record(&app_handle) {
             Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|_| "{\"ok\":true}".to_string()),
