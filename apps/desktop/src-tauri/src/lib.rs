@@ -1500,6 +1500,25 @@ fn update_provisioning_checkpoint_record(
         params![job.id, job.stage, job.status, job.evidence_url, job.last_message, job.attempt_count, job.updated_at],
     ).map_err(|error| error.to_string())?;
 
+    let identity_id: String = connection.query_row(
+        "SELECT identity_id FROM browser_sessions WHERE job_id=?1 ORDER BY updated_at DESC LIMIT 1",
+        params![job.id], |row| row.get(0),
+    ).unwrap_or_else(|_| "identity-primary".to_string());
+    let auth_status = match job.stage.as_str() {
+        "email_verification" | "login" => "recovering",
+        "profile_text" | "profile_media" | "evidence" | "indexing" | "completed" => "authenticated",
+        _ if job.status == "failed" => "needs_reauth",
+        _ => "unknown",
+    };
+    connection.execute(
+        "INSERT INTO platform_auth_sessions (identity_id,platform_id,account_id,status,last_checked_at,last_recovered_at,last_message,updated_at)
+         VALUES (?1,?2,?3,?4,?5,CASE WHEN ?4='authenticated' THEN ?5 ELSE '' END,?6,?5)
+         ON CONFLICT(identity_id,platform_id) DO UPDATE SET account_id=excluded.account_id,status=excluded.status,
+          last_checked_at=excluded.last_checked_at,last_recovered_at=CASE WHEN excluded.status='authenticated' THEN excluded.last_checked_at ELSE platform_auth_sessions.last_recovered_at END,
+          last_message=excluded.last_message,updated_at=excluded.updated_at",
+        params![identity_id,job.platform_id,job.account_id,auth_status,timestamp,job.last_message],
+    ).map_err(|error| error.to_string())?;
+
     let mut next_job = None;
     if job.status == "completed" {
         if let Ok(mut candidate) = connection.query_row(
@@ -2415,6 +2434,46 @@ fn browser_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     })
 }
 
+#[cfg(target_os = "windows")]
+fn find_browser_window(profile_directory: &Path, timeout_seconds: u64, bring_to_front: bool) -> Result<i64, String> {
+    let script = r#"
+$deadline = (Get-Date).AddSeconds([int]$env:ENTITYMANAGER_WINDOW_TIMEOUT)
+$needle = '--user-data-dir=' + $env:ENTITYMANAGER_PROFILE_DIRECTORY
+do {
+  $candidates = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) }
+  foreach ($candidate in $candidates) {
+    $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+    if ($process -and $process.MainWindowHandle -ne 0) {
+      if ($env:ENTITYMANAGER_BRING_TO_FRONT -eq '1') {
+        $signature = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);'
+        Add-Type -MemberDefinition $signature -Name BrowserWindow -Namespace EntityManager -ErrorAction SilentlyContinue
+        [EntityManager.BrowserWindow]::ShowWindowAsync($process.MainWindowHandle, 9) | Out-Null
+        [EntityManager.BrowserWindow]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
+      }
+      Write-Output $candidate.ProcessId
+      exit 0
+    }
+  }
+  Start-Sleep -Milliseconds 250
+} while ((Get-Date) -lt $deadline)
+exit 2
+"#;
+    let mut command = Command::new("powershell.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .env("ENTITYMANAGER_PROFILE_DIRECTORY", profile_directory.to_string_lossy().to_string())
+        .env("ENTITYMANAGER_WINDOW_TIMEOUT", timeout_seconds.to_string())
+        .env("ENTITYMANAGER_BRING_TO_FRONT", if bring_to_front { "1" } else { "0" })
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output().map_err(|error| format!("Không kiểm tra được cửa sổ Chromium: {error}"))?;
+    if !output.status.success() {
+        return Err("Chromium đã tạo tiến trình nhưng chưa tạo cửa sổ hiển thị trong 12 giây.".to_string());
+    }
+    String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| line.trim().parse::<i64>().ok()).next()
+        .ok_or_else(|| "Không xác định được PID cửa sổ Chromium.".to_string())
+}
+
 fn proxy_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProxyRecord> {
     let id: String = row.get(0)?;
     Ok(ProxyRecord {
@@ -3052,9 +3111,13 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     command.arg(format!("--user-data-dir={}", root.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
+        .arg("--new-window")
         .arg("--disable-features=DisableLoadExtensionCommandLineSwitch")
         .arg(format!("--disable-extensions-except={}", extension_directory.display()))
         .arg(format!("--load-extension={}", extension_directory.display()));
+    if request.visible {
+        command.arg("--window-position=80,80").arg("--window-size=1280,900");
+    }
     if !request.visible { command.arg("--start-minimized"); }
     if !request.proxy_id.is_empty() {
         let proxy = get_proxy_records(app_handle.clone())?.into_iter().find(|item| item.id == request.proxy_id).ok_or_else(|| "Proxy được chọn không tồn tại.".to_string())?;
@@ -3062,8 +3125,21 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
         command.arg(format!("--proxy-server={}://{}:{}", proxy.protocol, proxy.host, proxy.port));
     }
     let child = command.arg(&request.url).spawn().map_err(|e| format!("Không khởi chạy được Managed Browser: {e}"))?;
+    let launcher_pid = child.id() as i64;
+    #[cfg(target_os = "windows")]
+    let (browser_pid, launch_message) = if request.visible {
+        match find_browser_window(&root, 12, true) {
+            Ok(pid) => (pid, "Cửa sổ Managed Chromium đã sẵn sàng và được đưa ra phía trước.".to_string()),
+            Err(error) => {
+                let _ = Command::new("taskkill").creation_flags(CREATE_NO_WINDOW).args(["/PID", &launcher_pid.to_string(), "/T", "/F"]).output();
+                return Err(format!("Không thể hiển thị Managed Chromium: {error}"));
+            }
+        }
+    } else { (launcher_pid, "Managed Chromium đang chạy ẩn với persistent Identity Profile.".to_string()) };
+    #[cfg(not(target_os = "windows"))]
+    let (browser_pid, launch_message) = (launcher_pid, if request.visible { "Managed Chromium đã khởi chạy ở chế độ hiển thị." } else { "Managed Chromium đang chạy ẩn." }.to_string());
     let timestamp = now_string();
-    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: child.id() as i64, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: "Managed Chromium đã khởi chạy với persistent Identity Profile và Bridge tích hợp.".to_string(), created_at: timestamp.clone(), updated_at: timestamp.clone(), identity_id: identity_id.clone() };
+    let session = BrowserSessionRecord { id: request.session_id, campaign_id: request.campaign_id, job_id: request.job_id, account_id: request.account_id, platform_id: request.platform_id, profile_directory: root.to_string_lossy().to_string(), proxy_id: request.proxy_id, process_id: browser_pid, status: "running".to_string(), visibility: if request.visible { "visible" } else { "hidden" }.to_string(), current_url: request.url, last_message: launch_message, created_at: timestamp.clone(), updated_at: timestamp.clone(), identity_id: identity_id.clone() };
     connection.execute("INSERT INTO browser_sessions (id,campaign_id,job_id,account_id,platform_id,profile_directory,proxy_id,process_id,status,visibility,current_url,last_message,created_at,updated_at,identity_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(id) DO UPDATE SET process_id=excluded.process_id,status=excluded.status,visibility=excluded.visibility,current_url=excluded.current_url,last_message=excluded.last_message,updated_at=excluded.updated_at,identity_id=excluded.identity_id", params![session.id,session.campaign_id,session.job_id,session.account_id,session.platform_id,session.profile_directory,session.proxy_id,session.process_id,session.status,session.visibility,session.current_url,session.last_message,session.created_at,session.updated_at,session.identity_id]).map_err(|e| e.to_string())?;
     connection.execute("UPDATE browser_identity_profiles SET last_used_at=?1,updated_at=?1,proxy_id=CASE WHEN ?2='' THEN proxy_id ELSE ?2 END WHERE id=?3", params![timestamp,session.proxy_id,identity_id]).map_err(|e| e.to_string())?;
     Ok(session)
@@ -3103,10 +3179,11 @@ fn stop_managed_browser(app_handle: tauri::AppHandle, session_id: String) -> Res
 
 #[tauri::command]
 fn set_managed_browser_visibility(app_handle: tauri::AppHandle, session_id: String, visible: bool) -> Result<BrowserSessionRecord, String> {
-    let session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
+    let mut session = get_browser_sessions(app_handle.clone())?.into_iter().find(|item| item.id == session_id).ok_or_else(|| "Không tìm thấy browser session.".to_string())?;
     #[cfg(target_os = "windows")]
     {
-        let show_code = if visible { 5 } else { 0 };
+        session.process_id = find_browser_window(Path::new(&session.profile_directory), 8, visible)?;
+        let show_code = if visible { 9 } else { 0 };
         let script = format!("$signature='[DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'; Add-Type -MemberDefinition $signature -Name Win32ShowWindow -Namespace EntityManager; $p=Get-Process -Id {} -ErrorAction Stop; [EntityManager.Win32ShowWindow]::ShowWindowAsync($p.MainWindowHandle,{}) | Out-Null", session.process_id, show_code);
         let mut command = Command::new("powershell.exe");
         command.creation_flags(CREATE_NO_WINDOW);
@@ -3120,7 +3197,7 @@ fn set_managed_browser_visibility(app_handle: tauri::AppHandle, session_id: Stri
     {
         let connection = open_database(&app_handle)?; let timestamp = now_string();
         let visibility = if visible { "visible" } else { "hidden" };
-        connection.execute("UPDATE browser_sessions SET visibility=?1,last_message=?2,updated_at=?3 WHERE id=?4", params![visibility, if visible { "Đã hiển thị browser để thao tác." } else { "Browser đang chạy ẩn." },timestamp,session_id]).map_err(|e| e.to_string())?;
+        connection.execute("UPDATE browser_sessions SET visibility=?1,process_id=?2,last_message=?3,updated_at=?4 WHERE id=?5", params![visibility,session.process_id,if visible { "Đã xác nhận cửa sổ browser hiển thị và đưa ra phía trước." } else { "Browser đang chạy ẩn." },timestamp,session_id]).map_err(|e| e.to_string())?;
         get_browser_sessions(app_handle)?.into_iter().find(|item| item.id == session.id).ok_or_else(|| "Không đọc được browser session.".to_string())
     }
 }
@@ -3407,6 +3484,18 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 hard_profile_bytes INTEGER NOT NULL DEFAULT 786432000
             );
             INSERT OR IGNORE INTO browser_storage_policy (id) VALUES (1);
+
+            CREATE TABLE IF NOT EXISTS platform_auth_sessions (
+                identity_id TEXT NOT NULL,
+                platform_id TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'unknown',
+                last_checked_at TEXT NOT NULL DEFAULT '',
+                last_recovered_at TEXT NOT NULL DEFAULT '',
+                last_message TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (identity_id, platform_id)
+            );
 
             CREATE TABLE IF NOT EXISTS gmail_oauth_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
