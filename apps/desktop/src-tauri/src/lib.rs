@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
