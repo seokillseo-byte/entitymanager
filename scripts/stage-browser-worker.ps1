@@ -22,7 +22,7 @@ if (-not (Test-Path (Join-Path $playwrightRoot "package.json"))) {
   throw "Could not find apps/browser-worker/node_modules/playwright-core. Run pnpm install before staging the Browser Worker."
 }
 $playwrightRoot = (Resolve-Path $playwrightRoot).Path
-$runtimeModules = Join-Path $destination "node_modules"
+$runtimeModules = Join-Path $destination "runtime-modules"
 New-Item -ItemType Directory -Path $runtimeModules -Force | Out-Null
 Copy-Item $playwrightRoot (Join-Path $runtimeModules "playwright-core") -Recurse -Force
 Set-Content -Path (Join-Path $destination "ENTITYMANAGER_WORKER_VERSION.txt") -Value "0.1.0 / Node $nodeVersion"

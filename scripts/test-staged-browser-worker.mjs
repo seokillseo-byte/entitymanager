@@ -27,7 +27,9 @@ const port = await new Promise((resolve, reject) => {
 const token = "entitymanager-staged-runtime-smoke-test";
 let stderr = "";
 const child = spawn(nodeExecutable, [workerBundle, "--port", String(port), "--token", token, "--chromium", chromiumExecutable], {
-  cwd: path.dirname(workerBundle), stdio: ["ignore", "pipe", "pipe"], windowsHide: true
+  cwd: path.dirname(workerBundle),
+  env: { ...process.env, NODE_PATH: path.join(path.dirname(workerBundle), "runtime-modules") },
+  stdio: ["ignore", "pipe", "pipe"], windowsHide: true
 });
 child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
 

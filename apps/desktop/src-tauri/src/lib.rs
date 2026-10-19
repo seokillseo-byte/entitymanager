@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -2793,10 +2793,27 @@ fn medium_verification_link(raw_message: &[u8]) -> Option<String> {
 fn poll_medium_verification(app_handle: &tauri::AppHandle) -> Result<String, String> {
     let connection = open_database(app_handle)?;
     ensure_schema(&connection)?;
-    let job: (String, String, i64) = connection.query_row(
-        "SELECT id,account_id,CAST(updated_at AS INTEGER) FROM provisioning_jobs WHERE platform_id='medium' AND stage='email_verification' AND status IN ('waiting_user','running') ORDER BY CAST(updated_at AS INTEGER) DESC LIMIT 1",
-        [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).map_err(|error| if matches!(error, rusqlite::Error::QueryReturnedNoRows) { "Không có Medium checkpoint đang chờ email xác minh.".to_string() } else { error.to_string() })?;
+    let job = connection.query_row(
+        "SELECT j.id,j.account_id,
+                CASE WHEN j.updated_at LIKE '%T%' THEN CAST(strftime('%s',j.updated_at) AS INTEGER) ELSE CAST(j.updated_at AS INTEGER) END
+         FROM provisioning_jobs j
+         JOIN provisioning_campaigns c ON c.id=j.campaign_id
+         WHERE j.platform_id='medium' AND j.stage='email_verification'
+           AND j.status IN ('waiting_user','running') AND c.status='running'
+         ORDER BY CASE WHEN j.updated_at LIKE '%T%' THEN strftime('%s',j.updated_at) ELSE CAST(j.updated_at AS INTEGER) END DESC LIMIT 1",
+        [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+    ).optional().map_err(|error| error.to_string())?;
+    let Some(job) = job else {
+        let current = connection.query_row(
+            "SELECT j.stage,j.status FROM provisioning_jobs j JOIN provisioning_campaigns c ON c.id=j.campaign_id
+             WHERE j.platform_id='medium' AND c.status='running' ORDER BY j.position ASC LIMIT 1",
+            [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).optional().map_err(|error| error.to_string())?;
+        return Ok(match current {
+            Some((stage, status)) => format!("Medium hiện ở bước {stage} ({status}); chưa đến checkpoint chờ email nên Gmail chưa có email xác minh để xử lý."),
+            None => "Không có Medium campaign đang chạy; hãy bấm Tạo toàn bộ Entity trước khi kiểm tra email.".to_string(),
+        });
+    };
     let access_token = gmail_access_token(app_handle)?;
     let client = reqwest::blocking::Client::new();
     let query = "from:(medium.com) newer_than:7d";
@@ -3167,7 +3184,13 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     let mut command = Command::new(node);
     command.arg(&worker).arg("--port").arg(port.to_string()).arg("--token").arg(&token)
         .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::from(stdout_log)).stderr(Stdio::from(stderr_log));
-    if let Some(worker_directory) = worker.parent() { command.current_dir(worker_directory); }
+    if let Some(worker_directory) = worker.parent() {
+        command.current_dir(worker_directory);
+        // Keep Playwright outside a directory named node_modules in the final
+        // NSIS resource tree. Some Windows packaging/security tools omit or
+        // quarantine nested node_modules content even though staging tests pass.
+        command.env("NODE_PATH", worker_directory.join("runtime-modules"));
+    }
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     let mut child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
@@ -3182,7 +3205,8 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
         if let Ok(Some(exit_status)) = child.try_wait() {
             *state.lock().map_err(|_| "Không cập nhật được Browser Worker runtime.".to_string())? = None;
             let details = fs::read_to_string(&log_path).unwrap_or_default();
-            return Err(format!("Playwright Browser Worker đã thoát ({exit_status}). {} Log: {}", if details.trim().is_empty() { "Không có stderr." } else { "Đã ghi nhận lỗi khởi động." }, log_path.display()));
+            let detail_tail = details.chars().rev().take(2500).collect::<String>().chars().rev().collect::<String>();
+            return Err(format!("Playwright Browser Worker đã thoát ({exit_status}). {}{} Log: {}", if detail_tail.trim().is_empty() { "Không có stderr." } else { "Chi tiết: " }, detail_tail.trim(), log_path.display()));
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
