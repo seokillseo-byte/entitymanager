@@ -1848,6 +1848,14 @@ textarea {
 .worker-health-dot.failed { background:#ef4444; box-shadow:0 0 0 5px #fee2e2; }
 .worker-health-card p { margin:14px 0 8px; color:#475569; font-size:13px; }
 .worker-health-card small { color:#94a3b8; }
+.browser-preview-card { justify-content:flex-start; min-height:220px; }
+.preview-stage { display:grid; place-items:center; min-height:135px; margin:14px 0 10px; overflow:hidden; border-radius:9px; background:#0f172a; }
+.preview-stage img { display:block; width:100%; max-height:190px; object-fit:cover; object-position:top; }
+.preview-placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:120px; padding:16px; color:#cbd5e1; text-align:center; }
+.preview-placeholder.compact { min-height:88px; margin:14px 0; border-radius:9px; background:#f8fafc; color:#475569; }
+.preview-placeholder small { color:#94a3b8; }
+.preview-actions { display:flex; gap:8px; margin-bottom:10px; }
+.preview-actions button { flex:1; padding:8px 10px; font-size:12px; }
 
 .platform-live-table { overflow:hidden; border:1px solid #e2e8f0; border-radius:10px; }
 .platform-live-row { display:grid; grid-template-columns:1fr 1.6fr .9fr 1fr; align-items:center; gap:14px; width:100%; padding:13px 15px; border:0; border-bottom:1px solid #eef2f7; background:#fff; color:#475569; text-align:left; }
@@ -1865,6 +1873,13 @@ button.platform-live-row:hover { background:#f8fafc; }
 .advanced-builder-tools>summary { display:flex; align-items:center; gap:9px; padding:15px 18px; color:#475569; font-weight:800; cursor:pointer; list-style:none; }
 .advanced-builder-tools>summary::-webkit-details-marker { display:none; }
 .advanced-builder-tools .builder-panel-toggles { padding:0 18px 18px; }
+.compact-platform-selector { padding:0 18px 18px; border-top:1px solid #eef2f7; }
+.compact-selector-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 0 12px; }
+.compact-selector-heading strong,.compact-selector-heading span { display:block; }
+.compact-selector-heading span { margin-top:3px; color:#64748b; font-size:12px; }
+.campaign-platform-picker.compact { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); max-height:230px; overflow:auto; padding-right:6px; }
+.campaign-platform-picker.compact .campaign-platform-option { min-width:0; }
+.platform-detail-panel { border:2px solid #cbd5e1; box-shadow:0 22px 55px rgba(15,23,42,.12); }
 
 @media (max-width:1280px) {
   .campaign-setup-strip { grid-template-columns:repeat(2,minmax(180px,1fr)); }
