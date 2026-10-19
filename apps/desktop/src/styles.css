@@ -156,6 +156,9 @@ h2 {
   background: #eff6ff;
   color: #1d4ed8;
   font-weight: 700;
+  max-height: 7rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
 }
 
 .metrics-grid {
@@ -1853,7 +1856,7 @@ textarea {
 .preview-stage img { display:block; width:100%; max-height:190px; object-fit:cover; object-position:top; }
 .preview-placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:120px; padding:16px; color:#cbd5e1; text-align:center; }
 .preview-placeholder.compact { min-height:88px; margin:14px 0; border-radius:9px; background:#f8fafc; color:#475569; }
-.preview-placeholder small { color:#94a3b8; }
+.preview-placeholder small { color:#94a3b8; max-width:100%; max-height:5.5rem; overflow:auto; overflow-wrap:anywhere; }
 .preview-actions { display:flex; gap:8px; margin-bottom:10px; }
 .preview-actions button { flex:1; padding:8px 10px; font-size:12px; }
 

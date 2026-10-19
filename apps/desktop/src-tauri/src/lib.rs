@@ -3181,16 +3181,16 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     let log_path = log_directory.join("browser-worker.log");
     let stdout_log = fs::File::create(&log_path).map_err(|error| format!("Không mở được log Browser Worker: {error}"))?;
     let stderr_log = stdout_log.try_clone().map_err(|error| format!("Không chuẩn bị được stderr log Browser Worker: {error}"))?;
+    let worker_directory = worker.parent().ok_or_else(|| "Browser Worker không có thư mục runtime hợp lệ.".to_string())?;
+    let worker_entry = worker.file_name().ok_or_else(|| "Browser Worker không có entrypoint hợp lệ.".to_string())?;
     let mut command = Command::new(node);
-    command.arg(&worker).arg("--port").arg(port.to_string()).arg("--token").arg(&token)
-        .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::from(stdout_log)).stderr(Stdio::from(stderr_log));
-    if let Some(worker_directory) = worker.parent() {
-        command.current_dir(worker_directory);
-        // Keep Playwright outside a directory named node_modules in the final
-        // NSIS resource tree. Some Windows packaging/security tools omit or
-        // quarantine nested node_modules content even though staging tests pass.
-        command.env("NODE_PATH", worker_directory.join("runtime-modules"));
-    }
+    // Run the entrypoint relative to its working directory. Passing the full
+    // `C:\Program Files\...` path makes portable Node 22 occasionally parse the
+    // drive prefix as the script (`C:`) and fail with EISDIR/lstat on Windows.
+    command.current_dir(worker_directory).arg(worker_entry)
+        .arg("--port").arg(port.to_string()).arg("--token").arg(&token)
+        .arg("--chromium").arg(chromium).stdin(Stdio::null()).stdout(Stdio::from(stdout_log)).stderr(Stdio::from(stderr_log))
+        .env("NODE_PATH", worker_directory.join("runtime-modules"));
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     let mut child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
