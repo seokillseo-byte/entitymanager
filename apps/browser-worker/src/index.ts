@@ -86,6 +86,11 @@ const server = createServer(async (request, response) => {
       ok: true, protocolVersion, pid: process.pid, startedAt, heartbeatAt: new Date().toISOString(),
       activeSessions: [...sessions.values()].filter((item) => item.status === "running").length
     });
+    if (request.method === "POST" && url.pathname === "/v1/shutdown") {
+      json(response, 202, { ok: true });
+      setImmediate(() => void shutdown());
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/v1/sessions") return json(response, 200, [...sessions.values()].map(publicSession));
     if (request.method === "POST" && url.pathname === "/v1/sessions") return json(response, 201, await startSession(await readJson<StartSessionRequest>(request)));
     const preview = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/preview$/);

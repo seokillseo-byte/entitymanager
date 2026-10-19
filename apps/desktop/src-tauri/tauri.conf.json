@@ -29,6 +29,11 @@
     "targets": ["nsis"],
     "resources": ["resources/extension/**/*", "resources/chromium/**/*", "resources/browser-worker/**/*"],
     "icon": ["icons/icon.ico"],
-    "publisher": "EntityManager"
+    "publisher": "EntityManager",
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
+    }
   }
 }

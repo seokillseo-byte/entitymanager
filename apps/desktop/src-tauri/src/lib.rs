@@ -3249,6 +3249,10 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     let mut child = command.spawn().map_err(|error| format!("Không khởi động được Playwright Browser Worker: {error}"))?;
     let runtime = BrowserWorkerRuntimeState { port, token, process_id: child.id() as i64, started_at: now_string(), log_path: log_path.clone() };
     *state.lock().map_err(|_| "Không lưu được Browser Worker runtime.".to_string())? = Some(runtime.clone());
+    if let Ok(app_data) = app_handle.path().app_data_dir() {
+        let _ = fs::create_dir_all(&app_data);
+        let _ = fs::write(app_data.join("browser-worker.pid"), runtime.process_id.to_string());
+    }
     // Windows Defender can inspect the newly installed portable Node runtime on
     // first launch. Give that cold start enough time, but fail immediately when
     // the child exits and surface its real stderr instead of a generic timeout.
@@ -3266,6 +3270,27 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     let _ = child.kill();
     *state.lock().map_err(|_| "Không cập nhật được Browser Worker runtime.".to_string())? = None;
     Err(format!("Playwright Browser Worker PID {} không gửi heartbeat sau 45 giây. Xem log: {}", runtime.process_id, runtime.log_path.display()))
+}
+
+fn shutdown_browser_worker_runtime(app_handle: &tauri::AppHandle) {
+    let state = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None));
+    let runtime = state.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(runtime) = runtime {
+        let _ = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2)).build()
+            .and_then(|client| client.post(format!("http://127.0.0.1:{}/v1/shutdown", runtime.port)).bearer_auth(&runtime.token).send());
+        #[cfg(target_os = "windows")]
+        {
+            let mut command = Command::new("taskkill");
+            command.creation_flags(CREATE_NO_WINDOW);
+            let _ = command.args(["/PID", &runtime.process_id.to_string(), "/T", "/F"]).output();
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = Command::new("kill").arg(runtime.process_id.to_string()).output();
+    }
+    if let Ok(app_data) = app_handle.path().app_data_dir() {
+        let _ = fs::remove_file(app_data.join("browser-worker.pid"));
+    }
 }
 
 #[tauri::command]
@@ -5730,7 +5755,7 @@ fn platform(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             start_gmail_verification_worker(app.handle().clone());
             Ok(())
@@ -5806,6 +5831,11 @@ pub fn run() {
             stop_managed_browser,
             set_managed_browser_visibility
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running EntityManager");
+        .build(tauri::generate_context!())
+        .expect("error while building EntityManager");
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
+            shutdown_browser_worker_runtime(app_handle);
+        }
+    });
 }
