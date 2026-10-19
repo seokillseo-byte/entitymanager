@@ -430,6 +430,8 @@ function App() {
   const [browserVisible, setBrowserVisible] = useState(false);
   const [browserWorker, setBrowserWorker] = useState<BrowserWorkerStatus | null>(null);
   const [browserPreviews, setBrowserPreviews] = useState<Record<string, string>>({});
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [platformDetailOpen, setPlatformDetailOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
   const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
   const [gmailOAuthDraft, setGmailOAuthDraft] = useState({ clientId: "", clientSecret: "" });
@@ -737,6 +739,20 @@ function App() {
   const activeCampaignProgress = activeProvisioningCampaign
     ? Math.round((activeCompletedJobs / Math.max(activeProvisioningCampaign.totalJobs, 1)) * 100)
     : 0;
+  const activeBrowserSession = useMemo(() => {
+    const activeJob = activeProvisioningJobs.find((job) => job.status === "running")
+      ?? activeProvisioningJobs.find((job) => job.status === "waiting_user");
+    return browserSessions.find((session) => session.status === "running" && session.jobId === activeJob?.id)
+      ?? browserSessions.find((session) => session.status === "running")
+      ?? null;
+  }, [activeProvisioningJobs, browserSessions]);
+
+  useEffect(() => {
+    if (activeModule !== "Entity Builder" || !activeBrowserSession) return;
+    void refreshBrowserPreview(activeBrowserSession.id);
+    const intervalId = window.setInterval(() => void refreshBrowserPreview(activeBrowserSession.id), 5000);
+    return () => window.clearInterval(intervalId);
+  }, [activeModule, activeBrowserSession?.id]);
 
   const campaignDataRows = useMemo(() => ([
     ["Brand name", entityProfile.brandName],
@@ -1196,11 +1212,15 @@ function App() {
   }
 
   async function refreshBrowserPreview(sessionId: string) {
+    setPreviewBusy(true);
     try {
       const preview = await invoke<string>("get_browser_worker_preview", { sessionId });
       setBrowserPreviews((current) => ({ ...current, [sessionId]: preview }));
+      setStatusMessage("Preview Browser Worker đã được cập nhật.");
     } catch (error) {
-      setStatusMessage(`Không lấy được preview worker: ${String(error)}`);
+      setStatusMessage(`Chưa thể xem preview: ${String(error)}. Preview chỉ hoạt động khi browser session đang chạy.`);
+    } finally {
+      setPreviewBusy(false);
     }
   }
 
@@ -2793,10 +2813,24 @@ function App() {
                 </div>
               </article>
 
-              <article className="panel worker-health-card">
-                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Worker</span><strong>{browserWorker?.status === "ready" ? "Đang hoạt động" : browserWorker?.status === "starting" ? "Đang khởi động" : browserWorker?.status === "failed" ? "Có lỗi" : "Đang nghỉ"}</strong></div></div>
-                <p>{browserWorker?.message || "Worker sẽ tự khởi động khi campaign bắt đầu."}</p>
-                <small>{browserWorker?.heartbeatAt ? `Cập nhật ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")} · ${browserWorker.activeSessions} phiên` : "Chưa có heartbeat"}</small>
+              <article className="panel worker-health-card browser-preview-card">
+                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Preview</span><strong>{activeBrowserSession ? activeBrowserSession.platformId : browserWorker?.status === "ready" ? "Worker sẵn sàng" : "Chưa có phiên chạy"}</strong></div></div>
+                {activeBrowserSession ? (
+                  <>
+                    <div className="preview-stage">
+                      {browserPreviews[activeBrowserSession.id]
+                        ? <img src={browserPreviews[activeBrowserSession.id]} alt={`Preview ${activeBrowserSession.platformId}`} />
+                        : <div className="preview-placeholder"><span>{previewBusy ? "Đang lấy ảnh preview..." : "Chưa có ảnh preview"}</span><small>Ảnh sẽ tự cập nhật mỗi 5 giây.</small></div>}
+                    </div>
+                    <div className="preview-actions">
+                      <button className="secondary-action" type="button" disabled={previewBusy} onClick={() => void refreshBrowserPreview(activeBrowserSession.id)}>{previewBusy ? "Đang tải..." : "Cập nhật preview"}</button>
+                      <button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(activeBrowserSession.id, true)}>Điều khiển thủ công</button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="preview-placeholder compact"><span>Không có browser session đang chạy.</span><small>{activeProvisioningJobs.find((job) => job.status === "waiting_user")?.lastMessage || browserWorker?.message || "Bấm Tạo toàn bộ Entity để khởi động worker."}</small></div>
+                )}
+                <small>{browserWorker?.heartbeatAt ? `Heartbeat ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")} · ${browserWorker.activeSessions} phiên` : "Chưa có heartbeat"}</small>
               </article>
             </section>
 
@@ -2807,7 +2841,7 @@ function App() {
                 {campaignPlans.map((plan) => {
                   const job = activeProvisioningJobs.find((item) => item.platformId === plan.platformId);
                   const account = accounts.find((item) => item.platformId === plan.platformId);
-                  return <button type="button" className="platform-live-row" key={plan.platformId} onClick={() => selectExecutionPlatform(plan.platformId)}>
+                  return <button type="button" className="platform-live-row" key={plan.platformId} onClick={() => { selectExecutionPlatform(plan.platformId); setPlatformDetailOpen(true); }}>
                     <strong>{plan.platformName}</strong>
                     <span>{job ? job.stage.replace(/_/g, " ") : "Sẵn sàng"}</span>
                     <em className={`live-status ${job?.status || "queued"}`}>{job ? job.status.replace(/_/g, " ") : "Chưa chạy"}</em>
@@ -2820,9 +2854,15 @@ function App() {
             <details className="panel advanced-builder-tools">
               <summary><ListChecks size={18} /> Tùy chọn và chi tiết nâng cao</summary>
               <div className="builder-panel-toggles">
-                {([ ["guide", "Hướng dẫn"], ["campaign", "Thiết lập chi tiết"], ["accounts", `Tài khoản (${accounts.length})`], ["plans", "Kế hoạch platform"], ["activity", `Queue & log (${automationQueue.length})`] ] as Array<[BuilderPanelId, string]>).map(([panel, label]) => (
+                {([ ["guide", "Hướng dẫn"], ["accounts", `Tài khoản (${accounts.length})`], ["activity", `Queue & log (${automationQueue.length})`] ] as Array<[BuilderPanelId, string]>).map(([panel, label]) => (
                   <label className={builderPanels[panel] ? "builder-panel-toggle active" : "builder-panel-toggle"} key={panel}><input type="checkbox" checked={builderPanels[panel]} onChange={() => toggleBuilderPanel(panel)} /><span>{label}</span></label>
                 ))}
+              </div>
+              <div className="compact-platform-selector">
+                <div className="compact-selector-heading"><div><strong>Chọn platform cho campaign</strong><span>{campaignPlatformIds.length} đã chọn</span></div><div className="queue-actions"><button className="secondary-action" type="button" onClick={() => setCampaignPlatformIds(starterCampaignPlatformIds)}>Bộ starter</button><button className="secondary-action" type="button" onClick={() => setCampaignPlatformIds(accountCreationPlan.slice(0, 20).map((plan) => plan.platformId))}>Top 20</button></div></div>
+                <div className="campaign-platform-picker compact">
+                  {accountCreationPlan.map((plan) => <label className="checkbox-row campaign-platform-option" key={plan.platformId}><input type="checkbox" checked={campaignPlatformIds.includes(plan.platformId)} onChange={() => toggleCampaignPlatform(plan.platformId)} /><span>{plan.platformName}</span><em>{plan.authorityScore}</em></label>)}
+                </div>
               </div>
             </details>
 
@@ -2844,25 +2884,6 @@ function App() {
               <p className="muted-text">Khuyến nghị: hãy thử với website do bạn quản lý hoặc môi trường thử nghiệm. Không nhập mật khẩu hay mã CAPTCHA vào ghi chú.</p>
             </article>
             )}
-
-            <section className="metrics-grid">
-              <article className="metric-card good">
-                <span>Tài khoản đã lưu</span>
-                <strong>{accounts.length}</strong>
-              </article>
-              <article className="metric-card neutral">
-                <span>Đã xác minh</span>
-                <strong>{accounts.filter((account) => account.status === "verified").length}</strong>
-              </article>
-              <article className="metric-card warning">
-                <span>Cần kiểm tra thủ công</span>
-                <strong>{accounts.filter((account) => account.status === "needs_manual_review").length}</strong>
-              </article>
-              <article className="metric-card neutral">
-                <span>Việc cần xử lý</span>
-                <strong>{automationQueue.length}</strong>
-              </article>
-            </section>
 
             {builderPanels.campaign && (
             <article className="panel campaign-runner-panel">
@@ -2989,14 +3010,15 @@ function App() {
             </article>
             )}
 
-            <article className="panel campaign-workspace-panel">
+            {platformDetailOpen && (
+            <article className="panel campaign-workspace-panel platform-detail-panel">
               <div className="panel-header">
                 <div>
                   <p className="eyebrow">CAMPAIGN EXECUTION WORKSPACE</p>
                   <h2>Workspace thao tác từng platform</h2>
                   <p className="muted-text">Bấm vào từng platform để xem việc cần làm ngay, mở website, lấy endpoint cho extension, theo dõi validation và lưu URL bằng chứng sau khi profile đã lưu.</p>
                 </div>
-                <span className="badge">{activeExecutionPlan?.platformName ?? "Chưa chọn"}</span>
+                <div className="queue-actions"><span className="badge">{activeExecutionPlan?.platformName ?? "Chưa chọn"}</span><button className="secondary-action" type="button" onClick={() => setPlatformDetailOpen(false)}>Đóng chi tiết</button></div>
               </div>
 
               {activeExecutionPlan ? (
@@ -3180,6 +3202,7 @@ function App() {
                 </div>
               )}
             </article>
+            )}
 
             {builderPanels.accounts && (
             <article className="panel saved-account-panel">
