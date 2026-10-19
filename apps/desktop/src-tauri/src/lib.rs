@@ -3000,6 +3000,23 @@ fn get_identities(connection: &Connection) -> Result<Vec<BrowserIdentityProfile>
     Ok(identities)
 }
 
+fn format_storage_gb(bytes: i64) -> String {
+    format!("{:.1} GB", bytes.max(0) as f64 / 1_073_741_824.0)
+}
+
+fn cleanup_identity_cache_files(root: &Path) -> Result<u64, String> {
+    let before = directory_size(root);
+    // Only disposable Chromium caches are removed. Cookies, Local Storage,
+    // IndexedDB and login sessions are deliberately preserved.
+    for relative in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/GrShaderCache", "Default/DawnCache", "ShaderCache", "GrShaderCache", "Crashpad/reports"] {
+        let target = root.join(relative);
+        if target.starts_with(root) && target.exists() {
+            fs::remove_dir_all(&target).map_err(|error| format!("Không dọn được {}: {error}", target.display()))?;
+        }
+    }
+    Ok(before.saturating_sub(directory_size(root)))
+}
+
 #[tauri::command]
 fn get_browser_storage_overview(app_handle: tauri::AppHandle) -> Result<BrowserStorageOverview, String> {
     let connection = open_database(&app_handle)?; ensure_schema(&connection)?;
@@ -3016,8 +3033,21 @@ fn get_browser_storage_overview(app_handle: tauri::AppHandle) -> Result<BrowserS
     let free = fs2::available_space(&app_dir).unwrap_or(0) as i64;
     let capacity = fs2::total_space(&app_dir).unwrap_or(0) as i64;
     let policy = storage_policy(&connection)?;
-    let required_free = policy.min_free_bytes.max(capacity.saturating_mul(policy.min_free_percent) / 100);
-    let (safety_status, message) = if total >= policy.max_total_bytes || free <= required_free { ("blocked", "Đã chạm ngưỡng an toàn. Hãy dọn cache hoặc archive identity trước khi chạy thêm.") } else if total >= policy.max_total_bytes * 9 / 10 || free <= required_free * 2 { ("warning", "Dung lượng đang gần ngưỡng; nên dọn cache các identity không chạy.") } else { ("healthy", "Dung lượng an toàn; cookie và phiên đăng nhập được bảo toàn.") };
+    let percentage_reserve = capacity.saturating_mul(policy.min_free_percent) / 100;
+    let measurement_valid = capacity > 0 && free > 0;
+    // The percentage reserve is advisory. On a large drive, treating 15% as a
+    // hard floor can block a campaign while tens of GB are still available.
+    let (safety_status, message) = if total >= policy.max_total_bytes {
+        ("blocked", format!("Browser profiles đang dùng {}, đã chạm trần {}.", format_storage_gb(total), format_storage_gb(policy.max_total_bytes)))
+    } else if measurement_valid && free <= policy.min_free_bytes {
+        ("blocked", format!("Ổ đĩa chỉ còn {}; cần tối thiểu {} để chạy an toàn.", format_storage_gb(free), format_storage_gb(policy.min_free_bytes)))
+    } else if !measurement_valid {
+        ("warning", "Không đọc được dung lượng ổ đĩa; worker vẫn được phép chạy và sẽ theo dõi profile riêng.".to_string())
+    } else if total >= policy.max_total_bytes * 9 / 10 || free <= percentage_reserve {
+        ("warning", format!("Ổ đĩa còn {}. Worker vẫn chạy; Storage Guard sẽ chỉ dọn cache an toàn khi cần.", format_storage_gb(free)))
+    } else {
+        ("healthy", format!("Dung lượng an toàn: còn {}; cookie và phiên đăng nhập được bảo toàn.", format_storage_gb(free)))
+    };
     Ok(BrowserStorageOverview { policy, identities, total_profile_bytes: total, free_disk_bytes: free, disk_capacity_bytes: capacity, safety_status: safety_status.to_string(), message: message.to_string() })
 }
 
@@ -3039,15 +3069,38 @@ fn cleanup_browser_identity(app_handle: tauri::AppHandle, identity_id: String) -
     let connection = open_database(&app_handle)?; ensure_schema(&connection)?; assert_identity_idle(&connection, &identity_id)?;
     let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Không tìm thấy Browser Identity.".to_string())?;
     let root = PathBuf::from(&identity.profile_directory);
-    let before = directory_size(&root);
-    for relative in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/GrShaderCache", "Default/DawnCache", "ShaderCache", "GrShaderCache", "Crashpad/reports"] {
-        let target = root.join(relative);
-        if target.starts_with(&root) && target.exists() { fs::remove_dir_all(&target).map_err(|e| format!("Không dọn được {}: {e}", target.display()))?; }
-    }
-    let reclaimed = before.saturating_sub(directory_size(&root));
+    let reclaimed = cleanup_identity_cache_files(&root)?;
     connection.execute("UPDATE browser_identity_profiles SET last_cleanup_at=?1,updated_at=?1 WHERE id=?2", params![now_string(),identity_id]).map_err(|e| e.to_string())?;
     let mut overview = get_browser_storage_overview(app_handle)?;
     overview.message = format!("Đã dọn {:.1} MB cache; cookie, Local Storage và phiên đăng nhập vẫn được giữ.", reclaimed as f64 / 1_048_576.0);
+    Ok(overview)
+}
+
+fn prepare_browser_storage_for_launch(app_handle: &tauri::AppHandle) -> Result<BrowserStorageOverview, String> {
+    let mut overview = get_browser_storage_overview(app_handle.clone())?;
+    if overview.safety_status != "blocked" || !overview.policy.auto_cleanup {
+        return Ok(overview);
+    }
+
+    let connection = open_database(app_handle)?;
+    ensure_schema(&connection)?;
+    let running = get_browser_sessions(app_handle.clone())?.into_iter()
+        .filter(|session| session.status == "running")
+        .map(|session| session.identity_id)
+        .collect::<std::collections::HashSet<_>>();
+    let mut reclaimed = 0_u64;
+    for identity in overview.identities.iter().filter(|identity| identity.status != "archived" && !running.contains(&identity.id)) {
+        let root = PathBuf::from(&identity.profile_directory);
+        if root.exists() {
+            reclaimed = reclaimed.saturating_add(cleanup_identity_cache_files(&root)?);
+            connection.execute("UPDATE browser_identity_profiles SET last_cleanup_at=?1,updated_at=?1 WHERE id=?2", params![now_string(), identity.id]).map_err(|error| error.to_string())?;
+        }
+    }
+
+    overview = get_browser_storage_overview(app_handle.clone())?;
+    if reclaimed > 0 {
+        overview.message = format!("Tự dọn {:.1} MB cache an toàn. {}", reclaimed as f64 / 1_048_576.0, overview.message);
+    }
     Ok(overview)
 }
 
@@ -3239,7 +3292,7 @@ fn launch_playwright_browser(app_handle: tauri::AppHandle, request: BrowserLaunc
     ensure_identity(&app_handle, &connection, &identity_id)?;
     let identity = get_identities(&connection)?.into_iter().find(|item| item.id == identity_id).ok_or_else(|| "Browser Identity không tồn tại.".to_string())?;
     restore_identity_if_needed(&connection, &identity)?;
-    let storage = get_browser_storage_overview(app_handle.clone())?;
+    let storage = prepare_browser_storage_for_launch(&app_handle)?;
     if storage.safety_status == "blocked" { return Err(format!("Storage Guard chặn khởi chạy: {}", storage.message)); }
     // Build 301 and earlier could leave SQLite sessions marked running after the
     // launcher/extension process had already disappeared. A newly started native
@@ -3316,7 +3369,7 @@ fn launch_managed_browser(app_handle: tauri::AppHandle, request: BrowserLaunchRe
     ensure_identity(&app_handle, &connection, &identity_id)?;
     let identity = get_identities(&connection)?.into_iter().find(|v| v.id == identity_id).ok_or_else(|| "Browser Identity không tồn tại.".to_string())?;
     restore_identity_if_needed(&connection, &identity)?;
-    let storage = get_browser_storage_overview(app_handle.clone())?;
+    let storage = prepare_browser_storage_for_launch(&app_handle)?;
     if storage.safety_status == "blocked" { return Err(format!("Storage Guard chặn khởi chạy: {}", storage.message)); }
     // A campaign retry reuses the account's persistent Chrome profile. Chromium
     // otherwise forwards the new URL to an older process, which may still have a
@@ -3762,6 +3815,9 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     ensure_column(connection, "gmail_oauth_state", "client_secret_protected", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "gmail_oauth_state", "refresh_token_protected", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(connection, "browser_sessions", "identity_id", "TEXT NOT NULL DEFAULT 'identity-primary'")?;
+
+    // Upgrade the legacy 10 GB profile ceiling for large multi-project use.
+    connection.execute("UPDATE browser_storage_policy SET max_total_bytes=536870912000 WHERE max_total_bytes<=10737418240", []).map_err(|error| error.to_string())?;
 
     // Builds before 293 incorrectly launched OAuth inside Managed Chromium.
     // Retire that legacy database row so it no longer appears as a running
