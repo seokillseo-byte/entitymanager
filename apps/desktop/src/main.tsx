@@ -742,9 +742,7 @@ function App() {
   const activeBrowserSession = useMemo(() => {
     const activeJob = activeProvisioningJobs.find((job) => job.status === "running")
       ?? activeProvisioningJobs.find((job) => job.status === "waiting_user");
-    return browserSessions.find((session) => session.status === "running" && session.jobId === activeJob?.id)
-      ?? browserSessions.find((session) => session.status === "running")
-      ?? null;
+    return browserSessions.find((session) => session.status === "running" && session.jobId === activeJob?.id) ?? null;
   }, [activeProvisioningJobs, browserSessions]);
 
   useEffect(() => {
@@ -1317,6 +1315,23 @@ function App() {
     setCampaignLaunching(true);
     try {
       await startExtensionBridge(true);
+      const resumableCampaign = provisioningCampaigns.find((item) => item.status === "running");
+      const resumableJob = resumableCampaign
+        ? provisioningJobs.find((item) => item.campaignId === resumableCampaign.id && item.status === "waiting_user" && /browser worker|dispatcher|heartbeat/i.test(item.lastMessage))
+        : undefined;
+      if (resumableJob) {
+        const resumed = await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: {
+          ...resumableJob,
+          status: "running",
+          lastMessage: "Đang tự khôi phục Browser Worker và tiếp tục checkpoint đã lưu.",
+          updatedAt: new Date().toISOString()
+        } });
+        setProvisioningJobs((current) => upsertById(current, resumed));
+        const session = await launchBrowserForJob(resumed);
+        setBrowserSessions((current) => upsertById(current, session));
+        setStatusMessage(`${resumed.platformName}: đã khôi phục campaign cũ và Browser Preview đang được chuẩn bị.`);
+        return;
+      }
       const timestamp = new Date().toISOString();
       const campaignId = `provisioning-${Date.now()}`;
       const campaign: ProvisioningCampaignRecord = {
@@ -1375,7 +1390,16 @@ function App() {
         throw new Error("Managed Chromium đã chạy nhưng cửa sổ chưa ở chế độ hiển thị.");
       }
     } catch (error) {
-      setStatusMessage(`Không thể khởi tạo chiến dịch: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Không thể khởi tạo chiến dịch: ${message}`);
+      const activeJob = provisioningJobs.find((item) => item.status === "running");
+      if (activeJob) {
+        const paused = { ...activeJob, status: "waiting_user" as const, lastMessage: `Browser Worker cần khôi phục: ${message}`, attemptCount: activeJob.attemptCount + 1, updatedAt: new Date().toISOString() };
+        try {
+          await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: paused });
+          setProvisioningJobs((current) => upsertById(current, paused));
+        } catch { /* status polling will reconcile the saved campaign */ }
+      }
     } finally {
       setCampaignLaunching(false);
     }
@@ -2026,9 +2050,15 @@ function App() {
             <p className="eyebrow">ENTITY AUTOMATION WORKSPACE</p>
             <h1>{moduleLabels[activeModule]}</h1>
           </div>
-          <button className="primary-action" onClick={() => setActiveModule("Entity Builder")}>
+          <button className="primary-action" disabled={campaignLaunching} onClick={() => {
+            if (activeModule !== "Entity Builder") {
+              setActiveModule("Entity Builder");
+              return;
+            }
+            void startFullProvisioningCampaign();
+          }}>
             <Play size={18} />
-            Tạo Entity
+            {activeModule === "Entity Builder" && campaignLaunching ? "Đang khởi tạo..." : "Tạo Entity"}
           </button>
         </header>
 
