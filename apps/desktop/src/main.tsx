@@ -511,7 +511,12 @@ function App() {
         const job = jobSnapshot.find((item) => item.campaignId === campaign.id && item.status === "running");
         if (!job) return;
         const liveSession = sessionSnapshot.find((item) => item.jobId === job.id && item.status === "running");
-        if (liveSession) return;
+        if (liveSession) {
+          if (job.platformId === "medium") {
+            await advanceMediumProvisioning(job, liveSession);
+          }
+          return;
+        }
 
         setStatusMessage(`${job.platformName}: dispatcher đang khởi chạy Browser Worker cho bước ${job.stage.replace(/_/g, " ")}.`);
         const launched = await launchBrowserForJob(job);
@@ -1201,6 +1206,135 @@ function App() {
     } });
     setBrowserSessions((current) => upsertById(current, session));
     return session;
+  }
+
+  async function runBrowserActions(sessionId: string, actions: Array<Record<string, unknown>>, stopOnError = true) {
+    return invoke<{ results: Array<{ id: string; status: string; value?: string; message: string }>; currentUrl: string }>("execute_browser_actions", {
+      request: { sessionId, actions, stopOnError }
+    });
+  }
+
+  async function saveMediumStage(job: ProvisioningJobRecord, stage: string, status: ProvisioningJobRecord["status"], message: string, evidenceUrl = job.evidenceUrl) {
+    const updated = { ...job, stage, status, lastMessage: message, evidenceUrl, updatedAt: new Date().toISOString() };
+    const saved = await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: updated });
+    setProvisioningJobs((current) => upsertById(current, saved));
+    setStatusMessage(`Medium — ${message}`);
+    return saved;
+  }
+
+  async function advanceMediumProvisioning(job: ProvisioningJobRecord, session: BrowserSessionRecord) {
+    if (job.stage === "signup") {
+      const result = await runBrowserActions(session.id, [
+        { id: "medium-open-email-signup", kind: "click", selectors: ["button:has-text('Sign up with email')", "a:has-text('Sign up with email')", "button:has-text('Sign up with Email')"], timeoutMs: 12000, retries: 1 },
+        { id: "medium-fill-email", kind: "fill", selectors: ["input[type='email']", "input[name='email']", "input[autocomplete='email']"], value: entityProfile.email, timeoutMs: 10000, retries: 1 }
+      ]);
+      const failed = result.results.find((item) => item.status === "failed");
+      if (failed) {
+        await saveMediumStage(job, "signup", "waiting_user", `Không hoàn tất bước đăng ký email (${failed.id}: ${failed.message}). Đã giữ nguyên browser và screenshot để sửa selector.`);
+        return;
+      }
+      const challenge = await runBrowserActions(session.id, [
+        { id: "medium-captcha-check", kind: "waitFor", selectors: ["iframe[src*='recaptcha']", "iframe[src*='hcaptcha']", "[data-sitekey]", "text=/verify you are human/i"], timeoutMs: 1200, optional: true }
+      ], false);
+      if (challenge.results.some((item) => item.id === "medium-captcha-check" && item.status === "completed")) {
+        await saveMediumStage(job, "captcha", "waiting_user", "Medium hiển thị CAPTCHA. Workflow đã dừng trước submit để CAPTCHA adapter xử lý, không làm mất dữ liệu email.");
+        return;
+      }
+      const submitted = await runBrowserActions(session.id, [
+        { id: "medium-submit-email", kind: "click", selectors: ["button:has-text('Continue')", "button:has-text('Create account')", "button[type='submit']"], timeoutMs: 10000, retries: 1 }
+      ]);
+      const submitFailure = submitted.results.find((item) => item.status === "failed");
+      if (submitFailure) {
+        await saveMediumStage(job, "signup", "waiting_user", `Không gửi được form đăng ký (${submitFailure.message}). Browser vẫn giữ email đã điền.`);
+        return;
+      }
+      await saveMediumStage(job, "email_verification", "running", "Đã gửi yêu cầu đăng ký. Gmail worker đang tự tìm magic link Medium.");
+      return;
+    }
+    if (job.stage === "email_verification") {
+      setStatusMessage("Medium — đang chờ Gmail worker tìm email xác minh; không cần thao tác thủ công.");
+      return;
+    }
+    if (job.stage === "login") {
+      const result = await runBrowserActions(session.id, [
+        { id: "medium-open-settings", kind: "navigate", url: "https://medium.com/me/settings", timeoutMs: 45000, retries: 1 },
+        { id: "medium-settings-ready", kind: "waitFor", selectors: ["main", "[role='main']", "body"], timeoutMs: 15000 }
+      ]);
+      const failed = result.results.find((item) => item.status === "failed");
+      if (failed || /signin|register/i.test(result.currentUrl)) {
+        await saveMediumStage(job, "login", "waiting_user", "Magic link đã mở nhưng Medium chưa xác nhận phiên đăng nhập. Worker giữ checkpoint để thử lại an toàn.");
+        return;
+      }
+      await saveMediumStage(job, "profile_text", "running", "Đã xác nhận phiên Medium; đang chuẩn bị điền profile NAP/EEAT.");
+      return;
+    }
+    if (job.stage === "profile_text") {
+      const result = await runBrowserActions(session.id, [
+        { id: "medium-open-profile-editor", kind: "click", selectors: ["button:has-text('Edit profile')", "a:has-text('Edit profile')", "button:has-text('Edit')"], timeoutMs: 8000, retries: 1, optional: true },
+        { id: "medium-fill-name", kind: "fill", selectors: ["input[name='name']", "input[aria-label*='name' i]", "input[placeholder*='name' i]"], value: entityProfile.brandName || entityProfile.authorName, timeoutMs: 10000 },
+        { id: "medium-fill-bio", kind: "fill", selectors: ["textarea[name='bio']", "textarea[aria-label*='bio' i]", "textarea[placeholder*='bio' i]"], value: entityProfile.shortDescription, timeoutMs: 10000 },
+        { id: "medium-fill-website", kind: "fill", selectors: ["input[name*='website' i]", "input[aria-label*='website' i]", "input[placeholder*='website' i]"], value: moneySite.homepageUrl, timeoutMs: 5000, optional: true },
+        { id: "medium-save-profile", kind: "click", selectors: ["button:has-text('Save')", "button:has-text('Update')", "button[type='submit']"], timeoutMs: 10000, retries: 1 }
+      ], false);
+      const requiredFailure = result.results.find((item) => item.status === "failed" && ["medium-fill-name", "medium-fill-bio", "medium-save-profile"].includes(item.id));
+      if (requiredFailure) {
+        await saveMediumStage(job, "profile_text", "waiting_user", `Recipe Medium cần cập nhật tại ${requiredFailure.id}: ${requiredFailure.message}. Text chưa được đánh dấu đã lưu.`);
+        return;
+      }
+      await saveMediumStage(job, "profile_media", "running", "Đã lưu text profile; chuyển sang avatar.");
+      return;
+    }
+    if (job.stage === "profile_media") {
+      const image = entityProfile.avatarImageUrl;
+      if (!image) {
+        await saveMediumStage(job, "evidence", "running", "Entity Profile chưa có avatar; bỏ qua media có ghi chú và tiếp tục lấy evidence.");
+        return;
+      }
+      const result = await runBrowserActions(session.id, [
+        { id: "medium-upload-avatar", kind: "upload", selectors: ["input[type='file'][accept*='image']", "input[type='file']"], value: image, timeoutMs: 20000, retries: 1 },
+        { id: "medium-confirm-avatar", kind: "click", selectors: ["button:has-text('Save')", "button:has-text('Set')", "button:has-text('Upload')", "button:has-text('Update')"], timeoutMs: 10000, optional: true }
+      ]);
+      const failed = result.results.find((item) => item.status === "failed");
+      if (failed) {
+        await saveMediumStage(job, "profile_media", "waiting_user", `Avatar chưa được lưu (${failed.message}). Text profile vẫn được bảo toàn; chỉ tạm dừng riêng bước media.`);
+        return;
+      }
+      await saveMediumStage(job, "evidence", "running", "Avatar đã được upload; đang lấy public profile URL.");
+      return;
+    }
+    if (job.stage === "evidence") {
+      const result = await runBrowserActions(session.id, [
+        { id: "medium-public-profile-link", kind: "extract", selectors: ["a[href^='/@']", "a[href*='medium.com/@']"], timeoutMs: 12000, retries: 1 }
+      ]);
+      const extracted = result.results.find((item) => item.id === "medium-public-profile-link" && item.status === "completed")?.value || "";
+      const evidenceUrl = extracted.startsWith("http") ? extracted : extracted.startsWith("/") ? `https://medium.com${extracted}` : "";
+      if (!evidenceUrl) {
+        await saveMediumStage(job, "evidence", "waiting_user", "Không xác định được public Medium URL; chưa đưa URL mơ hồ vào indexing queue.");
+        return;
+      }
+      const queue = await invoke<AutomationQueueItem[]>("get_automation_queue");
+      const submitItem = queue.find((item) => item.accountId === job.accountId && item.gateType === "submit_verify" && ["queued", "ready", "running"].includes(item.status));
+      if (!submitItem) {
+        await saveMediumStage(job, "evidence", "waiting_user", "Đã lấy public URL nhưng không tìm thấy submit/verify queue item để xác nhận account; chưa đưa vào indexing.", evidenceUrl);
+        return;
+      }
+      const completion = await invoke<AccountSubmitVerifyResult>("complete_account_submit_verify", { request: {
+        queueId: submitItem.id, accountId: job.accountId, success: true, evidenceUrl,
+        message: "Medium provisioned by Browser Action Engine."
+      } });
+      setAutomationQueue((current) => upsertById(current, completion.queueItem));
+      setAccounts((current) => upsertById(current, completion.account));
+      const checkpoint = await invoke<{ job: ProvisioningJobRecord; nextJob?: ProvisioningJobRecord }>("update_provisioning_checkpoint", { request: {
+        platformId: "medium", stage: "completed", status: "completed",
+        message: "Hoàn tất Medium: profile đã lưu, evidence đã ghi và URL đã đưa vào indexing queue.", evidenceUrl
+      } });
+      setProvisioningJobs((current) => {
+        let next = upsertById(current, checkpoint.job);
+        if (checkpoint.nextJob) next = upsertById(next, checkpoint.nextJob);
+        return next;
+      });
+      setStatusMessage("Medium — hoàn tất account, profile, evidence và indexing queue.");
+    }
   }
 
   async function stopBrowser(sessionId: string) {

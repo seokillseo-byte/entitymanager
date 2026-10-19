@@ -1,4 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 
 const args = new Map<string, string>();
@@ -10,7 +13,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
 const port = Number(args.get("port") || "0");
 const token = args.get("token") || "";
 const executablePath = args.get("chromium") || "";
-const protocolVersion = "1.0";
+const protocolVersion = "1.1";
 const startedAt = new Date().toISOString();
 if (!port || !token || !executablePath) {
   process.stderr.write("Required arguments: --port, --token, --chromium\n");
@@ -22,10 +25,28 @@ type WorkerSession = {
   status: "ready" | "running" | "failed" | "stopped";
   visible: boolean; currentUrl: string; title: string;
   lastMessage: string; lastHeartbeatAt: string;
+  currentStep: string; paused: boolean; actionLog: ActionResult[];
 };
 type StartSessionRequest = {
   sessionId: string; profileDirectory: string; url: string; visible: boolean;
   proxy?: { server: string; username?: string; password?: string };
+};
+type BrowserAction = {
+  id: string;
+  kind: "navigate" | "click" | "fill" | "upload" | "waitFor" | "extract" | "checkpoint";
+  selectors?: string[];
+  value?: string;
+  url?: string;
+  timeoutMs?: number;
+  retries?: number;
+  optional?: boolean;
+};
+type BrowserActionBatch = { actions: BrowserAction[]; stopOnError?: boolean };
+type ActionResult = {
+  id: string; kind: BrowserAction["kind"];
+  status: "completed" | "skipped" | "failed" | "needs_attention";
+  selector: string; value: string; message: string;
+  startedAt: string; completedAt: string;
 };
 const sessions = new Map<string, WorkerSession>();
 
@@ -40,7 +61,107 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 }
 function publicSession(session: WorkerSession) {
   return { id: session.id, status: session.status, visible: session.visible, currentUrl: session.currentUrl,
-    title: session.title, lastMessage: session.lastMessage, lastHeartbeatAt: session.lastHeartbeatAt };
+    title: session.title, lastMessage: session.lastMessage, lastHeartbeatAt: session.lastHeartbeatAt,
+    currentStep: session.currentStep, paused: session.paused, actionLog: session.actionLog.slice(-25) };
+}
+
+async function firstUsableSelector(page: Page, selectors: string[], timeoutMs: number, allowHidden = false): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const selector of selectors) {
+      const locator = page.locator(selector).first();
+      if (await locator.count().catch(() => 0) && (allowHidden || await locator.isVisible().catch(() => false))) return selector;
+    }
+    await page.waitForTimeout(250);
+  }
+  return null;
+}
+
+async function executeAction(session: WorkerSession, action: BrowserAction): Promise<ActionResult> {
+  const startedAt = new Date().toISOString();
+  const timeoutMs = Math.min(Math.max(action.timeoutMs || 8_000, 500), 45_000);
+  const attempts = Math.min(Math.max((action.retries || 0) + 1, 1), 4);
+  let lastError = "";
+  session.currentStep = action.id;
+  session.lastMessage = `Đang chạy ${action.id}.`;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      if (session.paused) throw new Error("session_paused");
+      let selector = "";
+      let value = "";
+      if (action.kind === "navigate") {
+        if (!action.url || !/^https?:\/\//i.test(action.url)) throw new Error("invalid_navigation_url");
+        await session.page.goto(action.url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+        value = session.page.url();
+      } else if (action.kind === "checkpoint") {
+        value = session.page.url();
+      } else {
+        selector = await firstUsableSelector(session.page, action.selectors || [], timeoutMs, action.kind === "upload") || "";
+        if (!selector) throw new Error("selector_not_found");
+        const locator = session.page.locator(selector).first();
+        if (action.kind === "click") {
+          await locator.click({ timeout: timeoutMs });
+        } else if (action.kind === "fill") {
+          await locator.fill(action.value || "", { timeout: timeoutMs });
+        } else if (action.kind === "upload") {
+          const source = action.value || "";
+          let uploadPath = source;
+          if (source.startsWith("data:")) {
+            const match = source.match(/^data:([^;,]+)?;base64,(.+)$/);
+            if (!match) throw new Error("invalid_data_image");
+            const bytes = Buffer.from(match[2], "base64");
+            if (bytes.length > 10 * 1024 * 1024) throw new Error("image_too_large");
+            uploadPath = join(tmpdir(), `entitymanager-${session.id}-${Date.now()}.png`);
+            await writeFile(uploadPath, bytes);
+          } else if (/^https?:\/\//i.test(source)) {
+            const response = await fetch(source, { signal: AbortSignal.timeout(timeoutMs) });
+            if (!response.ok) throw new Error(`image_fetch_failed_${response.status}`);
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (bytes.length > 10 * 1024 * 1024) throw new Error("image_too_large");
+            const contentType = response.headers.get("content-type") || "image/png";
+            const extension = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
+            uploadPath = join(tmpdir(), `entitymanager-${session.id}-${Date.now()}.${extension}`);
+            await writeFile(uploadPath, bytes);
+          }
+          if (!uploadPath) throw new Error("image_source_missing");
+          await locator.setInputFiles(uploadPath, { timeout: timeoutMs });
+        } else if (action.kind === "waitFor") {
+          await locator.waitFor({ state: "visible", timeout: timeoutMs });
+        } else if (action.kind === "extract") {
+          value = await locator.getAttribute("href") || await locator.inputValue().catch(() => "") || (await locator.textContent())?.trim() || "";
+        }
+      }
+      session.currentUrl = session.page.url();
+      session.title = await session.page.title().catch(() => session.title);
+      session.lastHeartbeatAt = new Date().toISOString();
+      return { id: action.id, kind: action.kind, status: "completed", selector, value,
+        message: attempt > 1 ? `Hoàn tất sau ${attempt} lần thử.` : "Hoàn tất.", startedAt, completedAt: session.lastHeartbeatAt };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (attempt < attempts) await session.page.waitForTimeout(500 * attempt);
+    }
+  }
+  const completedAt = new Date().toISOString();
+  return { id: action.id, kind: action.kind, status: action.optional ? "skipped" : "failed", selector: "", value: "",
+    message: lastError || "action_failed", startedAt, completedAt };
+}
+
+async function executeActions(sessionId: string, batch: BrowserActionBatch) {
+  const session = sessions.get(sessionId);
+  if (!session || session.status !== "running") throw new Error("session_not_running");
+  if (!Array.isArray(batch.actions) || batch.actions.length > 40) throw new Error("invalid_action_batch");
+  const results: ActionResult[] = [];
+  for (const action of batch.actions) {
+    const result = await executeAction(session, action);
+    results.push(result);
+    session.actionLog.push(result);
+    if (session.actionLog.length > 100) session.actionLog.splice(0, session.actionLog.length - 100);
+    session.lastMessage = `${action.id}: ${result.message}`;
+    if (result.status === "failed" && batch.stopOnError !== false) break;
+  }
+  session.currentStep = "";
+  session.lastHeartbeatAt = new Date().toISOString();
+  return { session: publicSession(session), results, currentUrl: session.page.url() };
 }
 
 async function startSession(input: StartSessionRequest) {
@@ -55,7 +176,8 @@ async function startSession(input: StartSessionRequest) {
   });
   const page = context.pages()[0] || await context.newPage();
   const session: WorkerSession = { id: input.sessionId, context, page, status: "ready", visible: input.visible,
-    currentUrl: "about:blank", title: "", lastMessage: "Playwright persistent context is ready.", lastHeartbeatAt: new Date().toISOString() };
+    currentUrl: "about:blank", title: "", lastMessage: "Playwright persistent context is ready.", lastHeartbeatAt: new Date().toISOString(),
+    currentStep: "", paused: false, actionLog: [] };
   sessions.set(input.sessionId, session);
   page.on("framenavigated", async (frame) => {
     if (frame !== page.mainFrame()) return;
@@ -99,6 +221,19 @@ const server = createServer(async (request, response) => {
       if (!session || session.status !== "running") return json(response, 404, { error: "session_not_running" });
       const image = await session.page.screenshot({ type: "jpeg", quality: 55 }); session.lastHeartbeatAt = new Date().toISOString();
       return json(response, 200, { sessionId: session.id, capturedAt: session.lastHeartbeatAt, imageBase64: image.toString("base64") });
+    }
+    const actions = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/actions$/);
+    if (request.method === "POST" && actions) {
+      return json(response, 200, await executeActions(decodeURIComponent(actions[1]), await readJson<BrowserActionBatch>(request)));
+    }
+    const pause = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/(pause|resume)$/);
+    if (request.method === "POST" && pause) {
+      const session = sessions.get(decodeURIComponent(pause[1]));
+      if (!session || session.status !== "running") return json(response, 404, { error: "session_not_running" });
+      session.paused = pause[2] === "pause";
+      session.lastMessage = session.paused ? "Automation paused." : "Automation resumed.";
+      session.lastHeartbeatAt = new Date().toISOString();
+      return json(response, 200, publicSession(session));
     }
     const stop = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/stop$/);
     if (request.method === "POST" && stop) return json(response, 200, await stopSession(decodeURIComponent(stop[1])));

@@ -485,6 +485,17 @@ struct BrowserWorkerPreviewResponse {
     image_base64: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserActionBatchRequest {
+    session_id: String,
+    actions: serde_json::Value,
+    #[serde(default = "default_stop_on_error")]
+    stop_on_error: bool,
+}
+
+fn default_stop_on_error() -> bool { true }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BrowserIdentityProfile {
@@ -1604,6 +1615,11 @@ fn update_provisioning_checkpoint_record(
         }
     }
     Ok(ProvisioningCheckpointResult { job, next_job })
+}
+
+#[tauri::command]
+fn update_provisioning_checkpoint(app_handle: tauri::AppHandle, request: ProvisioningCheckpointRequest) -> Result<ProvisioningCheckpointResult, String> {
+    update_provisioning_checkpoint_record(&app_handle, request)
 }
 
 #[tauri::command]
@@ -2836,7 +2852,7 @@ fn poll_medium_verification(app_handle: &tauri::AppHandle) -> Result<String, Str
                 "SELECT id FROM browser_sessions WHERE job_id=?1 AND status='running' ORDER BY updated_at DESC LIMIT 1",
                 params![job.0], |row| row.get(0),
             ).map_err(|_| "Đã tìm thấy link Medium nhưng Managed Browser session không còn chạy.".to_string())?;
-            open_managed_browser_url(app_handle.clone(), session_id, link)?;
+            navigate_playwright_session(app_handle, &session_id, &link)?;
             let timestamp = now_string();
             connection.execute("UPDATE provisioning_jobs SET stage='login',status='running',last_message='Gmail OAuth đã tìm thấy và mở link xác minh Medium.',updated_at=?1 WHERE id=?2", params![timestamp,job.0]).map_err(|error| error.to_string())?;
             connection.execute("UPDATE gmail_oauth_state SET last_message='Đã mở link xác minh Medium trong Managed Browser.',last_checked_at=?1,updated_at=?1 WHERE id=1", params![timestamp]).map_err(|error| error.to_string())?;
@@ -3368,6 +3384,55 @@ fn get_browser_worker_preview(app_handle: tauri::AppHandle, session_id: String) 
     Ok(format!("data:image/jpeg;base64,{}", preview.image_base64))
 }
 
+fn execute_browser_actions_record(app_handle: &tauri::AppHandle, request: &BrowserActionBatchRequest) -> Result<serde_json::Value, String> {
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock()
+        .map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone()
+        .ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
+    if !request.actions.is_array() { return Err("Danh sách browser actions không hợp lệ.".to_string()); }
+    let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|error| error.to_string())?
+        .post(format!("http://127.0.0.1:{}/v1/sessions/{}/actions", runtime.port, request.session_id))
+        .bearer_auth(&runtime.token)
+        .json(&json!({ "actions": request.actions, "stopOnError": request.stop_on_error }))
+        .send().map_err(|error| format!("Không gửi được action tới Browser Worker: {error}"))?
+        .error_for_status().map_err(|error| format!("Browser Worker từ chối action: {error}"))?
+        .json::<serde_json::Value>().map_err(|error| error.to_string())?;
+    let timestamp = now_string();
+    let current_url = response["currentUrl"].as_str().unwrap_or_default();
+    let last_message = response["session"]["lastMessage"].as_str().unwrap_or("Browser action batch hoàn tất.");
+    let connection = open_database(app_handle)?; ensure_schema(&connection)?;
+    connection.execute("UPDATE browser_sessions SET current_url=?1,last_message=?2,updated_at=?3 WHERE id=?4",
+        params![current_url,last_message,timestamp,request.session_id]).map_err(|error| error.to_string())?;
+    if let Some(results) = response["results"].as_array() {
+        for result in results {
+            connection.execute(
+                "INSERT INTO browser_action_logs (id,session_id,action_id,action_type,status,selector,message,started_at,completed_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![format!("action-{}-{}", rand::thread_rng().sample_iter(&Alphanumeric).take(16).map(char::from).collect::<String>(), result["id"].as_str().unwrap_or("step")),request.session_id,
+                    result["id"].as_str().unwrap_or_default(),result["kind"].as_str().unwrap_or_default(),
+                    result["status"].as_str().unwrap_or_default(),result["selector"].as_str().unwrap_or_default(),
+                    result["message"].as_str().unwrap_or_default(),result["startedAt"].as_str().unwrap_or(&timestamp),
+                    result["completedAt"].as_str().unwrap_or(&timestamp)]
+            ).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(response)
+}
+
+fn navigate_playwright_session(app_handle: &tauri::AppHandle, session_id: &str, url: &str) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("Chỉ cho phép điều hướng tới URL http/https.".to_string()); }
+    let request = BrowserActionBatchRequest { session_id: session_id.to_string(), actions: json!([{
+        "id": "navigate-verification-link", "kind": "navigate", "url": url, "timeoutMs": 45000, "retries": 1
+    }]), stop_on_error: true };
+    let result = execute_browser_actions_record(app_handle, &request)?;
+    if result["results"][0]["status"] != "completed" { return Err(format!("Không mở được link trong Playwright session: {}", result["results"][0]["message"].as_str().unwrap_or("unknown_error"))); }
+    Ok(())
+}
+
+#[tauri::command]
+fn execute_browser_actions(app_handle: tauri::AppHandle, request: BrowserActionBatchRequest) -> Result<serde_json::Value, String> {
+    execute_browser_actions_record(&app_handle, &request)
+}
+
 #[tauri::command]
 fn stop_playwright_browser(app_handle: tauri::AppHandle, session_id: String) -> Result<BrowserSessionRecord, String> {
     let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone().ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
@@ -3772,6 +3837,19 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_browser_sessions_job ON browser_sessions(job_id, updated_at);
+
+            CREATE TABLE IF NOT EXISTS browser_action_logs (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                action_id TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                selector TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_browser_action_logs_session ON browser_action_logs(session_id, completed_at DESC);
 
             CREATE TABLE IF NOT EXISTS browser_identity_profiles (
                 id TEXT PRIMARY KEY,
@@ -5803,6 +5881,7 @@ pub fn run() {
             save_provisioning_campaign,
             get_provisioning_jobs,
             save_provisioning_job,
+            update_provisioning_checkpoint,
             get_workflow_runs,
             save_workflow_run,
             get_automation_queue,
@@ -5825,6 +5904,7 @@ pub fn run() {
             get_browser_worker_status,
             launch_playwright_browser,
             get_browser_worker_preview,
+            execute_browser_actions,
             stop_playwright_browser,
             launch_managed_browser,
             open_managed_browser_url,
