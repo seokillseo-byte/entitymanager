@@ -268,6 +268,17 @@ const server = createServer(async (request, response) => {
       session.lastHeartbeatAt = new Date().toISOString();
       return json(response, 200, publicSession(session));
     }
+    const input = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/input$/);
+    if (request.method === "POST" && input) {
+      const session = sessions.get(decodeURIComponent(input[1]));
+      if (!session || session.status !== "running") return json(response, 404, { error: "session_not_running" });
+      const event = await readJson<{ kind: "click"; x: number; y: number }>(request);
+      if (event.kind !== "click" || !Number.isFinite(event.x) || !Number.isFinite(event.y)) return json(response, 400, { error: "invalid_input" });
+      await session.page.mouse.click(Math.max(0, event.x), Math.max(0, event.y));
+      session.lastMessage = `Manual click at ${Math.round(event.x)},${Math.round(event.y)}.`;
+      session.lastHeartbeatAt = new Date().toISOString();
+      return json(response, 200, publicSession(session));
+    }
     const stop = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/stop$/);
     if (request.method === "POST" && stop) return json(response, 200, await stopSession(decodeURIComponent(stop[1])));
     return json(response, 404, { error: "not_found" });

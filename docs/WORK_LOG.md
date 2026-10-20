@@ -326,5 +326,15 @@ Validate Phase 1.16 in the packaged `.exe`: edit a platform recipe in Desktop, f
 - Added stale Build 301 launcher-session reconciliation before the one-writer-per-identity guard.
 - Routed Create All Entities and the existing resume action through the same Playwright launch command.
 - Added a minimal Browser Control Center status card, heartbeat, active session count, and per-session preview.
+
+# 2026-10-20 — Phase 1.39D.1 Unified Multi-Worker Browser Workspace
+
+- Replaced the inline Live Medium popup with a dedicated Tauri Browser Workspace window.
+- Added 1–6 thread selection and responsive 1/2/4/6-slot layouts in one window.
+- Browser Workspace opens automatically when a campaign starts and can be reopened from Create Entity.
+- Added authenticated worker pause/resume and direct click forwarding from a managed browser surface.
+- Added explicit empty worker slots instead of pretending inactive platforms are running.
+- Closing the Browser Workspace does not terminate browser sessions or the campaign.
+- Windows CI must validate the Rust/Tauri window builder before release.
 - Added an authenticated Browser Worker protocol contract test and Windows CI packaging steps.
 - Pending: Windows Rust/Tauri compilation and packaged worker smoke test through PR CI.

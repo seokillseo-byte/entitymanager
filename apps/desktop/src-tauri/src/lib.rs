@@ -29,6 +29,27 @@ static BROWSER_WORKER_RUNTIME: OnceLock<Mutex<Option<BrowserWorkerRuntimeState>>
 const GMAIL_CLIENT_SECRET_KEY: &str = "gmail_oauth_client_secret";
 const GMAIL_REFRESH_TOKEN_KEY: &str = "gmail_oauth_refresh_token";
 
+#[tauri::command]
+fn open_browser_workspace(app_handle: tauri::AppHandle, slots: u8) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("browser-workspace") {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let safe_slots = slots.clamp(1, 6);
+    let url = tauri::WebviewUrl::App(format!("index.html?view=browser-workspace&slots={safe_slots}").into());
+    tauri::WebviewWindowBuilder::new(&app_handle, "browser-workspace", url)
+        .title("EntityManager — Browser Workspace")
+        .inner_size(1500.0, 920.0)
+        .min_inner_size(980.0, 680.0)
+        .resizable(true)
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GmailOAuthStatus {
@@ -3437,6 +3458,26 @@ fn get_browser_worker_preview(app_handle: tauri::AppHandle, session_id: String) 
     Ok(format!("data:image/jpeg;base64,{}", preview.image_base64))
 }
 
+#[tauri::command]
+fn control_browser_worker_session(app_handle: tauri::AppHandle, session_id: String, action: String) -> Result<(), String> {
+    if action != "pause" && action != "resume" { return Err("Browser control action không hợp lệ.".to_string()); }
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone().ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
+    reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|error| error.to_string())?
+        .post(format!("http://127.0.0.1:{}/v1/sessions/{}/{}", runtime.port, session_id, action)).bearer_auth(&runtime.token)
+        .send().map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn send_browser_worker_click(app_handle: tauri::AppHandle, session_id: String, x: f64, y: f64) -> Result<(), String> {
+    let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone().ok_or_else(|| "Browser Worker chưa chạy.".to_string())?;
+    reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|error| error.to_string())?
+        .post(format!("http://127.0.0.1:{}/v1/sessions/{}/input", runtime.port, session_id)).bearer_auth(&runtime.token)
+        .json(&json!({ "kind": "click", "x": x, "y": y }))
+        .send().map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn execute_browser_actions_record(app_handle: &tauri::AppHandle, request: &BrowserActionBatchRequest) -> Result<serde_json::Value, String> {
     let runtime = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock()
         .map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone()
@@ -5893,6 +5934,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_health,
+            open_browser_workspace,
             get_indexing_queue_count,
             open_external_url,
             open_extension_download,
@@ -5959,6 +6001,8 @@ pub fn run() {
             get_browser_worker_status,
             launch_playwright_browser,
             get_browser_worker_preview,
+            control_browser_worker_session,
+            send_browser_worker_click,
             execute_browser_actions,
             stop_playwright_browser,
             launch_managed_browser,

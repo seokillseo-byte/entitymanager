@@ -10,6 +10,7 @@ import { createWorkflowTask, WORKFLOW_STATUSES } from "@entitymanager/workflow";
 import { calculateSelectorHealthTrends, normalizeDryRunHistoryRecord } from "./selectorHealth.mjs";
 import { buildDryRunDiagnosticReport } from "./dryRunDiagnostics.mjs";
 import { validateDryRunDiagnosticReport } from "./validateDryRunDiagnosticReport.mjs";
+import BrowserWorkspace from "./BrowserWorkspace";
 import "./styles.css";
 
 const primaryNavigation: Array<{ module: EntityModule; label: string }> = [
@@ -428,10 +429,10 @@ function App() {
   const [storageBusy, setStorageBusy] = useState("");
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [browserVisible, setBrowserVisible] = useState(false);
+  const [workerConcurrency, setWorkerConcurrency] = useState(1);
   const [browserWorker, setBrowserWorker] = useState<BrowserWorkerStatus | null>(null);
   const [browserPreviews, setBrowserPreviews] = useState<Record<string, string>>({});
   const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [platformDetailOpen, setPlatformDetailOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
   const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
@@ -1620,7 +1621,7 @@ function App() {
       setProvisioningCampaigns((current) => [savedCampaign, ...current]);
       setProvisioningJobs((current) => [...jobs, ...current.filter((item) => item.campaignId !== campaignId)]);
       setBrowserPreviews({});
-      setPreviewExpanded(true);
+      await openBrowserWorkspace(workerConcurrency);
       const first = jobs.find((job) => job.status === "running");
       if (!first) {
         setStatusMessage("Các platform đã chọn chưa có Playwright adapter được chứng nhận. Tool đã giữ trạng thái chờ và không giả lập kết quả.");
@@ -1644,6 +1645,14 @@ function App() {
       }
     } finally {
       setCampaignLaunching(false);
+    }
+  }
+
+  async function openBrowserWorkspace(slots = workerConcurrency) {
+    try {
+      await invoke("open_browser_workspace", { slots: Math.max(1, Math.min(6, slots)) });
+    } catch (error) {
+      setStatusMessage(`Không mở được Browser Workspace: ${String(error)}`);
     }
   }
 
@@ -3047,7 +3056,7 @@ function App() {
                   <span>Entity Profile</span><strong>{entityProfile.brandName || "Chưa thiết lập"}</strong>
                 </button>
                 <div className="setup-field"><span>Platform đã chọn</span><strong>{campaignPlans.length} platform</strong></div>
-                <div className="setup-field"><span>Số luồng</span><strong>1 luồng ổn định</strong></div>
+                <label className="setup-field"><span>Số luồng</span><select value={workerConcurrency} onChange={(event) => setWorkerConcurrency(Number(event.target.value))}>{[1,2,3,4,5,6].map((value) => <option value={value} key={value}>{value} luồng</option>)}</select></label>
                 <label className="setup-field">
                   <span>Proxy strategy</span>
                   <select value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
@@ -3059,7 +3068,7 @@ function App() {
                 <label className="setup-field">
                   <span>Browser</span>
                   <select value={browserVisible ? "manual" : "preview"} onChange={(event) => setBrowserVisible(event.target.value === "manual")}>
-                    <option value="preview">Theo dõi trong Tool</option>
+                    <option value="preview">Browser Workspace riêng</option>
                     <option value="manual">Mở cửa sổ khi cần</option>
                   </select>
                 </label>
@@ -3086,34 +3095,13 @@ function App() {
               </article>
 
               <article className="panel worker-health-card browser-preview-card">
-                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Preview · LIVE</span><strong>{activeBrowserSession ? activeBrowserSession.platformId : browserWorker?.status === "ready" ? "Worker sẵn sàng" : "Chưa có phiên chạy"}</strong></div></div>
+                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>BROWSER WORKSPACE</span><strong>{browserWorker?.status === "ready" ? `${browserWorker.activeSessions} phiên đang được quản lý` : "Sẵn sàng mở khi campaign chạy"}</strong></div></div>
                 {activeBrowserJob && <div className="preview-work-status"><b>{activeBrowserJob.stage.replace(/_/g, " ")}</b><span>{activeBrowserJob.lastMessage}</span><small>Cập nhật {new Date(activeBrowserJob.updatedAt).toLocaleTimeString("vi-VN")}</small></div>}
-                {activeBrowserSession ? (
-                  <>
-                    <button className="preview-stage" type="button" onClick={() => setPreviewExpanded(true)} title="Bấm để xem preview lớn">
-                      {browserPreviews[activeBrowserSession.id]
-                        ? <img src={browserPreviews[activeBrowserSession.id]} alt={`Preview ${activeBrowserSession.platformId}`} />
-                        : <div className="preview-placeholder"><span>{previewBusy ? "Đang lấy ảnh preview..." : "Chưa có ảnh preview"}</span><small>Ảnh sẽ tự cập nhật mỗi 5 giây.</small></div>}
-                    </button>
-                    <div className="preview-actions">
-                      <button className="secondary-action" type="button" disabled={previewBusy} onClick={() => void refreshBrowserPreview(activeBrowserSession.id)}>{previewBusy ? "Đang tải..." : "Cập nhật preview"}</button>
-                      <button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(activeBrowserSession.id, true)}>Điều khiển thủ công</button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="preview-placeholder compact"><span>Không có browser session đang chạy.</span><small>{activeProvisioningJobs.find((job) => job.status === "waiting_user")?.lastMessage || browserWorker?.message || "Bấm Tạo toàn bộ Entity để khởi động worker."}</small></div>
-                )}
-                <small>{browserWorker?.heartbeatAt ? `Heartbeat ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")} · ${browserWorker.activeSessions} phiên` : "Chưa có heartbeat"}</small>
+                <p className="platform-notes">Toàn bộ browser được gom trong một cửa sổ riêng và tự chia lưới theo số luồng. Không mở nhiều cửa sổ Chromium rời trên Desktop.</p>
+                <button className="primary-action" type="button" onClick={() => void openBrowserWorkspace()}>Mở Browser Workspace</button>
+                <small>{browserWorker?.heartbeatAt ? `Heartbeat ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")}` : "Chưa có heartbeat"}</small>
               </article>
             </section>
-
-            {previewExpanded && activeBrowserSession && <div className="preview-modal" role="dialog" aria-modal="true" aria-label="Browser Preview trực tiếp">
-              <div className="preview-modal-card">
-                <div className="preview-modal-header"><div><span>LIVE · {activeBrowserSession.platformId}</span><strong>{activeBrowserJob?.stage.replace(/_/g, " ") || "browser"}</strong></div><button type="button" onClick={() => setPreviewExpanded(false)}>Đóng</button></div>
-                {browserPreviews[activeBrowserSession.id] ? <img src={browserPreviews[activeBrowserSession.id]} alt={`Live preview ${activeBrowserSession.platformId}`} /> : <div className="preview-placeholder"><span>Đang chờ ảnh từ worker...</span></div>}
-                <div className="preview-modal-status"><b>{activeBrowserJob?.lastMessage || activeBrowserSession.lastMessage}</b><span>Heartbeat: {browserWorker?.heartbeatAt ? new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN") : "đang chờ"}</span></div>
-              </div>
-            </div>}
 
             <article className="panel platform-live-panel">
               <div className="panel-header"><div><p className="eyebrow">PLATFORM ĐANG XỬ LÝ</p><h2>Trạng thái theo thời gian thực</h2></div><span className="badge">{campaignPlans.length} platform</span></div>
@@ -4087,8 +4075,10 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}...${token.slice(-6)}`;
 }
 
+const isBrowserWorkspace = new URLSearchParams(window.location.search).get("view") === "browser-workspace";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    {isBrowserWorkspace ? <BrowserWorkspace /> : <App />}
   </React.StrictMode>
 );
