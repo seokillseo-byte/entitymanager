@@ -1852,8 +1852,22 @@ textarea {
 .worker-health-card p { margin:14px 0 8px; color:#475569; font-size:13px; }
 .worker-health-card small { color:#94a3b8; }
 .browser-preview-card { justify-content:flex-start; min-height:220px; }
-.preview-stage { display:grid; place-items:center; min-height:135px; margin:14px 0 10px; overflow:hidden; border-radius:9px; background:#0f172a; }
+.preview-stage { display:grid; width:100%; place-items:center; min-height:170px; margin:14px 0 10px; padding:0; overflow:hidden; border:0; border-radius:9px; background:#0f172a; cursor:zoom-in; }
 .preview-stage img { display:block; width:100%; max-height:190px; object-fit:cover; object-position:top; }
+.preview-work-status { display:grid; gap:4px; margin-top:12px; padding:10px 12px; border-radius:9px; background:#f0fdfa; color:#134e4a; }
+.preview-work-status b { text-transform:capitalize; }
+.preview-work-status span { font-size:12px; line-height:1.45; }
+.preview-work-status small { color:#64748b; }
+.preview-modal { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(2,6,23,.78); backdrop-filter:blur(5px); }
+.preview-modal-card { width:min(1180px,96vw); max-height:94vh; display:grid; gap:12px; padding:16px; border-radius:16px; background:#fff; box-shadow:0 24px 80px rgba(0,0,0,.42); }
+.preview-modal-header,.preview-modal-status { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.preview-modal-header div { display:grid; gap:2px; }
+.preview-modal-header span { color:#0f766e; font-size:12px; font-weight:800; letter-spacing:.08em; }
+.preview-modal-header strong { font-size:18px; text-transform:capitalize; }
+.preview-modal-header button { border:0; border-radius:9px; padding:9px 14px; background:#e2e8f0; font-weight:700; cursor:pointer; }
+.preview-modal-card > img { width:100%; min-height:420px; max-height:72vh; object-fit:contain; object-position:top; border-radius:10px; background:#0f172a; }
+.preview-modal-status { align-items:flex-start; font-size:13px; color:#334155; }
+.preview-modal-status b { max-width:75%; }
 .preview-placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:120px; padding:16px; color:#cbd5e1; text-align:center; }
 .preview-placeholder.compact { min-height:88px; margin:14px 0; border-radius:9px; background:#f8fafc; color:#475569; }
 .preview-placeholder small { color:#94a3b8; max-width:100%; max-height:5.5rem; overflow:auto; overflow-wrap:anywhere; }

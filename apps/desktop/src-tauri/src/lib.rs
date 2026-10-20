@@ -1488,6 +1488,38 @@ fn save_provisioning_campaign(app_handle: tauri::AppHandle, campaign: Provisioni
 }
 
 #[tauri::command]
+fn prepare_new_provisioning_campaign(app_handle: tauri::AppHandle) -> Result<i64, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    let session_ids = {
+        let mut statement = connection.prepare("SELECT id FROM browser_sessions WHERE status='running'").map_err(|error| error.to_string())?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?
+    };
+    if let Some(runtime) = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().ok().and_then(|guard| guard.clone()) {
+        let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(8)).build().map_err(|error| error.to_string())?;
+        for session_id in &session_ids {
+            let _ = client.post(format!("http://127.0.0.1:{}/v1/sessions/{}/stop", runtime.port, session_id)).bearer_auth(&runtime.token).send();
+        }
+    }
+    let affected = connection.execute(
+        "UPDATE provisioning_campaigns SET status='cancelled',updated_at=?1 WHERE status='running'",
+        params![timestamp],
+    ).map_err(|error| error.to_string())? as i64;
+    connection.execute(
+        "UPDATE provisioning_jobs SET status='skipped',last_message='Campaign cũ đã được đóng khi người dùng bắt đầu campaign mới.',updated_at=?1
+         WHERE status IN ('running','queued','waiting_user') AND campaign_id IN (SELECT id FROM provisioning_campaigns WHERE status='cancelled')",
+        params![timestamp],
+    ).map_err(|error| error.to_string())?;
+    connection.execute(
+        "UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Phiên cũ đã được đóng trước campaign mới.',updated_at=?1 WHERE status='running'",
+        params![timestamp],
+    ).map_err(|error| error.to_string())?;
+    Ok(affected)
+}
+
+#[tauri::command]
 fn get_provisioning_jobs(app_handle: tauri::AppHandle) -> Result<Vec<ProvisioningJobRecord>, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -5879,6 +5911,7 @@ pub fn run() {
             save_account,
             get_provisioning_campaigns,
             save_provisioning_campaign,
+            prepare_new_provisioning_campaign,
             get_provisioning_jobs,
             save_provisioning_job,
             update_provisioning_checkpoint,

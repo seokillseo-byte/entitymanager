@@ -431,6 +431,7 @@ function App() {
   const [browserWorker, setBrowserWorker] = useState<BrowserWorkerStatus | null>(null);
   const [browserPreviews, setBrowserPreviews] = useState<Record<string, string>>({});
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [platformDetailOpen, setPlatformDetailOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
   const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
@@ -734,7 +735,7 @@ function App() {
     return selected.length ? selected : accountCreationPlan.slice(0, 4);
   }, [accountCreationPlan, campaignPlatformIds]);
 
-  const activeProvisioningCampaign = provisioningCampaigns[0] ?? null;
+  const activeProvisioningCampaign = provisioningCampaigns.find((item) => item.status === "running") ?? provisioningCampaigns[0] ?? null;
   const activeProvisioningJobs = useMemo(() => (
     activeProvisioningCampaign
       ? provisioningJobs.filter((job) => job.campaignId === activeProvisioningCampaign.id)
@@ -749,6 +750,9 @@ function App() {
       ?? activeProvisioningJobs.find((job) => job.status === "waiting_user");
     return browserSessions.find((session) => session.status === "running" && session.jobId === activeJob?.id) ?? null;
   }, [activeProvisioningJobs, browserSessions]);
+  const activeBrowserJob = activeBrowserSession
+    ? activeProvisioningJobs.find((job) => job.id === activeBrowserSession.jobId) ?? null
+    : activeProvisioningJobs.find((job) => job.status === "running" || job.status === "waiting_user") ?? null;
 
   useEffect(() => {
     if (activeModule !== "Entity Builder" || !activeBrowserSession) return;
@@ -1234,10 +1238,20 @@ function App() {
         return;
       }
       const challenge = await runBrowserActions(session.id, [
-        { id: "medium-captcha-check", kind: "waitFor", selectors: ["iframe[src*='recaptcha']", "iframe[src*='hcaptcha']", "[data-sitekey]", "text=/verify you are human/i"], timeoutMs: 1200, optional: true }
+        { id: "medium-captcha-inspect", kind: "inspectCaptcha", timeoutMs: 3000 }
       ], false);
-      if (challenge.results.some((item) => item.id === "medium-captcha-check" && item.status === "completed")) {
-        await saveMediumStage(job, "captcha", "waiting_user", "Medium hiển thị CAPTCHA. Workflow đã dừng trước submit để CAPTCHA adapter xử lý, không làm mất dữ liệu email.");
+      const captchaResult = challenge.results.find((item) => item.id === "medium-captcha-inspect" && item.status === "completed")?.value;
+      const captcha = captchaResult ? JSON.parse(captchaResult) as { found?: boolean; type?: string; websiteKey?: string; websiteUrl?: string } : null;
+      if (captcha?.found) {
+        const timestamp = new Date().toISOString();
+        const item: AutomationQueueItem = {
+          id: `queue-${job.accountId}-captcha`, accountId: job.accountId, platformName: job.platformName,
+          gateType: "captcha", status: "queued",
+          payload: JSON.stringify({ captchaType: captcha.type || "recaptcha_v2", websiteUrl: captcha.websiteUrl || challenge.currentUrl, websiteKey: captcha.websiteKey || "" }),
+          createdAt: timestamp, updatedAt: timestamp
+        };
+        await saveQueueItem(item);
+        await saveMediumStage(job, "captcha", "running", "Đã phát hiện CAPTCHA; đang tự gửi sang provider và sẽ tiếp tục sau khi có token.");
         return;
       }
       const submitted = await runBrowserActions(session.id, [
@@ -1249,6 +1263,47 @@ function App() {
         return;
       }
       await saveMediumStage(job, "email_verification", "running", "Đã gửi yêu cầu đăng ký. Gmail worker đang tự tìm magic link Medium.");
+      return;
+    }
+    if (job.stage === "captcha") {
+      const queue = await invoke<AutomationQueueItem[]>("get_automation_queue");
+      let item = queue.find((candidate) => candidate.accountId === job.accountId && candidate.gateType === "captcha");
+      if (!item) {
+        await saveMediumStage(job, "captcha", "waiting_user", "CAPTCHA đã được phát hiện nhưng queue item bị thiếu; cần chạy lại bước signup để lấy sitekey.");
+        return;
+      }
+      let payload: Record<string, unknown> = {};
+      try { payload = JSON.parse(item.payload) as Record<string, unknown>; } catch { /* provider command will return a clear error */ }
+      if (item.status === "queued") {
+        item = await invoke<AutomationQueueItem>("execute_captcha_queue_item", { item });
+        setAutomationQueue((current) => upsertById(current, item!));
+        try { payload = JSON.parse(item.payload) as Record<string, unknown>; } catch { payload = {}; }
+      } else if (item.status === "waiting" && payload.providerTaskId) {
+        const elapsed = Date.now() - new Date(item.updatedAt).getTime();
+        if (elapsed < 7000) return;
+        item = await invoke<AutomationQueueItem>("poll_captcha_queue_item", { item });
+        setAutomationQueue((current) => upsertById(current, item!));
+        try { payload = JSON.parse(item.payload) as Record<string, unknown>; } catch { payload = {}; }
+      }
+      const providerMessage = String(payload.message || "");
+      if (item.status === "waiting" && !payload.providerTaskId && /disabled|api key|websitekey/i.test(providerMessage)) {
+        await saveMediumStage(job, "captcha", "waiting_user", `Không thể tự giải CAPTCHA: ${providerMessage}`);
+        return;
+      }
+      if (item.status !== "resolved" || !payload.solutionToken) {
+        setStatusMessage(`Medium — CAPTCHA provider đang xử lý${payload.providerStatus ? ` (${String(payload.providerStatus)})` : ""}.`);
+        return;
+      }
+      const injected = await runBrowserActions(session.id, [
+        { id: "medium-inject-captcha", kind: "injectCaptcha", value: String(payload.solutionToken), timeoutMs: 10000 },
+        { id: "medium-submit-after-captcha", kind: "click", selectors: ["button:has-text('Continue')", "button:has-text('Create account')", "button[type='submit']"], timeoutMs: 10000, retries: 1 }
+      ]);
+      const failed = injected.results.find((result) => result.status === "failed");
+      if (failed) {
+        await saveMediumStage(job, "captcha", "waiting_user", `Đã có CAPTCHA token nhưng không tiếp tục được form (${failed.id}: ${failed.message}).`);
+        return;
+      }
+      await saveMediumStage(job, "email_verification", "running", "CAPTCHA đã giải và form đăng ký đã gửi; Gmail worker đang chờ magic link.");
       return;
     }
     if (job.stage === "email_verification") {
@@ -1449,23 +1504,8 @@ function App() {
     setCampaignLaunching(true);
     try {
       await startExtensionBridge(true);
-      const resumableCampaign = provisioningCampaigns.find((item) => item.status === "running");
-      const resumableJob = resumableCampaign
-        ? provisioningJobs.find((item) => item.campaignId === resumableCampaign.id && item.status === "waiting_user" && /browser worker|dispatcher|heartbeat/i.test(item.lastMessage))
-        : undefined;
-      if (resumableJob) {
-        const resumed = await invoke<ProvisioningJobRecord>("save_provisioning_job", { job: {
-          ...resumableJob,
-          status: "running",
-          lastMessage: "Đang tự khôi phục Browser Worker và tiếp tục checkpoint đã lưu.",
-          updatedAt: new Date().toISOString()
-        } });
-        setProvisioningJobs((current) => upsertById(current, resumed));
-        const session = await launchBrowserForJob(resumed);
-        setBrowserSessions((current) => upsertById(current, session));
-        setStatusMessage(`${resumed.platformName}: đã khôi phục campaign cũ và Browser Preview đang được chuẩn bị.`);
-        return;
-      }
+      const closedCampaigns = await invoke<number>("prepare_new_provisioning_campaign");
+      if (closedCampaigns > 0) setStatusMessage(`Đã đóng ${closedCampaigns} campaign cũ để chạy đúng bộ platform vừa chọn.`);
       const timestamp = new Date().toISOString();
       const campaignId = `provisioning-${Date.now()}`;
       const campaign: ProvisioningCampaignRecord = {
@@ -1517,6 +1557,8 @@ function App() {
       }
       setProvisioningCampaigns((current) => [savedCampaign, ...current]);
       setProvisioningJobs((current) => [...jobs, ...current.filter((item) => item.campaignId !== campaignId)]);
+      setBrowserPreviews({});
+      setPreviewExpanded(true);
       const first = jobs[0];
       const launchedSession = await launchBrowserForJob(first);
       setStatusMessage(`Đã bắt đầu chiến dịch ${campaignPlans.length} platform bằng Managed Browser. ${first.platformName} đang chạy với browser profile riêng${selectedProxyId ? " và proxy cố định" : " bằng kết nối trực tiếp"}.`);
@@ -2978,14 +3020,15 @@ function App() {
               </article>
 
               <article className="panel worker-health-card browser-preview-card">
-                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Preview</span><strong>{activeBrowserSession ? activeBrowserSession.platformId : browserWorker?.status === "ready" ? "Worker sẵn sàng" : "Chưa có phiên chạy"}</strong></div></div>
+                <div className="worker-health-top"><span className={`worker-health-dot ${browserWorker?.status || "stopped"}`} /><div><span>Browser Preview · LIVE</span><strong>{activeBrowserSession ? activeBrowserSession.platformId : browserWorker?.status === "ready" ? "Worker sẵn sàng" : "Chưa có phiên chạy"}</strong></div></div>
+                {activeBrowserJob && <div className="preview-work-status"><b>{activeBrowserJob.stage.replace(/_/g, " ")}</b><span>{activeBrowserJob.lastMessage}</span><small>Cập nhật {new Date(activeBrowserJob.updatedAt).toLocaleTimeString("vi-VN")}</small></div>}
                 {activeBrowserSession ? (
                   <>
-                    <div className="preview-stage">
+                    <button className="preview-stage" type="button" onClick={() => setPreviewExpanded(true)} title="Bấm để xem preview lớn">
                       {browserPreviews[activeBrowserSession.id]
                         ? <img src={browserPreviews[activeBrowserSession.id]} alt={`Preview ${activeBrowserSession.platformId}`} />
                         : <div className="preview-placeholder"><span>{previewBusy ? "Đang lấy ảnh preview..." : "Chưa có ảnh preview"}</span><small>Ảnh sẽ tự cập nhật mỗi 5 giây.</small></div>}
-                    </div>
+                    </button>
                     <div className="preview-actions">
                       <button className="secondary-action" type="button" disabled={previewBusy} onClick={() => void refreshBrowserPreview(activeBrowserSession.id)}>{previewBusy ? "Đang tải..." : "Cập nhật preview"}</button>
                       <button className="secondary-action" type="button" onClick={() => void setBrowserVisibility(activeBrowserSession.id, true)}>Điều khiển thủ công</button>
@@ -2997,6 +3040,14 @@ function App() {
                 <small>{browserWorker?.heartbeatAt ? `Heartbeat ${new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN")} · ${browserWorker.activeSessions} phiên` : "Chưa có heartbeat"}</small>
               </article>
             </section>
+
+            {previewExpanded && activeBrowserSession && <div className="preview-modal" role="dialog" aria-modal="true" aria-label="Browser Preview trực tiếp">
+              <div className="preview-modal-card">
+                <div className="preview-modal-header"><div><span>LIVE · {activeBrowserSession.platformId}</span><strong>{activeBrowserJob?.stage.replace(/_/g, " ") || "browser"}</strong></div><button type="button" onClick={() => setPreviewExpanded(false)}>Đóng</button></div>
+                {browserPreviews[activeBrowserSession.id] ? <img src={browserPreviews[activeBrowserSession.id]} alt={`Live preview ${activeBrowserSession.platformId}`} /> : <div className="preview-placeholder"><span>Đang chờ ảnh từ worker...</span></div>}
+                <div className="preview-modal-status"><b>{activeBrowserJob?.lastMessage || activeBrowserSession.lastMessage}</b><span>Heartbeat: {browserWorker?.heartbeatAt ? new Date(browserWorker.heartbeatAt).toLocaleTimeString("vi-VN") : "đang chờ"}</span></div>
+              </div>
+            </div>}
 
             <article className="panel platform-live-panel">
               <div className="panel-header"><div><p className="eyebrow">PLATFORM ĐANG XỬ LÝ</p><h2>Trạng thái theo thời gian thực</h2></div><span className="badge">{campaignPlans.length} platform</span></div>
