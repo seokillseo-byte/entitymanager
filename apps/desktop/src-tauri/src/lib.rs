@@ -2979,10 +2979,10 @@ fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiag
         Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
     });
 
-    checks.push(match browser_worker_resource_files(&app_handle) {
-        Ok((node, worker)) => SystemDiagnosticCheck {
+    checks.push(match bundled_browser_worker_directory(&app_handle) {
+        Ok(directory) => SystemDiagnosticCheck {
             id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "ok".to_string(),
-            message: format!("Worker runtime đã đóng gói: {} + {}.", node.display(), worker.display()),
+            message: format!("Worker runtime đã đóng gói tại {}; khi chạy sẽ dùng cache phiên bản trong AppData.", directory.display()),
         },
         Err(error) => SystemDiagnosticCheck { id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "error".to_string(), message: error },
     });
