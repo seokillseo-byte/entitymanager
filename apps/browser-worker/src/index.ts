@@ -33,8 +33,9 @@ type StartSessionRequest = {
 };
 type BrowserAction = {
   id: string;
-  kind: "navigate" | "click" | "fill" | "upload" | "waitFor" | "extract" | "checkpoint";
+  kind: "navigate" | "click" | "fill" | "upload" | "waitFor" | "extract" | "inspectCaptcha" | "injectCaptcha" | "checkpoint";
   selectors?: string[];
+  attribute?: string;
   value?: string;
   url?: string;
   timeoutMs?: number;
@@ -95,6 +96,34 @@ async function executeAction(session: WorkerSession, action: BrowserAction): Pro
         value = session.page.url();
       } else if (action.kind === "checkpoint") {
         value = session.page.url();
+      } else if (action.kind === "inspectCaptcha") {
+        const captcha = await session.page.evaluate(() => {
+          const recaptcha = document.querySelector<HTMLElement>("[data-sitekey], .g-recaptcha");
+          const recaptchaFrame = document.querySelector<HTMLIFrameElement>("iframe[src*='recaptcha']");
+          const hcaptchaFrame = document.querySelector<HTMLIFrameElement>("iframe[src*='hcaptcha']");
+          const turnstile = document.querySelector<HTMLElement>(".cf-turnstile, [data-sitekey][data-callback]");
+          const frameKey = (source: string) => {
+            try { return new URL(source).searchParams.get("k") || new URL(source).searchParams.get("sitekey") || ""; } catch { return ""; }
+          };
+          if (hcaptchaFrame) return { found: true, type: "hcaptcha", websiteKey: frameKey(hcaptchaFrame.src) || recaptcha?.dataset.sitekey || "" };
+          if (turnstile) return { found: true, type: "turnstile", websiteKey: turnstile.dataset.sitekey || "" };
+          if (recaptcha || recaptchaFrame) return { found: true, type: "recaptcha_v2", websiteKey: recaptcha?.dataset.sitekey || frameKey(recaptchaFrame?.src || "") };
+          return { found: false, type: "", websiteKey: "" };
+        });
+        value = JSON.stringify({ ...captcha, websiteUrl: session.page.url() });
+      } else if (action.kind === "injectCaptcha") {
+        if (!action.value) throw new Error("captcha_token_missing");
+        const injected = await session.page.evaluate((token) => {
+          const fields = [...document.querySelectorAll<HTMLTextAreaElement>("textarea[name='g-recaptcha-response'], textarea[name='h-captcha-response'], input[name='cf-turnstile-response']")];
+          for (const field of fields) {
+            field.value = token;
+            field.dispatchEvent(new Event("input", { bubbles: true }));
+            field.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          return fields.length;
+        }, action.value);
+        if (!injected) throw new Error("captcha_response_field_not_found");
+        value = String(injected);
       } else {
         selector = await firstUsableSelector(session.page, action.selectors || [], timeoutMs, action.kind === "upload") || "";
         if (!selector) throw new Error("selector_not_found");
@@ -128,7 +157,11 @@ async function executeAction(session: WorkerSession, action: BrowserAction): Pro
         } else if (action.kind === "waitFor") {
           await locator.waitFor({ state: "visible", timeout: timeoutMs });
         } else if (action.kind === "extract") {
-          value = await locator.getAttribute("href") || await locator.inputValue().catch(() => "") || (await locator.textContent())?.trim() || "";
+          value = (action.attribute ? await locator.getAttribute(action.attribute) : null)
+            || await locator.getAttribute("href")
+            || await locator.inputValue().catch(() => "")
+            || (await locator.textContent())?.trim()
+            || "";
         }
       }
       session.currentUrl = session.page.url();

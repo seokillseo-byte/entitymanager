@@ -1488,6 +1488,55 @@ fn save_provisioning_campaign(app_handle: tauri::AppHandle, campaign: Provisioni
 }
 
 #[tauri::command]
+fn prepare_new_provisioning_campaign(app_handle: tauri::AppHandle) -> Result<i64, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    let session_ids = {
+        let mut statement = connection.prepare("SELECT id FROM browser_sessions WHERE status='running'").map_err(|error| error.to_string())?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?
+    };
+    if let Some(runtime) = BROWSER_WORKER_RUNTIME.get_or_init(|| Mutex::new(None)).lock().ok().and_then(|guard| guard.clone()) {
+        let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(8)).build().map_err(|error| error.to_string())?;
+        for session_id in &session_ids {
+            let _ = client.post(format!("http://127.0.0.1:{}/v1/sessions/{}/stop", runtime.port, session_id)).bearer_auth(&runtime.token).send();
+        }
+    }
+    let affected = connection.execute(
+        "UPDATE provisioning_campaigns SET status='cancelled',updated_at=?1 WHERE status='running'",
+        params![timestamp],
+    ).map_err(|error| error.to_string())? as i64;
+    connection.execute(
+        "UPDATE provisioning_jobs SET status='skipped',last_message='Campaign cũ đã được đóng khi người dùng bắt đầu campaign mới.',updated_at=?1
+         WHERE status IN ('running','queued','waiting_user') AND campaign_id IN (SELECT id FROM provisioning_campaigns WHERE status='cancelled')",
+        params![timestamp],
+    ).map_err(|error| error.to_string())?;
+    connection.execute(
+        "UPDATE browser_sessions SET status='stopped',visibility='hidden',last_message='Phiên cũ đã được đóng trước campaign mới.',updated_at=?1 WHERE status='running'",
+        params![timestamp],
+    ).map_err(|error| error.to_string())?;
+    Ok(affected)
+}
+
+#[tauri::command]
+fn reset_platform_validation_records(app_handle: tauri::AppHandle, platform_ids: Vec<String>) -> Result<i64, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    let mut affected = 0_i64;
+    for platform_id in platform_ids.into_iter().filter(|value| !value.trim().is_empty()) {
+        affected += connection.execute(
+            "UPDATE platform_validation SET status='not_tested',dry_run_checked_at='',text_saved_at='',media_uploaded_at='',
+             evidence_saved_at='',certified_at='',last_tested_url='',notes='Đã reset khi bắt đầu campaign mới; chỉ ghi nhận lại sau xác minh thực tế.',updated_at=?1
+             WHERE platform_id=?2",
+            params![timestamp, platform_id],
+        ).map_err(|error| error.to_string())? as i64;
+    }
+    Ok(affected)
+}
+
+#[tauri::command]
 fn get_provisioning_jobs(app_handle: tauri::AppHandle) -> Result<Vec<ProvisioningJobRecord>, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -1608,9 +1657,13 @@ fn update_provisioning_checkpoint_record(
             ).map_err(|error| error.to_string())?;
             next_job = Some(candidate);
         } else {
+            let waiting_jobs: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM provisioning_jobs WHERE campaign_id=?1 AND status='waiting_user'",
+                params![job.campaign_id], |row| row.get(0),
+            ).unwrap_or(0);
             connection.execute(
-                "UPDATE provisioning_campaigns SET status='completed', current_position=total_jobs, updated_at=?2 WHERE id=?1",
-                params![job.campaign_id, timestamp],
+                "UPDATE provisioning_campaigns SET status=?2, current_position=CASE WHEN ?2='completed' THEN total_jobs ELSE current_position END, updated_at=?3 WHERE id=?1",
+                params![job.campaign_id,if waiting_jobs > 0 { "paused" } else { "completed" },timestamp],
             ).map_err(|error| error.to_string())?;
         }
     }
@@ -5879,6 +5932,8 @@ pub fn run() {
             save_account,
             get_provisioning_campaigns,
             save_provisioning_campaign,
+            prepare_new_provisioning_campaign,
+            reset_platform_validation_records,
             get_provisioning_jobs,
             save_provisioning_job,
             update_provisioning_checkpoint,
