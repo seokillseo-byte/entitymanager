@@ -88,6 +88,8 @@ Default modes:
 
 The Browser Control Center shows platform/account, current step, elapsed time, heartbeat, proxy health, email/CAPTCHA state, last meaningful action, and pause/resume/stop/manual-control actions.
 
+The Control Center is a dedicated **Browser Workspace window**, separate from the campaign setup window. It never opens one unmanaged Chromium window per worker. The workspace renders one managed browser surface for one thread, two side-by-side surfaces for two threads, and a responsive grid for three to six threads. Closing this workspace only hides monitoring; it does not stop the campaign. The main Create Entity page shows aggregate progress and a single button to reopen the workspace, not an inline Live Medium popup.
+
 Technical logs, selectors, network details, payloads, and screenshots remain under an expandable diagnostic view. Do not use fragile native-window embedding as the primary design; prefer controlled hidden contexts plus CDP preview inside Tauri.
 
 ## 6. Platform Adapter System
@@ -237,3 +239,12 @@ Do not add more extension patches or new platform recipes until the worker can s
 - Update `docs/WORK_LOG.md` and `docs/NEXT_STEPS.md`.
 - State the next recommended task explicitly.
 
+
+### Phase 1.39D.1 — Unified Multi-Worker Browser Workspace
+
+- Dedicated Tauri Browser Workspace window opened automatically with a campaign.
+- One to six worker slots in one managed window; no scattered Chromium windows.
+- Live worker surfaces, direct click forwarding, pause/resume/stop and expand controls.
+- Empty slots clearly show that they are waiting; they must never imply a browser session exists.
+- Campaign state remains authoritative and continues when the workspace is closed.
+- Inline Live Medium modal is removed from Create Entity.
