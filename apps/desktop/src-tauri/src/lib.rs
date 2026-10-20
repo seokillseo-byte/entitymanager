@@ -2979,10 +2979,10 @@ fn run_system_diagnostics(app_handle: tauri::AppHandle) -> Result<Vec<SystemDiag
         Err(error) => SystemDiagnosticCheck { id: "browser".to_string(), label: "Chromium runtime".to_string(), status: "error".to_string(), message: error },
     });
 
-    checks.push(match browser_worker_resource_files(&app_handle) {
-        Ok((node, worker)) => SystemDiagnosticCheck {
+    checks.push(match bundled_browser_worker_directory(&app_handle) {
+        Ok(directory) => SystemDiagnosticCheck {
             id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "ok".to_string(),
-            message: format!("Worker runtime đã đóng gói: {} + {}.", node.display(), worker.display()),
+            message: format!("Worker runtime đã đóng gói tại {}; khi chạy sẽ dùng cache phiên bản trong AppData.", directory.display()),
         },
         Err(error) => SystemDiagnosticCheck { id: "browser_worker".to_string(), label: "Playwright Browser Worker".to_string(), status: "error".to_string(), message: error },
     });
@@ -3282,7 +3282,7 @@ fn browser_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Browser
     Ok(BrowserSessionRecord { id: row.get(0)?, campaign_id: row.get(1)?, job_id: row.get(2)?, account_id: row.get(3)?, platform_id: row.get(4)?, profile_directory: row.get(5)?, proxy_id: row.get(6)?, process_id: row.get(7)?, status: row.get(8)?, visibility: row.get(9)?, current_url: row.get(10)?, last_message: row.get(11)?, created_at: row.get(12)?, updated_at: row.get(13)?, identity_id: row.get(14)? })
 }
 
-fn browser_worker_resource_files(app_handle: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+fn bundled_browser_worker_directory(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let resource_root = app_handle.path().resource_dir().map_err(|error| error.to_string())?;
     let candidates = [
         resource_root.join("resources").join("browser-worker"),
@@ -3291,9 +3291,48 @@ fn browser_worker_resource_files(app_handle: &tauri::AppHandle) -> Result<(PathB
     for directory in candidates {
         let node = directory.join(if cfg!(target_os = "windows") { "node.exe" } else { "node" });
         let worker = directory.join("worker.cjs");
-        if node.is_file() && worker.is_file() { return Ok((node, worker)); }
+        if node.is_file() && worker.is_file() { return Ok(directory); }
     }
     Err(format!("Không tìm thấy Playwright Browser Worker trong resource directory {}.", resource_root.display()))
+}
+
+fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_contents(&source_path, &destination_path)?;
+        } else {
+            fs::copy(&source_path, &destination_path).map_err(|error| format!("Không sao chép được {}: {error}", source_path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn browser_worker_runtime_files(app_handle: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let source = bundled_browser_worker_directory(app_handle)?;
+    let worker_source = source.join("worker.cjs");
+    let version_source = source.join("ENTITYMANAGER_WORKER_VERSION.txt");
+    let mut hasher = Sha256::new();
+    hasher.update(fs::read(&worker_source).map_err(|error| error.to_string())?);
+    if let Ok(version) = fs::read(&version_source) { hasher.update(version); }
+    let fingerprint = format!("{:x}", hasher.finalize());
+    let runtime_root = app_handle.path().app_data_dir().map_err(|error| error.to_string())?.join("browser-runtime");
+    let runtime = runtime_root.join(&fingerprint[..16]);
+    let node_name = if cfg!(target_os = "windows") { "node.exe" } else { "node" };
+    let node = runtime.join(node_name);
+    let worker = runtime.join("worker.cjs");
+    if !node.is_file() || !worker.is_file() {
+        fs::create_dir_all(&runtime_root).map_err(|error| error.to_string())?;
+        let temporary = runtime_root.join(format!("{}.tmp-{}", &fingerprint[..16], std::process::id()));
+        if temporary.exists() { fs::remove_dir_all(&temporary).map_err(|error| error.to_string())?; }
+        copy_directory_contents(&source, &temporary)?;
+        if runtime.exists() { fs::remove_dir_all(&runtime).map_err(|error| error.to_string())?; }
+        fs::rename(&temporary, &runtime).map_err(|error| format!("Không kích hoạt được Browser Worker runtime cache: {error}"))?;
+    }
+    Ok((node, worker))
 }
 
 fn browser_worker_health(runtime: &BrowserWorkerRuntimeState) -> Result<BrowserWorkerStatus, String> {
@@ -3316,7 +3355,10 @@ fn ensure_browser_worker_runtime(app_handle: &tauri::AppHandle) -> Result<Browse
     if let Some(runtime) = state.lock().map_err(|_| "Không khóa được Browser Worker runtime.".to_string())?.clone() {
         if let Ok(status) = browser_worker_health(&runtime) { return Ok(status); }
     }
-    let (node, worker) = browser_worker_resource_files(app_handle)?;
+    // Never execute the bundled node.exe in-place. Windows locks a running
+    // executable and would prevent NSIS from replacing it during an upgrade.
+    // A content-versioned app-data copy keeps installed resources replaceable.
+    let (node, worker) = browser_worker_runtime_files(app_handle)?;
     let chromium = browser_executable(app_handle)?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| format!("Không cấp được cổng cho Browser Worker: {error}"))?;
     let port = listener.local_addr().map_err(|error| error.to_string())?.port();
