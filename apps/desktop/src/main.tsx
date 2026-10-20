@@ -4075,7 +4075,7 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}...${token.slice(-6)}`;
 }
 
-const isBrowserWorkspace = new URLSearchParams(window.location.search).get("view") === "browser-workspace";
+const isBrowserWorkspace = window.location.hash.startsWith("#browser-workspace");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

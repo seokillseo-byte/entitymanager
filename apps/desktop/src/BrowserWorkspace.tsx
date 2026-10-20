@@ -16,7 +16,8 @@ type WorkspaceSlot = {
 };
 
 function requestedSlots() {
-  const value = Number(new URLSearchParams(window.location.search).get("slots") || "1");
+  const fragmentQuery = window.location.hash.split("?")[1] || "";
+  const value = Number(new URLSearchParams(fragmentQuery).get("slots") || "1");
   return Math.max(1, Math.min(6, Number.isFinite(value) ? Math.floor(value) : 1));
 }
 
@@ -33,28 +34,34 @@ export default function BrowserWorkspace() {
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [expandedId, setExpandedId] = useState("");
   const [lastRefresh, setLastRefresh] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
 
   const refresh = useCallback(async () => {
-    const [nextSessions, nextJobs, nextWorker] = await Promise.all([
-      invoke<BrowserSessionRecord[]>("get_browser_sessions"),
-      invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
-      invoke<BrowserWorkerStatus>("get_browser_worker_status").catch(() => null)
-    ]);
-    const running = nextSessions
-      .filter((item) => item.status === "running")
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    setSessions(running);
-    setJobs(nextJobs);
-    setWorker(nextWorker);
-    const images = await Promise.all(running.map(async (session) => {
-      try {
-        return [session.id, await invoke<string>("get_browser_worker_preview", { sessionId: session.id })] as const;
-      } catch {
-        return [session.id, ""] as const;
-      }
-    }));
-    setPreviews((current) => ({ ...current, ...Object.fromEntries(images.filter(([, image]) => image)) }));
-    setLastRefresh(new Date().toISOString());
+    try {
+      const [nextSessions, nextJobs, nextWorker] = await Promise.all([
+        invoke<BrowserSessionRecord[]>("get_browser_sessions"),
+        invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
+        invoke<BrowserWorkerStatus>("get_browser_worker_status").catch(() => null)
+      ]);
+      const running = nextSessions
+        .filter((item) => item.status === "running")
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      setSessions(running);
+      setJobs(nextJobs);
+      setWorker(nextWorker);
+      const images = await Promise.all(running.map(async (session) => {
+        try {
+          return [session.id, await invoke<string>("get_browser_worker_preview", { sessionId: session.id })] as const;
+        } catch {
+          return [session.id, ""] as const;
+        }
+      }));
+      setPreviews((current) => ({ ...current, ...Object.fromEntries(images.filter(([, image]) => image)) }));
+      setLastRefresh(new Date().toISOString());
+      setWorkspaceError("");
+    } catch (error) {
+      setWorkspaceError(`Không đồng bộ được Browser Worker: ${String(error)}`);
+    }
   }, []);
 
   useEffect(() => {
@@ -114,6 +121,8 @@ export default function BrowserWorkspace() {
           <button type="button" onClick={() => void refresh()}><RefreshCw size={15} /> Làm mới</button>
         </div>
       </header>
+
+      {workspaceError && <div className="browser-workspace-error" role="alert"><strong>Browser Workspace cần xử lý</strong><span>{workspaceError}</span></div>}
 
       <section className={`browser-worker-grid slots-${expandedId ? 1 : slotCount}`}>
         {slots.map(({ session, job }, index) => session ? (

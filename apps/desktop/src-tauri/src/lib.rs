@@ -38,7 +38,10 @@ fn open_browser_workspace(app_handle: tauri::AppHandle, slots: u8) -> Result<(),
     }
 
     let safe_slots = slots.clamp(1, 6);
-    let url = tauri::WebviewUrl::App(format!("index.html?view=browser-workspace&slots={safe_slots}").into());
+    // Keep routing data in the fragment. Query parameters appended to the app
+    // asset path can make the packaged WebView2 loader look for a literal
+    // `index.html?...` resource and render a completely blank window.
+    let url = tauri::WebviewUrl::App(format!("index.html#browser-workspace?slots={safe_slots}").into());
     tauri::WebviewWindowBuilder::new(&app_handle, "browser-workspace", url)
         .title("EntityManager — Browser Workspace")
         .inner_size(1500.0, 920.0)
