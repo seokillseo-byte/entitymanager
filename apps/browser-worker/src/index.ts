@@ -35,6 +35,7 @@ type BrowserAction = {
   id: string;
   kind: "navigate" | "click" | "fill" | "upload" | "waitFor" | "extract" | "inspectCaptcha" | "injectCaptcha" | "checkpoint";
   selectors?: string[];
+  attribute?: string;
   value?: string;
   url?: string;
   timeoutMs?: number;
@@ -156,7 +157,11 @@ async function executeAction(session: WorkerSession, action: BrowserAction): Pro
         } else if (action.kind === "waitFor") {
           await locator.waitFor({ state: "visible", timeout: timeoutMs });
         } else if (action.kind === "extract") {
-          value = await locator.getAttribute("href") || await locator.inputValue().catch(() => "") || (await locator.textContent())?.trim() || "";
+          value = (action.attribute ? await locator.getAttribute(action.attribute) : null)
+            || await locator.getAttribute("href")
+            || await locator.inputValue().catch(() => "")
+            || (await locator.textContent())?.trim()
+            || "";
         }
       }
       session.currentUrl = session.page.url();

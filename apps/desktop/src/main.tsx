@@ -799,6 +799,11 @@ function App() {
       ?? validationPack.find((record) => record.platformId === activeExecutionPlan.platformId)
       ?? null;
   }, [activeExecutionPlan, platformValidation, validationPack]);
+  const activeValidationIsCurrent = Boolean(
+    activeExecutionValidation
+    && activeProvisioningCampaign
+    && new Date(activeExecutionValidation.updatedAt).getTime() >= new Date(activeProvisioningCampaign.createdAt).getTime()
+  );
 
   const activeExecutionQueue = useMemo(() => {
     if (!activeExecutionAccount && !activeExecutionPlan) return [];
@@ -820,11 +825,11 @@ function App() {
     ? guidedRunnerForPlatform(activeExecutionPlan.platformId, activeExecutionPlatform?.homepageUrl ?? "")
     : null;
   const activeCertificationGates = activeExecutionValidation ? [
-    { label: "Dry-run đạt", passed: Boolean(activeExecutionValidation.dryRunCheckedAt) },
-    { label: "Text/NAP/EEAT đã lưu", passed: Boolean(activeExecutionValidation.textSavedAt) },
-    { label: "Avatar/banner đã upload", passed: Boolean(activeExecutionValidation.mediaUploadedAt && activeExecutionValidation.status === "media_uploaded") },
+    { label: "Dry-run đạt", passed: activeValidationIsCurrent && Boolean(activeExecutionValidation.dryRunCheckedAt) },
+    { label: "Text/NAP/EEAT đã lưu", passed: activeValidationIsCurrent && Boolean(activeExecutionValidation.textSavedAt) },
+    { label: "Avatar/banner đã upload", passed: activeValidationIsCurrent && Boolean(activeExecutionValidation.mediaUploadedAt && activeExecutionValidation.status === "media_uploaded") },
     { label: "Evidence URL hợp lệ", passed: Boolean(activeExecutionAccount?.status === "verified" && /^https?:\/\//.test(activeExecutionAccount.evidenceUrl)) },
-    { label: "Platform certified", passed: Boolean(activeExecutionValidation.certifiedAt) }
+    { label: "Platform certified", passed: activeValidationIsCurrent && Boolean(activeExecutionValidation.certifiedAt) }
   ] : [];
   const activeCertificationReady = activeCertificationGates.slice(0, 4).every((gate) => gate.passed);
 
@@ -1226,6 +1231,26 @@ function App() {
     return saved;
   }
 
+  async function recordVerifiedPlatformStep(platformId: string, step: "text" | "media") {
+    const records = await invoke<PlatformValidationRecord[]>("get_platform_validation_records");
+    const current = records.find((record) => record.platformId === platformId);
+    if (!current) return;
+    const timestamp = new Date().toISOString();
+    const next: PlatformValidationRecord = {
+      ...current,
+      status: step === "media" ? "media_uploaded" : "text_saved",
+      dryRunCheckedAt: current.dryRunCheckedAt || timestamp,
+      textSavedAt: current.textSavedAt || timestamp,
+      mediaUploadedAt: step === "media" ? timestamp : current.mediaUploadedAt,
+      notes: step === "media"
+        ? "Browser Worker đã xác minh avatar khác sau khi tải lại trang."
+        : "Browser Worker đã tải lại trang và đối chiếu name/bio đã lưu.",
+      updatedAt: timestamp
+    };
+    const saved = await invoke<PlatformValidationRecord>("save_platform_validation_record", { record: next });
+    setPlatformValidation((items) => upsertByPlatformId(items, saved));
+  }
+
   async function advanceMediumProvisioning(job: ProvisioningJobRecord, session: BrowserSessionRecord) {
     if (job.stage === "signup") {
       const result = await runBrowserActions(session.id, [
@@ -1336,15 +1361,35 @@ function App() {
         await saveMediumStage(job, "profile_text", "waiting_user", `Recipe Medium cần cập nhật tại ${requiredFailure.id}: ${requiredFailure.message}. Text chưa được đánh dấu đã lưu.`);
         return;
       }
+      const verification = await runBrowserActions(session.id, [
+        { id: "medium-reload-settings-after-save", kind: "navigate", url: "https://medium.com/me/settings", timeoutMs: 45000, retries: 1 },
+        { id: "medium-reopen-profile-editor", kind: "click", selectors: ["button:has-text('Edit profile')", "a:has-text('Edit profile')", "button:has-text('Edit')"], timeoutMs: 8000, optional: true },
+        { id: "medium-verify-name", kind: "extract", selectors: ["input[name='name']", "input[aria-label*='name' i]", "input[placeholder*='name' i]"], timeoutMs: 8000 },
+        { id: "medium-verify-bio", kind: "extract", selectors: ["textarea[name='bio']", "textarea[aria-label*='bio' i]", "textarea[placeholder*='bio' i]"], timeoutMs: 8000 }
+      ], false);
+      const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+      const savedName = verification.results.find((item) => item.id === "medium-verify-name" && item.status === "completed")?.value || "";
+      const savedBio = verification.results.find((item) => item.id === "medium-verify-bio" && item.status === "completed")?.value || "";
+      const expectedName = entityProfile.brandName || entityProfile.authorName;
+      const expectedBioPrefix = normalize(entityProfile.shortDescription).slice(0, 60);
+      if (normalize(savedName) !== normalize(expectedName) || !normalize(savedBio).includes(expectedBioPrefix)) {
+        await saveMediumStage(job, "profile_text", "waiting_user", "Worker đã bấm Save nhưng dữ liệu không tồn tại sau khi tải lại trang. Không ghi nhận Text/NAP/EEAT đã lưu.");
+        return;
+      }
+      await recordVerifiedPlatformStep("medium", "text");
       await saveMediumStage(job, "profile_media", "running", "Đã lưu text profile; chuyển sang avatar.");
       return;
     }
     if (job.stage === "profile_media") {
       const image = entityProfile.avatarImageUrl;
       if (!image) {
-        await saveMediumStage(job, "evidence", "running", "Entity Profile chưa có avatar; bỏ qua media có ghi chú và tiếp tục lấy evidence.");
+        await saveMediumStage(job, "profile_media", "waiting_user", "Entity Profile chưa có avatar. Không thể chứng nhận media hoặc tiếp tục evidence khi thiếu ảnh thật.");
         return;
       }
+      const before = await runBrowserActions(session.id, [
+        { id: "medium-avatar-before", kind: "extract", selectors: ["img[alt*='profile' i]", "img[alt*='avatar' i]", "img[src*='miro.medium.com']"], attribute: "src", timeoutMs: 3000, optional: true }
+      ], false);
+      const previousAvatar = before.results.find((item) => item.id === "medium-avatar-before" && item.status === "completed")?.value || "";
       const result = await runBrowserActions(session.id, [
         { id: "medium-upload-avatar", kind: "upload", selectors: ["input[type='file'][accept*='image']", "input[type='file']"], value: image, timeoutMs: 20000, retries: 1 },
         { id: "medium-confirm-avatar", kind: "click", selectors: ["button:has-text('Save')", "button:has-text('Set')", "button:has-text('Upload')", "button:has-text('Update')"], timeoutMs: 10000, optional: true }
@@ -1354,6 +1399,16 @@ function App() {
         await saveMediumStage(job, "profile_media", "waiting_user", `Avatar chưa được lưu (${failed.message}). Text profile vẫn được bảo toàn; chỉ tạm dừng riêng bước media.`);
         return;
       }
+      const mediaVerification = await runBrowserActions(session.id, [
+        { id: "medium-reload-settings-after-avatar", kind: "navigate", url: "https://medium.com/me/settings", timeoutMs: 45000, retries: 1 },
+        { id: "medium-avatar-after", kind: "extract", selectors: ["img[alt*='profile' i]", "img[alt*='avatar' i]", "img[src*='miro.medium.com']"], attribute: "src", timeoutMs: 10000 }
+      ], false);
+      const savedAvatar = mediaVerification.results.find((item) => item.id === "medium-avatar-after" && item.status === "completed")?.value || "";
+      if (!savedAvatar || (previousAvatar && savedAvatar === previousAvatar)) {
+        await saveMediumStage(job, "profile_media", "waiting_user", "Worker đã chọn file nhưng không xác minh được avatar mới sau khi tải lại trang. Không ghi nhận media đã upload.");
+        return;
+      }
+      await recordVerifiedPlatformStep("medium", "media");
       await saveMediumStage(job, "evidence", "running", "Avatar đã được upload; đang lấy public profile URL.");
       return;
     }
@@ -1379,6 +1434,8 @@ function App() {
       } });
       setAutomationQueue((current) => upsertById(current, completion.queueItem));
       setAccounts((current) => upsertById(current, completion.account));
+      const certified = await invoke<PlatformValidationRecord>("certify_platform", { platformId: "medium" });
+      setPlatformValidation((current) => upsertByPlatformId(current, certified));
       const checkpoint = await invoke<{ job: ProvisioningJobRecord; nextJob?: ProvisioningJobRecord }>("update_provisioning_checkpoint", { request: {
         platformId: "medium", stage: "completed", status: "completed",
         message: "Hoàn tất Medium: profile đã lưu, evidence đã ghi và URL đã đưa vào indexing queue.", evidenceUrl
@@ -1505,13 +1562,16 @@ function App() {
     try {
       await startExtensionBridge(true);
       const closedCampaigns = await invoke<number>("prepare_new_provisioning_campaign");
+      await invoke<number>("reset_platform_validation_records", { platformIds: campaignPlans.map((plan) => plan.platformId) });
       if (closedCampaigns > 0) setStatusMessage(`Đã đóng ${closedCampaigns} campaign cũ để chạy đúng bộ platform vừa chọn.`);
       const timestamp = new Date().toISOString();
       const campaignId = `provisioning-${Date.now()}`;
+      const orderedPlans = [...campaignPlans].sort((first, second) => Number(second.platformId === "medium") - Number(first.platformId === "medium"));
+      const hasCertifiedAdapter = orderedPlans.some((plan) => plan.platformId === "medium");
       const campaign: ProvisioningCampaignRecord = {
         id: campaignId,
         name: `${entityProfile.brandName || moneySite.domain || "Entity"} · ${new Date().toLocaleString("vi-VN")}`,
-        status: "running",
+        status: hasCertifiedAdapter ? "running" : "paused",
         totalJobs: campaignPlans.length,
         currentPosition: 0,
         createdAt: timestamp,
@@ -1519,7 +1579,7 @@ function App() {
       };
       const savedCampaign = await invoke<ProvisioningCampaignRecord>("save_provisioning_campaign", { campaign });
       const jobs: ProvisioningJobRecord[] = [];
-      for (const [position, plan] of campaignPlans.entries()) {
+      for (const [position, plan] of orderedPlans.entries()) {
         const account = await saveAccountFromPlan(plan);
         await saveQueueItem(buildQueueItem(
           account,
@@ -1544,11 +1604,13 @@ function App() {
           platformName: plan.platformName,
           position,
           stage: "signup",
-          status: position === 0 ? "running" : "queued",
+          status: plan.platformId === "medium" && position === 0 ? "running" : "waiting_user",
           signupUrl: signupUrlForPlatform(plan.platformId, platform?.homepageUrl ?? ""),
           profileUrl: guide.primaryUrl,
           evidenceUrl: "",
-          lastMessage: position === 0 ? "Đang mở trang đăng ký. Extension sẽ tiếp tục sau các cổng xác minh." : "Đang chờ platform trước hoàn tất.",
+          lastMessage: plan.platformId === "medium"
+            ? "Medium Playwright adapter đã được kích hoạt; đang mở trang đăng ký."
+            : "Platform chưa có Playwright adapter được chứng nhận. Tool không chạy và không báo thành công giả.",
           attemptCount: 0,
           createdAt: timestamp,
           updatedAt: timestamp
@@ -1559,9 +1621,13 @@ function App() {
       setProvisioningJobs((current) => [...jobs, ...current.filter((item) => item.campaignId !== campaignId)]);
       setBrowserPreviews({});
       setPreviewExpanded(true);
-      const first = jobs[0];
+      const first = jobs.find((job) => job.status === "running");
+      if (!first) {
+        setStatusMessage("Các platform đã chọn chưa có Playwright adapter được chứng nhận. Tool đã giữ trạng thái chờ và không giả lập kết quả.");
+        return;
+      }
       const launchedSession = await launchBrowserForJob(first);
-      setStatusMessage(`Đã bắt đầu chiến dịch ${campaignPlans.length} platform bằng Managed Browser. ${first.platformName} đang chạy với browser profile riêng${selectedProxyId ? " và proxy cố định" : " bằng kết nối trực tiếp"}.`);
+      setStatusMessage(`Đã bắt đầu chiến dịch ${campaignPlans.length} platform. ${first.platformName} đang chạy bằng adapter đã chứng nhận${selectedProxyId ? " và proxy cố định" : " bằng kết nối trực tiếp"}.`);
       if (browserVisible && launchedSession.visibility !== "visible") {
         throw new Error("Managed Chromium đã chạy nhưng cửa sổ chưa ở chế độ hiển thị.");
       }
@@ -3058,7 +3124,7 @@ function App() {
                   const account = accounts.find((item) => item.platformId === plan.platformId);
                   return <button type="button" className="platform-live-row" key={plan.platformId} onClick={() => { selectExecutionPlatform(plan.platformId); setPlatformDetailOpen(true); }}>
                     <strong>{plan.platformName}</strong>
-                    <span>{job ? job.stage.replace(/_/g, " ") : "Sẵn sàng"}</span>
+                    <span>{job ? job.stage.replace(/_/g, " ") : plan.platformId === "medium" ? "Sẵn sàng" : "Chưa có adapter certified"}</span>
                     <em className={`live-status ${job?.status || "queued"}`}>{job ? job.status.replace(/_/g, " ") : "Chưa chạy"}</em>
                     <span>{account?.evidenceUrl ? <a href={account.evidenceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Profile URL</a> : "—"}</span>
                   </button>;

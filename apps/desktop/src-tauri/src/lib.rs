@@ -1520,6 +1520,23 @@ fn prepare_new_provisioning_campaign(app_handle: tauri::AppHandle) -> Result<i64
 }
 
 #[tauri::command]
+fn reset_platform_validation_records(app_handle: tauri::AppHandle, platform_ids: Vec<String>) -> Result<i64, String> {
+    let connection = open_database(&app_handle)?;
+    ensure_schema(&connection)?;
+    let timestamp = now_string();
+    let mut affected = 0_i64;
+    for platform_id in platform_ids.into_iter().filter(|value| !value.trim().is_empty()) {
+        affected += connection.execute(
+            "UPDATE platform_validation SET status='not_tested',dry_run_checked_at='',text_saved_at='',media_uploaded_at='',
+             evidence_saved_at='',certified_at='',last_tested_url='',notes='Đã reset khi bắt đầu campaign mới; chỉ ghi nhận lại sau xác minh thực tế.',updated_at=?1
+             WHERE platform_id=?2",
+            params![timestamp, platform_id],
+        ).map_err(|error| error.to_string())? as i64;
+    }
+    Ok(affected)
+}
+
+#[tauri::command]
 fn get_provisioning_jobs(app_handle: tauri::AppHandle) -> Result<Vec<ProvisioningJobRecord>, String> {
     let connection = open_database(&app_handle)?;
     ensure_schema(&connection)?;
@@ -1640,9 +1657,13 @@ fn update_provisioning_checkpoint_record(
             ).map_err(|error| error.to_string())?;
             next_job = Some(candidate);
         } else {
+            let waiting_jobs: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM provisioning_jobs WHERE campaign_id=?1 AND status='waiting_user'",
+                params![job.campaign_id], |row| row.get(0),
+            ).unwrap_or(0);
             connection.execute(
-                "UPDATE provisioning_campaigns SET status='completed', current_position=total_jobs, updated_at=?2 WHERE id=?1",
-                params![job.campaign_id, timestamp],
+                "UPDATE provisioning_campaigns SET status=?2, current_position=CASE WHEN ?2='completed' THEN total_jobs ELSE current_position END, updated_at=?3 WHERE id=?1",
+                params![job.campaign_id,if waiting_jobs > 0 { "paused" } else { "completed" },timestamp],
             ).map_err(|error| error.to_string())?;
         }
     }
@@ -5912,6 +5933,7 @@ pub fn run() {
             get_provisioning_campaigns,
             save_provisioning_campaign,
             prepare_new_provisioning_campaign,
+            reset_platform_validation_records,
             get_provisioning_jobs,
             save_provisioning_job,
             update_provisioning_checkpoint,
