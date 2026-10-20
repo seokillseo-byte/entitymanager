@@ -29,7 +29,7 @@ try {
   assert.ok(response?.ok, "Browser Worker health endpoint did not become ready");
   const health = await response.json();
   assert.equal(health.ok, true);
-  assert.equal(health.protocolVersion, "1.0");
+  assert.equal(health.protocolVersion, "1.1");
   assert.equal(health.activeSessions, 0);
   const unauthorized = await fetch(`http://127.0.0.1:${port}/v1/health`);
   assert.equal(unauthorized.status, 401);

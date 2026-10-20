@@ -46,7 +46,7 @@ try {
   assert.ok(response?.ok, `Staged Browser Worker did not become healthy: ${stderr}`);
   const health = await response.json();
   assert.equal(health.ok, true);
-  assert.equal(health.protocolVersion, "1.0");
+  assert.equal(health.protocolVersion, "1.1");
   process.stdout.write(`Staged portable Browser Worker heartbeat OK (PID ${health.pid}).\n`);
 } finally {
   child.kill("SIGTERM");
