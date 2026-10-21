@@ -436,6 +436,7 @@ function App() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [platformDetailOpen, setPlatformDetailOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
+  const [proxyQuickInput, setProxyQuickInput] = useState("");
   const [gmailOAuth, setGmailOAuth] = useState<GmailOAuthStatus>({ clientId: "", configured: false, connected: false, accountEmail: "", status: "not_configured", lastMessage: "Chưa cấu hình Gmail OAuth.", lastCheckedAt: "", authorizationUrl: "" });
   const [gmailOAuthDraft, setGmailOAuthDraft] = useState({ clientId: "", clientSecret: "" });
   const [gmailActionMessage, setGmailActionMessage] = useState("");
@@ -1187,6 +1188,49 @@ function App() {
     setSelectedProxyId(proxy.id);
     setProxyDraft({ name: "", protocol: "http", host: "", port: "", username: "", password: "", countryCode: "" });
     setStatusMessage("Đã lưu proxy; hãy bấm Kiểm tra trước khi chạy campaign.");
+  }
+
+  function parseProxyQuickInput() {
+    const raw = proxyQuickInput.trim();
+    if (!raw) {
+      setStatusMessage("Hãy dán proxy theo dạng ProxyAddress:Port:Username:Password.");
+      return;
+    }
+    try {
+      let protocol = proxyDraft.protocol;
+      let host = "";
+      let port = "";
+      let username = "";
+      let password = "";
+      if (/^(https?|socks5):\/\//i.test(raw)) {
+        const parsed = new URL(raw);
+        protocol = parsed.protocol.replace(":", "").toLowerCase();
+        host = parsed.hostname;
+        port = parsed.port;
+        username = decodeURIComponent(parsed.username);
+        password = decodeURIComponent(parsed.password);
+      } else {
+        const parts = raw.split(":");
+        if (parts.length < 2) throw new Error("missing_host_or_port");
+        [host, port, username = ""] = parts;
+        password = parts.slice(3).join(":");
+      }
+      const portNumber = Number(port);
+      if (!host.trim() || !Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) throw new Error("invalid_host_or_port");
+      setProxyDraft((current) => ({
+        ...current,
+        name: current.name.trim() || `Proxy ${host.trim()}:${portNumber}`,
+        protocol,
+        host: host.trim(),
+        port: String(portNumber),
+        username: username.trim(),
+        password
+      }));
+      setProxyQuickInput("");
+      setStatusMessage("Đã đọc chuỗi proxy. Kiểm tra thông tin, bấm Lưu proxy rồi bấm Kiểm tra.");
+    } catch {
+      setStatusMessage("Chuỗi proxy không hợp lệ. Dùng ProxyAddress:Port:Username:Password hoặc protocol://Username:Password@ProxyAddress:Port.");
+    }
   }
 
   async function testProxy(proxyId: string) {
@@ -3203,6 +3247,13 @@ function App() {
 
                 <section className="managed-browser-card">
                   <div className="panel-header"><div><p className="eyebrow">PROXY MANAGER</p><h3>Thêm và kiểm tra proxy</h3></div><span className="badge">{proxyRecords.filter((item) => item.status === "healthy").length} healthy</span></div>
+                  <div className="proxy-quick-import">
+                    <label>Nhập nhanh proxy
+                      <input type="password" autoComplete="off" placeholder="ProxyAddress:Port:Username:Password" value={proxyQuickInput} onChange={(event) => setProxyQuickInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") parseProxyQuickInput(); }} />
+                    </label>
+                    <button className="secondary-action" type="button" onClick={parseProxyQuickInput}>Đọc chuỗi proxy</button>
+                  </div>
+                  <p className="muted-text">Chuỗi gốc được xóa khỏi ô nhập ngay sau khi đọc. Password chỉ được lưu bằng Windows Credential Manager khi anh bấm Lưu proxy.</p>
                   <div className="proxy-form-grid">
                     <input placeholder="Tên proxy" value={proxyDraft.name} onChange={(event) => setProxyDraft({ ...proxyDraft, name: event.target.value })} />
                     <select value={proxyDraft.protocol} onChange={(event) => setProxyDraft({ ...proxyDraft, protocol: event.target.value })}><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option></select>
