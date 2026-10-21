@@ -1259,9 +1259,15 @@ function App() {
         { id: "medium-open-email-signup", kind: "click", selectors: ["button:has-text('Sign up with email')", "a:has-text('Sign up with email')", "button:has-text('Sign up with Email')"], timeoutMs: 12000, retries: 1 },
         { id: "medium-fill-email", kind: "fill", selectors: ["input[type='email']", "input[name='email']", "input[autocomplete='email']"], value: entityProfile.email, timeoutMs: 10000, retries: 1 }
       ]);
-      const failed = result.results.find((item) => item.status === "failed");
+      const failed = result.results.find((item) => item.status === "failed" || item.status === "needs_attention");
       if (failed) {
-        await saveMediumStage(job, "signup", "waiting_user", `Không hoàn tất bước đăng ký email (${failed.id}: ${failed.message}). Đã giữ nguyên browser và screenshot để sửa selector.`);
+        const blockedHost = failed.message.startsWith("site_access_blocked:") ? failed.message.split(":")[1] || "medium.com" : "";
+        const message = blockedHost
+          ? `${blockedHost} đã chặn phiên browser tự động từ IP hiện tại. Tool đã dừng riêng Medium, giữ nguyên profile và bằng chứng; không tiếp tục thử lặp để tránh tăng mức chặn. Hãy đổi sang kết nối/proxy hợp lệ rồi chạy lại checkpoint.`
+          : failed.message === "browser_challenge_requires_attention"
+            ? "Medium đang yêu cầu xác minh trình duyệt. Tool đã giữ nguyên phiên tại checkpoint để anh xử lý challenge một lần rồi bấm tiếp tục."
+            : `Không hoàn tất bước đăng ký email (${failed.id}: ${failed.message}). Đã giữ nguyên browser và screenshot để sửa selector.`;
+        await saveMediumStage(job, "signup", "waiting_user", message);
         return;
       }
       const challenge = await runBrowserActions(session.id, [

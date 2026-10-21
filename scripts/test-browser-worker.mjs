@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { readFile } from "node:fs/promises";
+
+const workerSource = await readFile("apps/browser-worker/src/index.ts", "utf8");
+assert.match(workerSource, /sorry, you have been blocked/);
+assert.match(workerSource, /site_access_blocked/);
+assert.match(workerSource, /result\.status === "needs_attention"/);
 
 const port = await new Promise((resolve, reject) => {
   const server = createServer();

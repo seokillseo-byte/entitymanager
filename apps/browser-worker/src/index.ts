@@ -49,6 +49,10 @@ type ActionResult = {
   selector: string; value: string; message: string;
   startedAt: string; completedAt: string;
 };
+type PageAccessIssue = {
+  code: "site_access_blocked" | "browser_challenge";
+  message: string;
+};
 const sessions = new Map<string, WorkerSession>();
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -76,6 +80,28 @@ async function firstUsableSelector(page: Page, selectors: string[], timeoutMs: n
     await page.waitForTimeout(250);
   }
   return null;
+}
+
+async function detectPageAccessIssue(page: Page): Promise<PageAccessIssue | null> {
+  const snapshot = await page.evaluate(() => ({
+    title: document.title.toLowerCase(),
+    text: (document.body?.innerText || "").slice(0, 12_000).toLowerCase(),
+    hasCloudflareMarker: Boolean(document.querySelector("#cf-error-details, .cf-error-details, [data-translate='block_headline'], #challenge-running"))
+  })).catch(() => null);
+  if (!snapshot) return null;
+  const blocked = snapshot.text.includes("sorry, you have been blocked")
+    || snapshot.text.includes("you are unable to access")
+    || snapshot.title.includes("access denied")
+    || snapshot.title.includes("attention required") && snapshot.hasCloudflareMarker;
+  if (blocked) {
+    const host = (() => { try { return new URL(page.url()).hostname; } catch { return "website"; } })();
+    return { code: "site_access_blocked", message: `site_access_blocked:${host}` };
+  }
+  const challenge = snapshot.text.includes("performing security verification")
+    || snapshot.text.includes("verify you are human")
+    || snapshot.text.includes("checking your browser")
+    || snapshot.title.includes("just a moment") && snapshot.hasCloudflareMarker;
+  return challenge ? { code: "browser_challenge", message: "browser_challenge_requires_attention" } : null;
 }
 
 async function executeAction(session: WorkerSession, action: BrowserAction): Promise<ActionResult> {
@@ -125,6 +151,14 @@ async function executeAction(session: WorkerSession, action: BrowserAction): Pro
         if (!injected) throw new Error("captcha_response_field_not_found");
         value = String(injected);
       } else {
+        const accessIssue = await detectPageAccessIssue(session.page);
+        if (accessIssue) {
+          session.currentUrl = session.page.url();
+          session.title = await session.page.title().catch(() => session.title);
+          session.lastHeartbeatAt = new Date().toISOString();
+          return { id: action.id, kind: action.kind, status: "needs_attention", selector: "", value: accessIssue.code,
+            message: accessIssue.message, startedAt, completedAt: session.lastHeartbeatAt };
+        }
         selector = await firstUsableSelector(session.page, action.selectors || [], timeoutMs, action.kind === "upload") || "";
         if (!selector) throw new Error("selector_not_found");
         const locator = session.page.locator(selector).first();
@@ -190,7 +224,7 @@ async function executeActions(sessionId: string, batch: BrowserActionBatch) {
     session.actionLog.push(result);
     if (session.actionLog.length > 100) session.actionLog.splice(0, session.actionLog.length - 100);
     session.lastMessage = `${action.id}: ${result.message}`;
-    if (result.status === "failed" && batch.stopOnError !== false) break;
+    if ((result.status === "failed" || result.status === "needs_attention") && batch.stopOnError !== false) break;
   }
   session.currentStep = "";
   session.lastHeartbeatAt = new Date().toISOString();
@@ -224,7 +258,8 @@ async function startSession(input: StartSessionRequest) {
   session.lastMessage = "Navigating through Playwright worker.";
   await page.goto(input.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
   session.currentUrl = page.url(); session.title = await page.title().catch(() => "");
-  session.lastMessage = "Page ready and controlled by Playwright."; session.lastHeartbeatAt = new Date().toISOString();
+  const accessIssue = await detectPageAccessIssue(page);
+  session.lastMessage = accessIssue?.message || "Page ready and controlled by Playwright."; session.lastHeartbeatAt = new Date().toISOString();
   return publicSession(session);
 }
 async function stopSession(sessionId: string) {
