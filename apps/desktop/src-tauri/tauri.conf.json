@@ -18,6 +18,18 @@
         "height": 920,
         "minWidth": 1180,
         "minHeight": 760
+      },
+      {
+        "label": "browser-workspace",
+        "title": "EntityManager — Browser Workspace",
+        "url": "index.html",
+        "visible": false,
+        "width": 1500,
+        "height": 920,
+        "minWidth": 980,
+        "minHeight": 680,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
