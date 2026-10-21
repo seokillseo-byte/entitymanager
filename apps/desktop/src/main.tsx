@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Bot, Brain, CheckSquare, ChevronDown, Database, Download, FileCheck2, GitBranch, Globe2, KeyRound, LayoutDashboard, Library, ListChecks, Play, Puzzle, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { buildProviderConfig, testIntegrationAdapter } from "@entitymanager/integrations";
 import { calculateEntityReadiness } from "@entitymanager/shared";
 import type { AccountCreationPlanItem, AccountPlanPriority, AccountRecord, AccountStatus, AccountSubmitVerifyResult, AutomationGateType, AutomationQueueItem, AutomationQueueStatus, AutomationMode, BrowserSessionRecord, BrowserStorageOverview, CaptchaInjectionPayload, CaptchaInjectionResult, DashboardMetric, EntityModule, EntityProfileRecord, IntegrationAdapterResult, IntegrationType, PlatformDifficulty, PlatformLibraryRecord, PlatformType, PlatformValidationRecord, PlatformValidationStatus, ProviderKeyStatus, ProvisioningCampaignRecord, ProvisioningJobRecord, ProxyRecord, SelectorRecipeRecord, DryRunHistoryRecord, WorkflowRunRecord, WorkflowRunStatus } from "@entitymanager/shared";
@@ -4075,7 +4076,7 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}...${token.slice(-6)}`;
 }
 
-const isBrowserWorkspace = window.location.hash.startsWith("#browser-workspace");
+const isBrowserWorkspace = getCurrentWebviewWindow().label === "browser-workspace";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

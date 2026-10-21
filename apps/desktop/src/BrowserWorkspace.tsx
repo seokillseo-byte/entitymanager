@@ -15,19 +15,13 @@ type WorkspaceSlot = {
   job: ProvisioningJobRecord | null;
 };
 
-function requestedSlots() {
-  const fragmentQuery = window.location.hash.split("?")[1] || "";
-  const value = Number(new URLSearchParams(fragmentQuery).get("slots") || "1");
-  return Math.max(1, Math.min(6, Number.isFinite(value) ? Math.floor(value) : 1));
-}
-
 function timeLabel(value: string) {
   if (!value) return "chưa có";
   return new Date(value).toLocaleTimeString("vi-VN");
 }
 
 export default function BrowserWorkspace() {
-  const slotCount = requestedSlots();
+  const [slotCount, setSlotCount] = useState(1);
   const [sessions, setSessions] = useState<BrowserSessionRecord[]>([]);
   const [jobs, setJobs] = useState<ProvisioningJobRecord[]>([]);
   const [worker, setWorker] = useState<BrowserWorkerStatus | null>(null);
@@ -38,11 +32,13 @@ export default function BrowserWorkspace() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextSessions, nextJobs, nextWorker] = await Promise.all([
+      const [nextSessions, nextJobs, nextWorker, nextSlots] = await Promise.all([
         invoke<BrowserSessionRecord[]>("get_browser_sessions"),
         invoke<ProvisioningJobRecord[]>("get_provisioning_jobs"),
-        invoke<BrowserWorkerStatus>("get_browser_worker_status").catch(() => null)
+        invoke<BrowserWorkerStatus>("get_browser_worker_status").catch(() => null),
+        invoke<number>("get_browser_workspace_slots")
       ]);
+      setSlotCount(Math.max(1, Math.min(6, nextSlots)));
       const running = nextSessions
         .filter((item) => item.status === "running")
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());

@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
@@ -25,23 +25,25 @@ const BUILTIN_SELECTOR_RECIPE_VERSION: i64 = 1_797_000_000;
 static EXTENSION_BRIDGE_STARTED: AtomicBool = AtomicBool::new(false);
 static GMAIL_VERIFICATION_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
 static BROWSER_WORKER_RUNTIME: OnceLock<Mutex<Option<BrowserWorkerRuntimeState>>> = OnceLock::new();
+static BROWSER_WORKSPACE_SLOTS: AtomicU8 = AtomicU8::new(1);
 
 const GMAIL_CLIENT_SECRET_KEY: &str = "gmail_oauth_client_secret";
 const GMAIL_REFRESH_TOKEN_KEY: &str = "gmail_oauth_refresh_token";
 
 #[tauri::command]
 fn open_browser_workspace(app_handle: tauri::AppHandle, slots: u8) -> Result<(), String> {
+    let safe_slots = slots.clamp(1, 6);
+    BROWSER_WORKSPACE_SLOTS.store(safe_slots, Ordering::Relaxed);
     if let Some(window) = app_handle.get_webview_window("browser-workspace") {
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
 
-    let safe_slots = slots.clamp(1, 6);
-    // Keep routing data in the fragment. Query parameters appended to the app
-    // asset path can make the packaged WebView2 loader look for a literal
-    // `index.html?...` resource and render a completely blank window.
-    let url = tauri::WebviewUrl::App(format!("index.html#browser-workspace?slots={safe_slots}").into());
+    // Always load the exact packaged asset. Query strings and fragments on an
+    // App URL have both produced blank WebView2 windows in packaged builds.
+    // Window identity comes from the Tauri label, not from client-side routing.
+    let url = tauri::WebviewUrl::App("index.html".into());
     tauri::WebviewWindowBuilder::new(&app_handle, "browser-workspace", url)
         .title("EntityManager — Browser Workspace")
         .inner_size(1500.0, 920.0)
@@ -51,6 +53,11 @@ fn open_browser_workspace(app_handle: tauri::AppHandle, slots: u8) -> Result<(),
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn get_browser_workspace_slots() -> u8 {
+    BROWSER_WORKSPACE_SLOTS.load(Ordering::Relaxed).clamp(1, 6)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5980,6 +5987,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_health,
             open_browser_workspace,
+            get_browser_workspace_slots,
             get_indexing_queue_count,
             open_external_url,
             open_extension_download,

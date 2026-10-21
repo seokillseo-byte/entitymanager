@@ -21,7 +21,8 @@
     "test:diagnostic-report-validation": "node --test apps/desktop/src/validateDryRunDiagnosticReport.test.mjs",
     "test:medium-routes": "pnpm extension:build && node --test apps/extension/tests/mediumRoutes.test.mjs",
     "test:command-contract": "node scripts/audit-command-contract.mjs",
-    "test:browser-worker": "pnpm browser-worker:build && node scripts/test-browser-worker.mjs"
+    "test:browser-worker": "pnpm browser-worker:build && node scripts/test-browser-worker.mjs",
+    "test:browser-workspace": "node scripts/audit-browser-workspace-contract.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
